@@ -1,0 +1,35 @@
+# Binaries
+anime
+anime-*
+
+# Config (contains sensitive data)
+.config/
+
+# Test files
+*.test
+test-*
+
+# OS files
+.DS_Store
+.idea/
+*.swp
+*.swo
+*~
+
+# Go files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Old shell scripts (keeping for reference)
+setup-*.sh

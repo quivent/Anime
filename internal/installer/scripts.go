@@ -173,13 +173,13 @@ echo "==> Mochi-1 installed successfully"
 	"svd": `#!/bin/bash
 set -e
 echo "==> Installing Stable Video Diffusion for ComfyUI"
-COMFY_DIR="$HOME/comfyui"
+COMFY_DIR="$HOME/ComfyUI"
 if [ ! -d "$COMFY_DIR" ]; then
     echo "Error: ComfyUI not found. Install comfyui first."
     exit 1
 fi
 cd "$COMFY_DIR/custom_nodes"
-if [ -d "ComfyUI-SVD" ]; then
+if [ -d "ComfyUI-VideoHelperSuite" ]; then
     echo "SVD already installed"
     exit 0
 fi
@@ -193,7 +193,7 @@ echo "==> SVD installed successfully"
 	"animatediff": `#!/bin/bash
 set -e
 echo "==> Installing AnimateDiff for ComfyUI"
-COMFY_DIR="$HOME/comfyui"
+COMFY_DIR="$HOME/ComfyUI"
 if [ ! -d "$COMFY_DIR" ]; then
     echo "Error: ComfyUI not found. Install comfyui first."
     exit 1

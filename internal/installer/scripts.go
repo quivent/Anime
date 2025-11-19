@@ -147,7 +147,8 @@ if command -v claude-code &> /dev/null; then
 fi
 sudo npm install -g @anthropic-ai/claude-code
 echo "==> Claude Code installed successfully"
-claude-code --version
+echo "==> Verifying installation..."
+which claude-code || echo "Note: You may need to restart your shell for claude-code to be in PATH"
 `,
 }
 

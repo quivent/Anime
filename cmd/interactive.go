@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/installer"
@@ -13,92 +11,94 @@ import (
 )
 
 var interactiveCmd = &cobra.Command{
-	Use:   "interactive",
-	Short: "Interactive package selection with beautiful TUI",
+	Use:     "interactive",
+	Short:   "Interactive package selection with beautiful TUI",
 	Aliases: []string{"i", "tui"},
-	Run:   runInteractive,
+	Run:     runInteractive,
 }
 
 func init() {
 	rootCmd.AddCommand(interactiveCmd)
 }
 
-type item struct {
+type packageItem struct {
 	pkg      *installer.Package
 	selected bool
 }
 
-func (i item) FilterValue() string { return i.pkg.Name }
-func (i item) Title() string {
-	checkbox := "☐"
-	if i.selected {
-		checkbox = "☑"
-	}
-	return fmt.Sprintf("%s %s", checkbox, i.pkg.Name)
-}
-func (i item) Description() string {
-	return fmt.Sprintf("%s • %s • %s",
-		i.pkg.Category,
-		i.pkg.EstimatedTime,
-		i.pkg.Size)
+type model struct {
+	packages     []*installer.Package
+	selected     map[string]bool
+	cursor       int
+	width        int
+	height       int
+	quitting     bool
+	confirmed    bool
+	categoryView bool
 }
 
-type model struct {
-	list     list.Model
-	items    []item
-	selected map[string]bool
-	quitting bool
-	confirmed bool
-}
+var (
+	// Color scheme
+	sakuraPink   = lipgloss.Color("205")
+	electricBlue = lipgloss.Color("39")
+	neonPurple   = lipgloss.Color("141")
+	mintGreen    = lipgloss.Color("86")
+	dimGray      = lipgloss.Color("243")
+
+	// Styles
+	titleStyle = lipgloss.NewStyle().
+			Foreground(sakuraPink).
+			Bold(true).
+			Padding(0, 1).
+			MarginBottom(1)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(dimGray).
+			Padding(0, 1)
+
+	categoryHeaderStyle = lipgloss.NewStyle().
+				Foreground(electricBlue).
+				Bold(true).
+				Padding(0, 1)
+
+	selectedStyle = lipgloss.NewStyle().
+			Foreground(mintGreen).
+			Bold(true)
+
+	cursorStyle = lipgloss.NewStyle().
+			Foreground(sakuraPink).
+			Bold(true)
+
+	dimStyle = lipgloss.NewStyle().
+			Foreground(dimGray)
+
+	boxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(sakuraPink).
+			Padding(1, 2).
+			Margin(1, 0)
+
+	summaryStyle = lipgloss.NewStyle().
+			Foreground(mintGreen).
+			Bold(true).
+			Padding(1, 2).
+			MarginTop(1)
+)
 
 func initialModel() model {
-	packages := installer.GetPackages()
+	packagesMap := installer.GetPackages()
 
-	items := make([]item, 0, len(packages))
-	for _, pkg := range packages {
-		items = append(items, item{pkg: pkg})
-	}
-
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-		Foreground(lipgloss.Color("205")).
-		BorderLeftForeground(lipgloss.Color("205"))
-	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
-		Foreground(lipgloss.Color("243")).
-		BorderLeftForeground(lipgloss.Color("205"))
-
-	listItems := make([]list.Item, len(items))
-	for i, item := range items {
-		listItems[i] = item
-	}
-
-	l := list.New(listItems, delegate, 80, 20)
-	l.Title = "📦 Select Packages to Install"
-	l.SetShowStatusBar(true)
-	l.SetFilteringEnabled(true)
-	l.Styles.Title = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("205")).
-		Bold(true).
-		MarginLeft(2)
-	l.Styles.HelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-
-	l.AdditionalShortHelpKeys = func() []key.Binding {
-		return []key.Binding{
-			key.NewBinding(
-				key.WithKeys("space"),
-				key.WithHelp("space", "toggle"),
-			),
-			key.NewBinding(
-				key.WithKeys("enter"),
-				key.WithHelp("enter", "confirm"),
-			),
-		}
+	// Convert map to slice
+	packages := make([]*installer.Package, 0, len(packagesMap))
+	for _, pkg := range packagesMap {
+		packages = append(packages, pkg)
 	}
 
 	return model{
-		list:     l,
-		items:    items,
-		selected: make(map[string]bool),
+		packages:     packages,
+		selected:     make(map[string]bool),
+		cursor:       0,
+		categoryView: true,
 	}
 }
 
@@ -114,31 +114,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		case " ":
-			// Toggle selection
-			if i, ok := m.list.SelectedItem().(item); ok {
-				m.selected[i.pkg.ID] = !m.selected[i.pkg.ID]
-				// Update the item's selected state
-				idx := m.list.Index()
-				m.items[idx].selected = m.selected[i.pkg.ID]
-				m.list.SetItem(idx, m.items[idx])
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
 			}
-			return m, nil
+
+		case "down", "j":
+			if m.cursor < len(m.packages)-1 {
+				m.cursor++
+			}
+
+		case " ":
+			if m.cursor < len(m.packages) {
+				pkg := m.packages[m.cursor]
+				m.selected[pkg.ID] = !m.selected[pkg.ID]
+			}
 
 		case "enter":
 			m.confirmed = true
 			m.quitting = true
 			return m, tea.Quit
-
-		case "tea.WindowSizeMsg":
-			h, v := lipgloss.Size(m.list.View())
-			m.list.SetSize(h, v)
 		}
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 	}
 
-	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	return m, nil
 }
 
 func (m model) View() string {
@@ -146,63 +149,122 @@ func (m model) View() string {
 		return ""
 	}
 
-	var status string
+	var s strings.Builder
+
+	// Title
+	title := "⚡ ANIME PACKAGE INSTALLER ⚡"
+	s.WriteString(titleStyle.Render(title))
+	s.WriteString("\n\n")
+
+	// Instructions
+	help := "↑/↓: Navigate  |  SPACE: Toggle  |  ENTER: Install  |  Q: Quit"
+	s.WriteString(helpStyle.Render(help))
+	s.WriteString("\n\n")
+
+	// Group packages by category
+	categories := make(map[string][]*installer.Package)
+	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Application"}
+
+	for _, pkg := range m.packages {
+		categories[pkg.Category] = append(categories[pkg.Category], pkg)
+	}
+
+	// Render packages by category
+	currentIdx := 0
+	for _, category := range categoryOrder {
+		pkgs := categories[category]
+		if len(pkgs) == 0 {
+			continue
+		}
+
+		// Category header with emoji
+		emoji := "📦"
+		switch category {
+		case "Foundation":
+			emoji = "🏗️"
+		case "ML Framework":
+			emoji = "🤖"
+		case "LLM Runtime":
+			emoji = "🔮"
+		case "Models":
+			emoji = "⭐"
+		case "Application":
+			emoji = "🎯"
+		}
+
+		s.WriteString(categoryHeaderStyle.Render(fmt.Sprintf("%s %s", emoji, category)))
+		s.WriteString("\n")
+
+		// Render packages in this category
+		for _, pkg := range pkgs {
+			checkbox := "☐"
+			style := dimStyle
+			cursor := "  "
+
+			if m.selected[pkg.ID] {
+				checkbox = "☑"
+				style = selectedStyle
+			}
+
+			if currentIdx == m.cursor {
+				cursor = "▶ "
+				style = cursorStyle
+			}
+
+			line := fmt.Sprintf("%s%s %s", cursor, checkbox, pkg.Name)
+			s.WriteString(style.Render(line))
+
+			// Add description on same line
+			desc := fmt.Sprintf(" - %s", pkg.Description)
+			if len(desc) > 50 {
+				desc = desc[:47] + "..."
+			}
+			s.WriteString(dimStyle.Render(desc))
+			s.WriteString("\n")
+
+			// Show size and time for cursor position
+			if currentIdx == m.cursor {
+				details := fmt.Sprintf("    ⏱️  %s  |  💾 %s", pkg.EstimatedTime, pkg.Size)
+				s.WriteString(dimStyle.Render(details))
+				s.WriteString("\n")
+			}
+
+			currentIdx++
+		}
+		s.WriteString("\n")
+	}
+
+	// Summary of selected packages
 	if len(m.selected) > 0 {
-		selectedPkgs := make([]string, 0, len(m.selected))
+		selectedIDs := make([]string, 0, len(m.selected))
 		for id := range m.selected {
-			selectedPkgs = append(selectedPkgs, id)
+			selectedIDs = append(selectedIDs, id)
 		}
 
-		totalTime, totalSize := calculateTotals(selectedPkgs)
+		resolved, err := installer.ResolveDependencies(selectedIDs)
+		var summary string
+		if err == nil {
+			totalMinutes := 0
+			for _, pkg := range resolved {
+				totalMinutes += int(pkg.EstimatedTime.Minutes())
+			}
+			timeStr := fmt.Sprintf("%dh %dm", totalMinutes/60, totalMinutes%60)
+			if totalMinutes < 60 {
+				timeStr = fmt.Sprintf("%dm", totalMinutes)
+			}
 
-		statusStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("86")).
-			MarginTop(1).
-			MarginLeft(2)
-
-		status = statusStyle.Render(fmt.Sprintf(
-			"\n✓ Selected: %d packages • Est. time: %s • Total size: ~%s",
-			len(m.selected),
-			totalTime,
-			totalSize,
-		))
-	}
-
-	return m.list.View() + status
-}
-
-func calculateTotals(packageIDs []string) (string, string) {
-	resolved, err := installer.ResolveDependencies(packageIDs)
-	if err != nil {
-		return "unknown", "unknown"
-	}
-
-	var totalMinutes int
-	var totalGB float64
-
-	for _, pkg := range resolved {
-		totalMinutes += int(pkg.EstimatedTime.Minutes())
-
-		// Parse size
-		sizeStr := strings.TrimPrefix(pkg.Size, "~")
-		sizeStr = strings.TrimSuffix(sizeStr, "GB")
-		sizeStr = strings.TrimSuffix(sizeStr, "MB")
-		var size float64
-		if strings.HasSuffix(pkg.Size, "GB") {
-			fmt.Sscanf(sizeStr, "%f", &size)
-			totalGB += size
-		} else if strings.HasSuffix(pkg.Size, "MB") {
-			fmt.Sscanf(sizeStr, "%f", &size)
-			totalGB += size / 1000
+			summary = fmt.Sprintf("✓ Selected: %d package(s) → %d with dependencies  |  ⏱️  %s",
+				len(m.selected), len(resolved), timeStr)
+		} else {
+			summary = fmt.Sprintf("✓ Selected: %d package(s)", len(m.selected))
 		}
+
+		s.WriteString("\n")
+		s.WriteString(summaryStyle.Render(summary))
+		s.WriteString("\n")
 	}
 
-	timeStr := fmt.Sprintf("%dh %dm", totalMinutes/60, totalMinutes%60)
-	if totalMinutes < 60 {
-		timeStr = fmt.Sprintf("%dm", totalMinutes)
-	}
-
-	return timeStr, fmt.Sprintf("%.1fGB", totalGB)
+	return s.String()
 }
 
 func runInteractive(cmd *cobra.Command, args []string) {

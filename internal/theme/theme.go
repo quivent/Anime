@@ -122,7 +122,20 @@ var (
 				Bold(true).
 				Foreground(MintGreen).
 				MarginTop(1)
+
+	CategoryVideoGen = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(LavenderMist).
+				MarginTop(1)
 )
+
+// CategoryStyle returns a styled category header
+func CategoryStyle(text string) string {
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(NeonPurple).
+		Render(text)
+}
 
 // Anime-themed emojis and symbols
 var (

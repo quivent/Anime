@@ -88,10 +88,22 @@ var (
 func initialModel() model {
 	packagesMap := installer.GetPackages()
 
-	// Convert map to slice
-	packages := make([]*installer.Package, 0, len(packagesMap))
+	// Convert map to slice with consistent ordering
+	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Video Generation", "Application"}
+
+	// Group by category first
+	categories := make(map[string][]*installer.Package)
 	for _, pkg := range packagesMap {
-		packages = append(packages, pkg)
+		categories[pkg.Category] = append(categories[pkg.Category], pkg)
+	}
+
+	// Build packages list in category order
+	packages := make([]*installer.Package, 0, len(packagesMap))
+	for _, category := range categoryOrder {
+		pkgs := categories[category]
+		if len(pkgs) > 0 {
+			packages = append(packages, pkgs...)
+		}
 	}
 
 	return model{

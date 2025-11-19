@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Instance, InstanceType, SSHKey } from '../types/lambda'
+import ServerMonitor from './ServerMonitor'
 
 export default function LambdaView() {
   const [apiKeySet, setApiKeySet] = useState(false)
@@ -12,6 +13,7 @@ export default function LambdaView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showLaunchDialog, setShowLaunchDialog] = useState(false)
+  const [monitoringInstance, setMonitoringInstance] = useState<Instance | null>(null)
 
   useEffect(() => {
     checkConnection()
@@ -266,12 +268,20 @@ export default function LambdaView() {
 
                   <div className="flex gap-2">
                     {instance.status === 'active' && instance.ip && (
-                      <button
-                        onClick={() => navigator.clipboard.writeText(`ssh ubuntu@${instance.ip}`)}
-                        className="flex-1 px-3 py-2 bg-mint-500/20 hover:bg-mint-500/30 border border-mint-500/50 rounded-lg text-mint-400 text-sm font-medium transition-all"
-                      >
-                        📋 Copy SSH
-                      </button>
+                      <>
+                        <button
+                          onClick={() => setMonitoringInstance(instance)}
+                          className="flex-1 px-3 py-2 bg-electric-500/20 hover:bg-electric-500/30 border border-electric-500/50 rounded-lg text-electric-400 text-sm font-medium transition-all anime-glow"
+                        >
+                          📊 Monitor
+                        </button>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(`ssh ubuntu@${instance.ip}`)}
+                          className="flex-1 px-3 py-2 bg-mint-500/20 hover:bg-mint-500/30 border border-mint-500/50 rounded-lg text-mint-400 text-sm font-medium transition-all"
+                        >
+                          📋 Copy SSH
+                        </button>
+                      </>
                     )}
 
                     <button
@@ -305,6 +315,14 @@ export default function LambdaView() {
               setShowLaunchDialog(false)
               await loadData()
             }}
+          />
+        )}
+
+        {/* Server Monitor */}
+        {monitoringInstance && (
+          <ServerMonitor
+            instance={monitoringInstance}
+            onClose={() => setMonitoringInstance(null)}
           />
         )}
       </div>

@@ -3,7 +3,9 @@
 
 use anime_desktop::{get_packages, resolve_dependencies, Package, Server};
 use anime_desktop::lambda::commands::LambdaState;
+use anime_desktop::server::ServerState;
 use std::sync::Mutex;
+use std::collections::HashMap;
 
 // Tauri command to get all packages
 #[tauri::command]
@@ -63,6 +65,9 @@ fn main() {
         .manage(LambdaState {
             client: Mutex::new(None),
         })
+        .manage(ServerState {
+            connections: Mutex::new(HashMap::new()),
+        })
         .invoke_handler(tauri::generate_handler![
             get_packages_command,
             resolve_dependencies_command,
@@ -82,6 +87,12 @@ fn main() {
             anime_desktop::lambda_list_ssh_keys,
             anime_desktop::lambda_add_ssh_key,
             anime_desktop::lambda_list_file_systems,
+            // Server monitoring commands
+            anime_desktop::connect_to_server,
+            anime_desktop::disconnect_from_server,
+            anime_desktop::get_server_status,
+            anime_desktop::is_server_connected,
+            anime_desktop::list_connected_servers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

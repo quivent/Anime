@@ -55,12 +55,17 @@ export default function LambdaView() {
   }
 
   const handleSaveApiKey = async () => {
+    console.log('[LambdaView] handleSaveApiKey called with key length:', apiKey.length)
     try {
-      await invoke('set_lambda_api_key', { apiKey })
+      console.log('[LambdaView] Invoking set_lambda_api_key...')
+      const result = await invoke('set_lambda_api_key', { apiKey })
+      console.log('[LambdaView] set_lambda_api_key result:', result)
       setApiKeySet(true)
       setShowApiKeyDialog(false)
+      console.log('[LambdaView] Loading data after API key set...')
       await loadData()
     } catch (err) {
+      console.error('[LambdaView] Error setting API key:', err)
       setError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -316,7 +321,7 @@ interface LaunchInstanceDialogProps {
 
 function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: LaunchInstanceDialogProps) {
   const [selectedType, setSelectedType] = useState('')
-  const [region, setRegion] = useState('us-west-1')
+  const [region, setRegion] = useState('')
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
   const [instanceName, setInstanceName] = useState('')
   const [quantity, setQuantity] = useState(1)
@@ -326,6 +331,11 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
   const handleLaunch = async () => {
     if (!selectedType || selectedKeys.length === 0) {
       setError('Please select instance type and at least one SSH key')
+      return
+    }
+
+    if (!region) {
+      setError('Please select a region')
       return
     }
 
@@ -358,11 +368,24 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
           {/* Instance Type */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-3">Instance Type</label>
-            <div className="grid grid-cols-1 gap-3 max-h-64 overflow-y-auto">
-              {instanceTypes.map((type) => (
+            {instanceTypes.filter(type => type.regions_with_capacity_available.length > 0).length === 0 ? (
+              <div className="p-6 bg-sunset-500/10 border border-sunset-500/30 rounded-lg text-center">
+                <div className="text-4xl mb-2">⚠️</div>
+                <p className="text-sunset-400 font-medium mb-1">No instances available</p>
+                <p className="text-gray-400 text-sm">There are currently no GPU instances with available capacity. Please try again later.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 max-h-64 overflow-y-auto">
+                {instanceTypes.filter(type => type.regions_with_capacity_available.length > 0).map((type) => (
                 <button
                   key={type.name}
-                  onClick={() => setSelectedType(type.name)}
+                  onClick={() => {
+                    setSelectedType(type.name)
+                    // Auto-select first available region
+                    if (type.regions_with_capacity_available.length > 0) {
+                      setRegion(type.regions_with_capacity_available[0].name)
+                    }
+                  }}
                   className={`p-4 rounded-lg border text-left transition-all ${
                     selectedType === type.name
                       ? 'bg-electric-500/20 border-electric-500/50 text-electric-400'
@@ -370,18 +393,22 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
                   }`}
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold">{type.name}</span>
+                    <span className="font-semibold">{type.description}</span>
                     <span className="text-mint-400 font-mono text-sm">
                       ${(type.price_cents_per_hour / 100).toFixed(2)}/hr
                     </span>
                   </div>
-                  <div className="text-sm text-gray-400">
+                  <div className="text-sm text-gray-400 mb-1">
                     {type.specs.vcpus} vCPUs • {type.specs.memory_gib} GB RAM • {type.specs.storage_gib} GB Storage
-                    {type.specs.gpus && ` • ${type.specs.gpus} GPU${type.specs.gpus > 1 ? 's' : ''}`}
+                    {type.specs.gpus > 0 && ` • ${type.specs.gpus} GPU${type.specs.gpus > 1 ? 's' : ''}`}
+                  </div>
+                  <div className="text-xs text-mint-400/70">
+                    Available in: {type.regions_with_capacity_available.map(r => r.description).join(', ')}
                   </div>
                 </button>
               ))}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* SSH Keys */}
@@ -424,18 +451,20 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
           </div>
 
           {/* Region */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Region</label>
-            <select
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg focus:outline-none focus:border-electric-500 text-white"
-            >
-              <option value="us-west-1">US West (California)</option>
-              <option value="us-east-1">US East (Virginia)</option>
-              <option value="us-south-1">US South (Texas)</option>
-            </select>
-          </div>
+          {selectedInstanceType && selectedInstanceType.regions_with_capacity_available.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Region</label>
+              <select
+                value={region}
+                onChange={(e) => setRegion(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg focus:outline-none focus:border-electric-500 text-white"
+              >
+                {selectedInstanceType.regions_with_capacity_available.map((r) => (
+                  <option key={r.name} value={r.name}>{r.description}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {error && (
             <div className="p-3 bg-sunset-500/10 border border-sunset-500/30 rounded-lg text-sunset-400 text-sm">
@@ -449,7 +478,7 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
               <div className="text-sm text-gray-300 space-y-1">
                 <div className="flex justify-between">
                   <span>Instance Type:</span>
-                  <span className="font-semibold text-electric-400">{selectedInstanceType.name}</span>
+                  <span className="font-semibold text-electric-400">{selectedInstanceType.description}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Cost per hour:</span>

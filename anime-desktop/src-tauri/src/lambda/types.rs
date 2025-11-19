@@ -1,10 +1,30 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+// Region (must be defined before InstanceType since it's used there)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Region {
+    pub name: String,
+    pub description: String,
+}
 
 // Instance Types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceType {
     pub name: String,
     pub description: String,
+    pub gpu_description: String,
+    pub price_cents_per_hour: u64,
+    pub specs: InstanceSpecs,
+    pub regions_with_capacity_available: Vec<Region>,
+}
+
+// This is what comes from the API (nested inside InstanceTypeEntry)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceTypeNested {
+    pub name: String,
+    pub description: String,
+    pub gpu_description: String,
     pub price_cents_per_hour: u64,
     pub specs: InstanceSpecs,
 }
@@ -14,14 +34,13 @@ pub struct InstanceSpecs {
     pub vcpus: u32,
     pub memory_gib: u32,
     pub storage_gib: u32,
-    pub gpus: Vec<GpuSpec>,
+    pub gpus: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GpuSpec {
-    pub gpu_type: String,
-    pub count: u32,
-    pub memory_gib: u32,
+pub struct InstanceTypeEntry {
+    pub instance_type: InstanceTypeNested,
+    pub regions_with_capacity_available: Vec<Region>,
 }
 
 // Instance
@@ -48,12 +67,6 @@ pub enum InstanceStatus {
     Booting,
     Unhealthy,
     Terminated,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Region {
-    pub name: String,
-    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +118,7 @@ pub struct ListInstancesResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ListInstanceTypesResponse {
-    pub data: Vec<InstanceType>,
+    pub data: HashMap<String, InstanceTypeEntry>,
 }
 
 #[derive(Debug, Deserialize)]

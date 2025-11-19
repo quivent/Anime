@@ -35,8 +35,10 @@ export interface Specs {
 export interface InstanceType {
   name: string
   description: string
+  gpu_description: string
   price_cents_per_hour: number
   specs: Specs
+  regions_with_capacity_available: Region[]
 }
 
 export interface SSHKey {

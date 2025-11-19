@@ -4,6 +4,7 @@ use super::types::*;
 
 const LAMBDA_API_BASE: &str = "https://cloud.lambdalabs.com/api/v1";
 
+#[derive(Clone)]
 pub struct LambdaClient {
     client: Client,
     api_key: String,
@@ -31,15 +32,52 @@ impl LambdaClient {
     // Instance Types
     pub async fn list_instance_types(&self) -> Result<Vec<InstanceType>> {
         let url = format!("{}/instance-types", LAMBDA_API_BASE);
-        let response = self.client.get(&url).send().await?;
+        eprintln!("[list_instance_types] Making request to: {}", url);
 
-        if !response.status().is_success() {
-            let error: ApiError = response.json().await?;
-            return Err(anyhow!("API Error: {}", error.error.message));
+        let response = self.client.get(&url).send().await
+            .map_err(|e| {
+                eprintln!("[list_instance_types] Network error: {}", e);
+                anyhow!("Network error: {}. Please check your internet connection.", e)
+            })?;
+
+        let status = response.status();
+        eprintln!("[list_instance_types] Response status: {}", status);
+
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_else(|_| "Unable to read response".to_string());
+            eprintln!("[list_instance_types] Error response body: {}", body);
+            return Err(anyhow!("Lambda API request failed with status {}. Response: {}", status, body));
         }
 
-        let result: ListInstanceTypesResponse = response.json().await?;
-        Ok(result.data)
+        let body_text = response.text().await
+            .map_err(|e| {
+                eprintln!("[list_instance_types] Failed to read response body: {}", e);
+                anyhow!("Failed to read response body: {}", e)
+            })?;
+
+        eprintln!("[list_instance_types] Raw response body (first 500 chars): {}",
+            if body_text.len() > 500 { &body_text[..500] } else { &body_text });
+
+        let result: ListInstanceTypesResponse = serde_json::from_str(&body_text)
+            .map_err(|e| {
+                eprintln!("[list_instance_types] JSON parse error: {}", e);
+                eprintln!("[list_instance_types] Full response body: {}", body_text);
+                anyhow!("Failed to parse API response: {}", e)
+            })?;
+
+        eprintln!("[list_instance_types] Successfully parsed {} instance types", result.data.len());
+
+        // Convert HashMap to Vec of InstanceType with regions
+        Ok(result.data.into_iter().map(|(_, entry)| {
+            InstanceType {
+                name: entry.instance_type.name,
+                description: entry.instance_type.description,
+                gpu_description: entry.instance_type.gpu_description,
+                price_cents_per_hour: entry.instance_type.price_cents_per_hour,
+                specs: entry.instance_type.specs,
+                regions_with_capacity_available: entry.regions_with_capacity_available,
+            }
+        }).collect())
     }
 
     // Instances

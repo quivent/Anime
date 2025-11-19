@@ -1,0 +1,48 @@
+[package]
+name = "anime-desktop"
+version = "0.1.0"
+description = "ANIME - Lambda GH200 Deployment Manager"
+authors = ["ANIME Team"]
+edition = "2021"
+
+[lib]
+name = "anime_desktop"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-store = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+
+# HTTP client for Lambda API
+reqwest = { version = "0.12", features = ["json"] }
+
+# SSH support
+ssh2 = "0.9"
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+opt-level = 1
+incremental = true
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

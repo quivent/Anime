@@ -97,6 +97,62 @@ func GetPackages() map[string]*Package {
 			Category:     "Application",
 			Size:         "~100MB",
 		},
+
+		// Video Generation Models
+		"mochi": {
+			ID:           "mochi",
+			Name:         "Mochi-1",
+			Description:  "Open source video generation model, 10B params",
+			Dependencies: []string{"core", "python", "pytorch"},
+			EstimatedTime: 20 * time.Minute,
+			Category:     "Video Generation",
+			Size:         "~12GB",
+		},
+		"svd": {
+			ID:           "svd",
+			Name:         "Stable Video Diffusion",
+			Description:  "Stability AI's video diffusion model for ComfyUI",
+			Dependencies: []string{"comfyui"},
+			EstimatedTime: 15 * time.Minute,
+			Category:     "Video Generation",
+			Size:         "~8GB",
+		},
+		"animatediff": {
+			ID:           "animatediff",
+			Name:         "AnimateDiff",
+			Description:  "Motion module for Stable Diffusion, animates images",
+			Dependencies: []string{"comfyui"},
+			EstimatedTime: 10 * time.Minute,
+			Category:     "Video Generation",
+			Size:         "~4GB",
+		},
+		"cogvideo": {
+			ID:           "cogvideo",
+			Name:         "CogVideoX-5B",
+			Description:  "Open source text-to-video model",
+			Dependencies: []string{"core", "python", "pytorch"},
+			EstimatedTime: 25 * time.Minute,
+			Category:     "Video Generation",
+			Size:         "~14GB",
+		},
+		"opensora": {
+			ID:           "opensora",
+			Name:         "Open-Sora 2.0",
+			Description:  "High-quality video generation model",
+			Dependencies: []string{"core", "python", "pytorch"},
+			EstimatedTime: 30 * time.Minute,
+			Category:     "Video Generation",
+			Size:         "~16GB",
+		},
+		"ltxvideo": {
+			ID:           "ltxvideo",
+			Name:         "LTXVideo",
+			Description:  "Fast video generation with latent transformers",
+			Dependencies: []string{"core", "python", "pytorch"},
+			EstimatedTime: 15 * time.Minute,
+			Category:     "Video Generation",
+			Size:         "~7GB",
+		},
 	}
 }
 

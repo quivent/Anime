@@ -150,5 +150,118 @@ echo "==> Claude Code installed successfully"
 echo "==> Verifying installation..."
 which claude-code || echo "Note: You may need to restart your shell for claude-code to be in PATH"
 `,
+
+	// Video Generation Models
+	"mochi": `#!/bin/bash
+set -e
+echo "==> Installing Mochi-1 Video Generation"
+mkdir -p ~/video-models
+cd ~/video-models
+if [ -d "mochi-1" ]; then
+    echo "Mochi-1 already installed"
+    exit 0
+fi
+pip3 install diffusers transformers accelerate einops
+git clone https://github.com/genmoai/mochi mochi-1
+cd mochi-1
+pip3 install -r requirements.txt
+echo "==> Downloading Mochi-1 model weights..."
+huggingface-cli download genmo/mochi-1-preview --local-dir ./weights
+echo "==> Mochi-1 installed successfully"
+`,
+
+	"svd": `#!/bin/bash
+set -e
+echo "==> Installing Stable Video Diffusion for ComfyUI"
+COMFY_DIR="$HOME/comfyui"
+if [ ! -d "$COMFY_DIR" ]; then
+    echo "Error: ComfyUI not found. Install comfyui first."
+    exit 1
+fi
+cd "$COMFY_DIR/custom_nodes"
+if [ -d "ComfyUI-SVD" ]; then
+    echo "SVD already installed"
+    exit 0
+fi
+git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
+cd "$COMFY_DIR/models/checkpoints"
+echo "==> Downloading SVD model..."
+wget -c https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt/resolve/main/svd_xt.safetensors
+echo "==> SVD installed successfully"
+`,
+
+	"animatediff": `#!/bin/bash
+set -e
+echo "==> Installing AnimateDiff for ComfyUI"
+COMFY_DIR="$HOME/comfyui"
+if [ ! -d "$COMFY_DIR" ]; then
+    echo "Error: ComfyUI not found. Install comfyui first."
+    exit 1
+fi
+cd "$COMFY_DIR/custom_nodes"
+if [ -d "ComfyUI-AnimateDiff-Evolved" ]; then
+    echo "AnimateDiff already installed"
+    exit 0
+fi
+git clone https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved.git
+mkdir -p "$COMFY_DIR/models/animatediff_models"
+cd "$COMFY_DIR/models/animatediff_models"
+echo "==> Downloading AnimateDiff motion module..."
+wget -c https://huggingface.co/guoyww/animatediff/resolve/main/mm_sd_v15_v2.ckpt
+echo "==> AnimateDiff installed successfully"
+`,
+
+	"cogvideo": `#!/bin/bash
+set -e
+echo "==> Installing CogVideoX-5B"
+mkdir -p ~/video-models
+cd ~/video-models
+if [ -d "cogvideo" ]; then
+    echo "CogVideoX already installed"
+    exit 0
+fi
+pip3 install diffusers transformers accelerate
+git clone https://github.com/THUDM/CogVideo cogvideo
+cd cogvideo
+pip3 install -r requirements.txt
+echo "==> Downloading CogVideoX-5B model..."
+huggingface-cli download THUDM/CogVideoX-5b --local-dir ./weights
+echo "==> CogVideoX installed successfully"
+`,
+
+	"opensora": `#!/bin/bash
+set -e
+echo "==> Installing Open-Sora 2.0"
+mkdir -p ~/video-models
+cd ~/video-models
+if [ -d "open-sora" ]; then
+    echo "Open-Sora already installed"
+    exit 0
+fi
+git clone https://github.com/hpcaitech/Open-Sora open-sora
+cd open-sora
+pip3 install -e .
+echo "==> Downloading Open-Sora models..."
+huggingface-cli download hpcai-tech/OpenSora-STDiT-v3 --local-dir ./pretrained_models
+echo "==> Open-Sora installed successfully"
+`,
+
+	"ltxvideo": `#!/bin/bash
+set -e
+echo "==> Installing LTXVideo"
+mkdir -p ~/video-models
+cd ~/video-models
+if [ -d "ltxvideo" ]; then
+    echo "LTXVideo already installed"
+    exit 0
+fi
+pip3 install diffusers transformers accelerate torch
+git clone https://github.com/Lightricks/LTX-Video ltxvideo
+cd ltxvideo
+pip3 install -r requirements.txt
+echo "==> Downloading LTXVideo model..."
+huggingface-cli download Lightricks/LTX-Video --local-dir ./checkpoints
+echo "==> LTXVideo installed successfully"
+`,
 }
 

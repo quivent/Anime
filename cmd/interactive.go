@@ -163,7 +163,7 @@ func (m model) View() string {
 
 	// Group packages by category
 	categories := make(map[string][]*installer.Package)
-	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Application"}
+	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Video Generation", "Application"}
 
 	for _, pkg := range m.packages {
 		categories[pkg.Category] = append(categories[pkg.Category], pkg)
@@ -188,6 +188,8 @@ func (m model) View() string {
 			emoji = "🔮"
 		case "Models":
 			emoji = "⭐"
+		case "Video Generation":
+			emoji = "🎬"
 		case "Application":
 			emoji = "🎯"
 		}

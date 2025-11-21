@@ -27,9 +27,29 @@ export default function LambdaView() {
   const pollingIntervalRef = useRef<number | null>(null)
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configInstance, setConfigInstance] = useState<Instance | null>(null)
+  // Store timeout IDs to clean up on unmount and prevent memory leaks
+  const successMessageTimeoutRef = useRef<number | null>(null)
+  const restartSuccessTimeoutRef = useRef<number | null>(null)
+  const launchSuccessTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     checkConnection()
+
+    // Cleanup all timeouts on unmount to prevent memory leaks and state updates on unmounted component
+    return () => {
+      if (successMessageTimeoutRef.current !== null) {
+        clearTimeout(successMessageTimeoutRef.current)
+        successMessageTimeoutRef.current = null
+      }
+      if (restartSuccessTimeoutRef.current !== null) {
+        clearTimeout(restartSuccessTimeoutRef.current)
+        restartSuccessTimeoutRef.current = null
+      }
+      if (launchSuccessTimeoutRef.current !== null) {
+        clearTimeout(launchSuccessTimeoutRef.current)
+        launchSuccessTimeoutRef.current = null
+      }
+    }
   }, [])
 
   // Handle Escape key to close config modal
@@ -51,29 +71,51 @@ export default function LambdaView() {
   }, [showConfigModal])
 
   // Auto-refresh instances every 10 seconds to keep status updated
+  // Use a ref to track if we should be polling instead of depending on instances.length
+  // This prevents the interval from being recreated unnecessarily and avoids memory leaks
+  const shouldPollRef = useRef(false)
+
   useEffect(() => {
-    if (apiKeySet && instances.length > 0) {
+    // Update ref when apiKeySet changes
+    shouldPollRef.current = apiKeySet
+  }, [apiKeySet])
+
+  useEffect(() => {
+    // Start polling if we have an API key set
+    if (apiKeySet) {
+      // Clear any existing interval to avoid duplicates
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current)
+        pollingIntervalRef.current = null
+      }
+
       pollingIntervalRef.current = window.setInterval(async () => {
+        // Only poll if we should be polling (prevents state updates on unmounted component)
+        if (!shouldPollRef.current) {
+          return
+        }
         try {
           const instancesData = await invoke<Instance[]>('lambda_list_instances')
           setInstances(instancesData)
         } catch (err) {
-          console.error('[LambdaView] Error polling instances:', err)
+
         }
       }, 10000)
     }
 
+    // Cleanup function to prevent memory leak
     return () => {
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current)
+        pollingIntervalRef.current = null
       }
     }
-  }, [apiKeySet, instances.length])
+  }, [apiKeySet])
 
   const checkConnection = async () => {
     try {
       // First try to load API key from persistent storage
-      const loaded = await invoke<boolean>('load_lambda_api_key')
+      await invoke<boolean>('load_lambda_api_key')
 
       // Then check if we have a connection
       const connected = await invoke<boolean>('check_lambda_connection')
@@ -112,17 +154,17 @@ export default function LambdaView() {
   }
 
   const handleSaveApiKey = async () => {
-    console.log('[LambdaView] handleSaveApiKey called with key length:', apiKey.length)
+
     try {
-      console.log('[LambdaView] Invoking set_lambda_api_key...')
-      const result = await invoke('set_lambda_api_key', { apiKey })
-      console.log('[LambdaView] set_lambda_api_key result:', result)
+
+      await invoke
+
       setApiKeySet(true)
       setShowApiKeyDialog(false)
-      console.log('[LambdaView] Loading data after API key set...')
+
       await loadData()
     } catch (err) {
-      console.error('[LambdaView] Error setting API key:', err)
+
       setError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -159,7 +201,7 @@ export default function LambdaView() {
   }
 
   const confirmTerminate = async (instanceId: string) => {
-    console.log('[LambdaView] Confirming termination for instance:', instanceId)
+
     setTerminatingId(instanceId)
     setError(null)
     setSuccessMessage(null)
@@ -168,9 +210,7 @@ export default function LambdaView() {
     setTerminateProgress('Sending termination request...')
 
     try {
-      console.log('[LambdaView] Calling lambda_terminate_instances...')
-      const result = await invoke<string[]>('lambda_terminate_instances', { instanceIds: [instanceId] })
-      console.log('[LambdaView] Terminate API call successful, result:', result)
+      await invoke<string[]>('lambda_terminate_instances', { instanceIds: [instanceId] })
 
       setTerminateProgress('Instance terminating successfully')
       setSuccessMessage(`✓ Successfully terminated instance ${instanceId}`)
@@ -179,21 +219,24 @@ export default function LambdaView() {
       setInstances(prevInstances =>
         prevInstances.map(inst =>
           inst.id === instanceId
-            ? { ...inst, status: 'terminating' as any }
+            ? { ...inst, status: 'terminating' }
             : inst
         )
       )
 
       setTerminateProgress(null)
 
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccessMessage(null), 3000)
+      // Clear success message after 3 seconds (store timeout ID for cleanup)
+      if (successMessageTimeoutRef.current !== null) {
+        clearTimeout(successMessageTimeoutRef.current)
+      }
+      successMessageTimeoutRef.current = window.setTimeout(() => setSuccessMessage(null), 3000)
     } catch (err) {
-      console.error('[LambdaView] Error terminating instance:', err)
+
       setError(`Failed to terminate: ${err instanceof Error ? err.message : String(err)}`)
       setTerminateProgress(null)
     } finally {
-      console.log('[LambdaView] Clearing terminatingId')
+
       setTerminatingId(null)
     }
   }
@@ -208,8 +251,11 @@ export default function LambdaView() {
       setSuccessMessage(`✓ Successfully restarted instance ${instanceId}`)
       await loadData()
 
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccessMessage(null), 3000)
+      // Clear success message after 3 seconds (store timeout ID for cleanup)
+      if (restartSuccessTimeoutRef.current !== null) {
+        clearTimeout(restartSuccessTimeoutRef.current)
+      }
+      restartSuccessTimeoutRef.current = window.setTimeout(() => setSuccessMessage(null), 3000)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -495,9 +541,21 @@ export default function LambdaView() {
             instanceTypes={instanceTypes}
             sshKeys={sshKeys}
             onClose={() => setShowLaunchDialog(false)}
-            onLaunch={async () => {
+            onLaunch={async (instanceIds: string[]) => {
               setShowLaunchDialog(false)
-              await loadData()
+              // Fetch just the new instances instead of full refresh
+              try {
+                const instancesData = await invoke<Instance[]>('lambda_list_instances')
+                setInstances(instancesData)
+                setSuccessMessage(`✓ Successfully launched ${instanceIds.length} instance${instanceIds.length > 1 ? 's' : ''}`)
+                // Clear success message after 3 seconds (store timeout ID for cleanup)
+                if (launchSuccessTimeoutRef.current !== null) {
+                  clearTimeout(launchSuccessTimeoutRef.current)
+                }
+                launchSuccessTimeoutRef.current = window.setTimeout(() => setSuccessMessage(null), 3000)
+              } catch (err) {
+
+              }
             }}
           />
         )}
@@ -761,7 +819,7 @@ interface LaunchInstanceDialogProps {
   instanceTypes: InstanceType[]
   sshKeys: SSHKey[]
   onClose: () => void
-  onLaunch: () => void
+  onLaunch: (instanceIds: string[]) => void
 }
 
 function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: LaunchInstanceDialogProps) {
@@ -813,8 +871,7 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
   const [region, setRegion] = useState('')
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
   const [instanceName, setInstanceName] = useState(generateInstanceName())
-  const [quantity, setQuantity] = useState(1)
-  const [launching, setLaunching] = useState(false)
+  const [quantity] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const launchingRef = useRef(false)
@@ -840,7 +897,7 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
   const handleLaunch = async () => {
     // Prevent duplicate launches
     if (launchingRef.current) {
-      console.log('[LaunchInstanceDialog] Launch already in progress, ignoring duplicate call')
+
       return
     }
 
@@ -855,7 +912,6 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
     }
 
     launchingRef.current = true
-    setLaunching(true)
     setError(null)
     setSuccess(null)
 
@@ -869,16 +925,14 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
       })
 
       setSuccess(`✓ Successfully launched ${result.length} instance${result.length > 1 ? 's' : ''}! Instance IDs: ${result.join(', ')}`)
-      setLaunching(false)
 
-      // Close dialog and refresh after 2 seconds to show success message
+      // Close dialog and refresh after brief success message
       timeoutRef.current = window.setTimeout(() => {
-        onLaunch()
-      }, 2000)
+        onLaunch(result)
+      }, 1500)
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)
       setError(`Failed to launch instance: ${errorMsg}`)
-      setLaunching(false)
       launchingRef.current = false
     }
   }
@@ -936,7 +990,7 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
                   </div>
                   <div className="text-sm text-gray-400 mb-1">
                     {type.specs.vcpus} vCPUs • {type.specs.memory_gib} GB RAM • {type.specs.storage_gib} GB Storage
-                    {type.specs.gpus > 0 && ` • ${type.specs.gpus} GPU${type.specs.gpus > 1 ? 's' : ''}`}
+                    {type.specs.gpus && type.specs.gpus > 0 && ` • ${type.specs.gpus} GPU${type.specs.gpus > 1 ? 's' : ''}`}
                   </div>
                   <div className="text-xs text-mint-400/70">
                     Available in: {type.regions_with_capacity_available.map(r => r.description).join(', ')}
@@ -1023,18 +1077,6 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
             </div>
           )}
 
-          {launching && (
-            <div className="p-4 bg-electric-500/10 border border-electric-500/30 rounded-lg">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="animate-spin text-electric-400 text-xl">⚡</div>
-                <span className="text-electric-400 font-medium">Launching instance...</span>
-              </div>
-              <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                <div className="h-full bg-electric-500 animate-pulse" style={{ width: '100%' }} />
-              </div>
-            </div>
-          )}
-
           {error && (
             <div className="p-3 bg-sunset-500/10 border border-sunset-500/30 rounded-lg text-sunset-400 text-sm">
               {error}
@@ -1071,17 +1113,17 @@ function LaunchInstanceDialog({ instanceTypes, sshKeys, onClose, onLaunch }: Lau
         <div className="p-6 border-t border-gray-800 flex gap-3">
           <button
             onClick={onClose}
-            disabled={launching}
+            disabled={!!success}
             className="flex-1 px-6 py-3 bg-gray-800/50 hover:bg-gray-700/50 border border-gray-700 rounded-lg text-gray-300 transition-all disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={handleLaunch}
-            disabled={!selectedType || selectedKeys.length === 0 || launching || !!success}
+            disabled={!selectedType || selectedKeys.length === 0 || !!success}
             className="flex-1 px-6 py-3 bg-electric-500/20 hover:bg-electric-500/30 border border-electric-500/50 rounded-lg text-electric-400 font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {launching ? '⏳ Launching...' : success ? '✓ Success!' : 'Launch Instance'}
+            {success ? '✓ Success!' : 'Launch Instance'}
           </button>
         </div>
       </div>

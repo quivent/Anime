@@ -13,7 +13,6 @@ pub struct ServerConnection {
 impl ServerConnection {
     /// Connect to a server using SSH key authentication
     pub fn connect(host: &str, username: &str, private_key_path: &str) -> Result<Self> {
-        eprintln!("[SSH] Connecting to {}@{}...", username, host);
 
         // Establish TCP connection
         let tcp = TcpStream::connect(format!("{}:22", host))
@@ -33,8 +32,6 @@ impl ServerConnection {
             return Err(anyhow!("SSH authentication failed"));
         }
 
-        eprintln!("[SSH] Successfully connected to {}", host);
-
         Ok(Self {
             session,
             host: host.to_string(),
@@ -44,7 +41,6 @@ impl ServerConnection {
 
     /// Execute a command on the remote server and return the output
     pub fn execute_command(&self, command: &str) -> Result<String> {
-        eprintln!("[SSH] Executing: {}", command);
 
         let mut channel = self.session.channel_session()?;
         channel.exec(command)?;
@@ -58,7 +54,7 @@ impl ServerConnection {
         if exit_status != 0 {
             let mut stderr = String::new();
             channel.stderr().read_to_string(&mut stderr)?;
-            eprintln!("[SSH] Command failed with exit code {}: {}", exit_status, stderr);
+
             return Err(anyhow!("Command failed with exit code {}: {}", exit_status, stderr));
         }
 
@@ -79,6 +75,6 @@ impl ServerConnection {
 impl Drop for ServerConnection {
     fn drop(&mut self) {
         let _ = self.session.disconnect(None, "Closing connection", None);
-        eprintln!("[SSH] Disconnected from {}", self.host);
+
     }
 }

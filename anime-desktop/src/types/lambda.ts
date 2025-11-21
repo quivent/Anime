@@ -1,4 +1,4 @@
-export type InstanceStatus = 'active' | 'booting' | 'unhealthy' | 'terminated'
+export type InstanceStatus = 'active' | 'booting' | 'unhealthy' | 'terminated' | 'terminating'
 
 export interface Region {
   name: string

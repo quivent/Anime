@@ -19,7 +19,6 @@ interface ServerMonitorProps {
 export default function ServerMonitor({ instance, onClose }: ServerMonitorProps) {
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [isConnecting, setIsConnecting] = useState(true)
-  const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sshKeyPath, setSshKeyPath] = useState('')
   const [showKeyDialog, setShowKeyDialog] = useState(true)
@@ -29,6 +28,9 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
   const [customKeyPath, setCustomKeyPath] = useState('')
   const intervalRef = useRef<number | null>(null)
   const storeRef = useRef<Store | null>(null)
+  const isFetchingRef = useRef(false)
+  // Track if component is mounted to prevent state updates after unmount
+  const isMountedRef = useRef(true)
 
   useEffect(() => {
     // Initialize store and load SSH keys
@@ -42,7 +44,7 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
           setSshKeyPath(lastUsedKey)
         }
       } catch (err) {
-        console.error('Failed to load store:', err)
+
       }
     }
 
@@ -59,7 +61,7 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
           }
         }
       } catch (err) {
-        console.error('Failed to load SSH keys:', err)
+
         setError(err instanceof Error ? err.message : String(err))
       } finally {
         setIsLoadingKeys(false)
@@ -69,11 +71,17 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
     initStore()
     loadKeys()
 
+    // Cleanup function to prevent memory leaks
     return () => {
+      // Set mounted flag to false to prevent state updates on unmounted component
+      isMountedRef.current = false
+
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
+        intervalRef.current = null
       }
-      handleDisconnect()
+      // Properly handle async cleanup
+      handleDisconnect().catch(_ => {})
     }
   }, [])
 
@@ -110,11 +118,10 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
         await storeRef.current.save()
       }
 
-      setIsConnected(true)
       setShowKeyDialog(false)
 
-      // Start polling for status
-      fetchStatus()
+      // Start polling for status - first fetch, then start interval
+      await fetchStatus()
       intervalRef.current = window.setInterval(fetchStatus, 3000) // Poll every 3 seconds
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -132,21 +139,35 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
         instanceId: instance.id,
       })
     } catch (err) {
-      console.error('Failed to disconnect:', err)
+
     }
   }
 
   const fetchStatus = async () => {
+    // Prevent overlapping requests
+    if (isFetchingRef.current) {
+      return
+    }
+
+    isFetchingRef.current = true
     try {
       const serverStatus = await invoke<ServerStatus>('get_server_status', {
         instanceId: instance.id,
       })
-      setStatus(serverStatus)
-      setError(null)
-      setIsConnecting(false)
+      // Only update state if component is still mounted (prevents memory leak)
+      if (isMountedRef.current) {
+        setStatus(serverStatus)
+        setError(null)
+        setIsConnecting(false)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setIsConnecting(false)
+      // Only update state if component is still mounted (prevents memory leak)
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : String(err))
+        setIsConnecting(false)
+      }
+    } finally {
+      isFetchingRef.current = false
     }
   }
 

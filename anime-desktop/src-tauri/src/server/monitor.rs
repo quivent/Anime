@@ -79,11 +79,14 @@ impl ServerMonitor {
             .filter_map(|s| s.parse().ok())
             .collect();
 
+        let total_gb = values.get(0).copied().unwrap_or(0.0);
+        let used_gb = values.get(1).copied().unwrap_or(0.0);
+
         Ok(MemoryStatus {
-            total_gb: values.get(0).copied().unwrap_or(0.0),
-            used_gb: values.get(1).copied().unwrap_or(0.0),
+            total_gb,
+            used_gb,
             available_gb: values.get(2).copied().unwrap_or(0.0),
-            usage_percent: if values[0] > 0.0 { (values[1] / values[0]) * 100.0 } else { 0.0 },
+            usage_percent: if total_gb > 0.0 { (used_gb / total_gb) * 100.0 } else { 0.0 },
             swap_total_gb: values.get(3).copied().unwrap_or(0.0),
             swap_used_gb: values.get(4).copied().unwrap_or(0.0),
         })
@@ -148,11 +151,14 @@ impl ServerMonitor {
             .filter_map(|s| s.parse().ok())
             .collect();
 
+        let total_gb = values.get(0).copied().unwrap_or(0.0);
+        let used_gb = values.get(1).copied().unwrap_or(0.0);
+
         Ok(DiskStatus {
-            total_gb: values.get(0).copied().unwrap_or(0.0),
-            used_gb: values.get(1).copied().unwrap_or(0.0),
+            total_gb,
+            used_gb,
             available_gb: values.get(2).copied().unwrap_or(0.0),
-            usage_percent: if values[0] > 0.0 { (values[1] / values[0]) * 100.0 } else { 0.0 },
+            usage_percent: if total_gb > 0.0 { (used_gb / total_gb) * 100.0 } else { 0.0 },
         })
     }
 

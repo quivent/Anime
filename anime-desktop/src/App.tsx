@@ -4,15 +4,22 @@ import PackageGrid from './components/PackageGrid'
 import WizardFlow from './components/WizardFlow'
 import ServerManager from './components/ServerManager'
 import LambdaView from './components/LambdaView'
-import TerminalView from './components/TerminalView'
+import TerminalListView from './components/TerminalListView'
 import SakuraBackground from './components/SakuraBackground'
 import SakuraDecoration from './components/SakuraDecoration'
 import ModelsView from './components/ModelsView'
 import VisualView from './components/VisualView'
 import WorkflowsView from './components/WorkflowsView'
+import WritingView from './components/WritingView'
+import AnalysisView from './components/AnalysisView'
+import StoryboardsView from './components/StoryboardsView'
+import TodosView from './components/TodosView'
+import CoverageView from './components/CoverageView'
+import ClaudeTerminal from './components/ClaudeTerminal'
+import OllamaTerminal from './components/OllamaTerminal'
 import { usePackageStore } from './store/packageStore'
 
-type View = 'lambda' | 'terminal' | 'packages' | 'wizard' | 'servers' | 'flows' | 'models' | 'visual' | 'writing' | 'analysis' | 'storyboards'
+type View = 'lambda' | 'terminal' | 'lambda-terminal' | 'packages' | 'wizard' | 'servers' | 'flows' | 'models' | 'visual' | 'writing' | 'analysis' | 'storyboards' | 'todos' | 'ourguys' | 'claude' | 'ollama'
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('lambda')
@@ -59,16 +66,20 @@ function App() {
         {/* Content Area */}
         <div className="flex-1 overflow-hidden">
           {currentView === 'lambda' && <LambdaView />}
-          {currentView === 'terminal' && <TerminalView />}
+          {currentView === 'terminal' && <TerminalListView />}
           {currentView === 'packages' && <PackageGrid />}
           {currentView === 'wizard' && <WizardFlow />}
           {currentView === 'servers' && <ServerManager />}
           {currentView === 'flows' && <WorkflowsView />}
           {currentView === 'models' && <ModelsView />}
           {currentView === 'visual' && <VisualView />}
-          {currentView === 'writing' && <div className="h-full overflow-y-auto p-6"><h2 className="text-2xl font-bold mb-4">Writing</h2><p className="text-gray-400">Writing tools coming soon...</p></div>}
-          {currentView === 'analysis' && <div className="h-full overflow-y-auto p-6"><h2 className="text-2xl font-bold mb-4">Analysis</h2><p className="text-gray-400">Analysis tools coming soon...</p></div>}
-          {currentView === 'storyboards' && <div className="h-full overflow-y-auto p-6"><h2 className="text-2xl font-bold mb-4">Storyboards</h2><p className="text-gray-400">Storyboard generator coming soon...</p></div>}
+          {currentView === 'writing' && <WritingView />}
+          {currentView === 'analysis' && <CoverageView />}
+          {currentView === 'storyboards' && <StoryboardsView />}
+          {currentView === 'todos' && <TodosView />}
+          {currentView === 'ourguys' && <div className="flex gap-4 p-4"><div className="flex-1"><ClaudeTerminal /></div><div className="flex-1"><OllamaTerminal /></div></div>}
+          {currentView === 'claude' && <ClaudeTerminal />}
+          {currentView === 'ollama' && <OllamaTerminal />}
         </div>
 
         {/* Footer */}

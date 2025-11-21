@@ -17,7 +17,6 @@ pub async fn connect_to_server(
     private_key_path: String,
     state: State<'_, ServerState>,
 ) -> Result<String, String> {
-    eprintln!("[connect_to_server] Connecting to instance {} at {}", instance_id, host);
 
     // Create SSH connection
     let connection = ServerConnection::connect(&host, &username, &private_key_path)
@@ -30,7 +29,6 @@ pub async fn connect_to_server(
     let mut connections = state.connections.lock().unwrap();
     connections.insert(instance_id.clone(), monitor);
 
-    eprintln!("[connect_to_server] Successfully connected to {}", instance_id);
     Ok(format!("Connected to {}", instance_id))
 }
 
@@ -39,7 +37,6 @@ pub async fn disconnect_from_server(
     instance_id: String,
     state: State<'_, ServerState>,
 ) -> Result<String, String> {
-    eprintln!("[disconnect_from_server] Disconnecting from {}", instance_id);
 
     let mut connections = state.connections.lock().unwrap();
     connections.remove(&instance_id);
@@ -52,7 +49,6 @@ pub async fn get_server_status(
     instance_id: String,
     state: State<'_, ServerState>,
 ) -> Result<ServerStatus, String> {
-    eprintln!("[get_server_status] Getting status for {}", instance_id);
 
     let connections = state.connections.lock().unwrap();
     let monitor = connections.get(&instance_id)
@@ -84,7 +80,6 @@ pub async fn execute_server_command(
     command: String,
     state: State<'_, ServerState>,
 ) -> Result<String, String> {
-    eprintln!("[execute_server_command] Executing '{}' on {}", command, instance_id);
 
     let connections = state.connections.lock().unwrap();
     let _monitor = connections.get(&instance_id)
@@ -104,7 +99,6 @@ pub struct SshKeyInfo {
 
 #[tauri::command]
 pub async fn find_ssh_keys() -> Result<Vec<SshKeyInfo>, String> {
-    eprintln!("[find_ssh_keys] Scanning for SSH keys");
 
     let mut keys = Vec::new();
 
@@ -116,7 +110,7 @@ pub async fn find_ssh_keys() -> Result<Vec<SshKeyInfo>, String> {
 
     // Check if .ssh directory exists
     if !ssh_dir.exists() {
-        eprintln!("[find_ssh_keys] .ssh directory does not exist");
+
         return Ok(keys);
     }
 
@@ -132,7 +126,6 @@ pub async fn find_ssh_keys() -> Result<Vec<SshKeyInfo>, String> {
         let key_path = ssh_dir.join(key_name);
 
         if key_path.exists() {
-            eprintln!("[find_ssh_keys] Found key: {}", key_path.display());
 
             // Check file permissions (should be 600 or 400)
             let metadata = fs::metadata(&key_path)
@@ -171,13 +164,11 @@ pub async fn find_ssh_keys() -> Result<Vec<SshKeyInfo>, String> {
         }
     }
 
-    eprintln!("[find_ssh_keys] Found {} keys", keys.len());
     Ok(keys)
 }
 
 #[tauri::command]
 pub async fn validate_ssh_key(key_path: String) -> Result<bool, String> {
-    eprintln!("[validate_ssh_key] Validating key: {}", key_path);
 
     let path = PathBuf::from(&key_path);
 
@@ -221,6 +212,5 @@ pub async fn validate_ssh_key(key_path: String) -> Result<bool, String> {
         return Err("File does not appear to be a valid SSH private key".to_string());
     }
 
-    eprintln!("[validate_ssh_key] Key is valid");
     Ok(true)
 }

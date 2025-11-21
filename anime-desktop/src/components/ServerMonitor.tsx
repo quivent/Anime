@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { Store } from '@tauri-apps/plugin-store'
 import type { Instance } from '../types/lambda'
 import type { ServerStatus } from '../types/server'
+
+interface SshKeyInfo {
+  path: string
+  name: string
+  key_type: string
+  is_valid: boolean
+}
 
 interface ServerMonitorProps {
   instance: Instance
@@ -15,9 +23,52 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
   const [error, setError] = useState<string | null>(null)
   const [sshKeyPath, setSshKeyPath] = useState('')
   const [showKeyDialog, setShowKeyDialog] = useState(true)
+  const [availableKeys, setAvailableKeys] = useState<SshKeyInfo[]>([])
+  const [isLoadingKeys, setIsLoadingKeys] = useState(true)
+  const [useCustomPath, setUseCustomPath] = useState(false)
+  const [customKeyPath, setCustomKeyPath] = useState('')
   const intervalRef = useRef<number | null>(null)
+  const storeRef = useRef<Store | null>(null)
 
   useEffect(() => {
+    // Initialize store and load SSH keys
+    const initStore = async () => {
+      try {
+        storeRef.current = await Store.load('settings.json')
+
+        // Load last used key
+        const lastUsedKey = await storeRef.current.get<string>('lastUsedSshKey')
+        if (lastUsedKey) {
+          setSshKeyPath(lastUsedKey)
+        }
+      } catch (err) {
+        console.error('Failed to load store:', err)
+      }
+    }
+
+    const loadKeys = async () => {
+      try {
+        const keys = await invoke<SshKeyInfo[]>('find_ssh_keys')
+        setAvailableKeys(keys)
+
+        // Auto-select first valid key if no last-used key
+        if (!sshKeyPath && keys.length > 0) {
+          const firstValidKey = keys.find(k => k.is_valid)
+          if (firstValidKey) {
+            setSshKeyPath(firstValidKey.path)
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load SSH keys:', err)
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setIsLoadingKeys(false)
+      }
+    }
+
+    initStore()
+    loadKeys()
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
@@ -27,8 +78,10 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
   }, [])
 
   const handleConnect = async () => {
-    if (!sshKeyPath.trim()) {
-      setError('Please enter the path to your SSH private key')
+    const keyPath = useCustomPath ? customKeyPath : sshKeyPath
+
+    if (!keyPath.trim()) {
+      setError('Please select or enter the path to your SSH private key')
       return
     }
 
@@ -41,12 +94,21 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
     setError(null)
 
     try {
+      // Validate the key first
+      await invoke<boolean>('validate_ssh_key', { keyPath })
+
       await invoke('connect_to_server', {
         instanceId: instance.id,
         host: instance.ip,
         username: 'ubuntu',
-        privateKeyPath: sshKeyPath,
+        privateKeyPath: keyPath,
       })
+
+      // Save last used key to store
+      if (storeRef.current) {
+        await storeRef.current.set('lastUsedSshKey', keyPath)
+        await storeRef.current.save()
+      }
 
       setIsConnected(true)
       setShowKeyDialog(false)
@@ -129,30 +191,84 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
           </div>
 
           <div className="p-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                SSH Private Key Path
-              </label>
-              <input
-                type="text"
-                value={sshKeyPath}
-                onChange={(e) => setSshKeyPath(e.target.value)}
-                placeholder="~/.ssh/id_rsa"
-                className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg focus:outline-none focus:border-electric-500 text-white font-mono text-sm"
-                onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
-                autoFocus
-              />
-              {instance.ssh_key_names && instance.ssh_key_names.length > 0 && (
-                <p className="text-xs text-gray-500 mt-2">
-                  Enter the path to the private key matching one of: {instance.ssh_key_names.join(', ')}
-                </p>
-              )}
-            </div>
-
-            {error && (
-              <div className="p-3 bg-sunset-500/10 border border-sunset-500/30 rounded-lg text-sunset-400 text-sm">
-                {error}
+            {isLoadingKeys ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="text-gray-400">Scanning for SSH keys...</div>
               </div>
+            ) : (
+              <>
+                {!useCustomPath && availableKeys.length > 0 ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Select SSH Private Key
+                    </label>
+                    <select
+                      value={sshKeyPath}
+                      onChange={(e) => setSshKeyPath(e.target.value)}
+                      className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg focus:outline-none focus:border-electric-500 text-white text-sm"
+                      autoFocus
+                    >
+                      <option value="">-- Select a key --</option>
+                      {availableKeys.map((key) => (
+                        <option key={key.path} value={key.path}>
+                          {key.name} ({key.key_type}) {!key.is_valid && ' - Invalid permissions'}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex items-center justify-between mt-2">
+                      <p className="text-xs text-gray-500">
+                        {availableKeys.length} key(s) found in ~/.ssh
+                      </p>
+                      <button
+                        onClick={() => setUseCustomPath(true)}
+                        className="text-xs text-electric-400 hover:text-electric-300 transition-colors"
+                      >
+                        Use custom path
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      SSH Private Key Path
+                    </label>
+                    <input
+                      type="text"
+                      value={useCustomPath ? customKeyPath : sshKeyPath}
+                      onChange={(e) => useCustomPath ? setCustomKeyPath(e.target.value) : setSshKeyPath(e.target.value)}
+                      placeholder="~/.ssh/id_rsa"
+                      className="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg focus:outline-none focus:border-electric-500 text-white font-mono text-sm"
+                      onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
+                      autoFocus
+                    />
+                    {availableKeys.length > 0 && useCustomPath && (
+                      <button
+                        onClick={() => {
+                          setUseCustomPath(false)
+                          setCustomKeyPath('')
+                        }}
+                        className="text-xs text-electric-400 hover:text-electric-300 transition-colors mt-2"
+                      >
+                        Choose from detected keys
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {instance.ssh_key_names && instance.ssh_key_names.length > 0 && (
+                  <div className="p-3 bg-mint-500/10 border border-mint-500/30 rounded-lg">
+                    <p className="text-xs text-mint-400">
+                      Instance expects key: {instance.ssh_key_names.join(', ')}
+                    </p>
+                  </div>
+                )}
+
+                {error && (
+                  <div className="p-3 bg-sunset-500/10 border border-sunset-500/30 rounded-lg text-sunset-400 text-sm">
+                    {error}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -165,7 +281,7 @@ export default function ServerMonitor({ instance, onClose }: ServerMonitorProps)
             </button>
             <button
               onClick={handleConnect}
-              disabled={!sshKeyPath.trim() || isConnecting}
+              disabled={isLoadingKeys || (useCustomPath ? !customKeyPath.trim() : !sshKeyPath.trim()) || isConnecting}
               className="flex-1 px-6 py-3 bg-electric-500/20 hover:bg-electric-500/30 border border-electric-500/50 rounded-lg text-electric-400 font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isConnecting ? 'Connecting...' : 'Connect'}

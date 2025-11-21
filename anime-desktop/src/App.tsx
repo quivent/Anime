@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
 import PackageGrid from './components/PackageGrid'
-import InstallProgress from './components/InstallProgress'
 import WizardFlow from './components/WizardFlow'
 import ServerManager from './components/ServerManager'
 import LambdaView from './components/LambdaView'
+import TerminalView from './components/TerminalView'
 import SakuraBackground from './components/SakuraBackground'
 import SakuraDecoration from './components/SakuraDecoration'
 import ModelsView from './components/ModelsView'
@@ -13,10 +12,10 @@ import VisualView from './components/VisualView'
 import WorkflowsView from './components/WorkflowsView'
 import { usePackageStore } from './store/packageStore'
 
-type View = 'lambda' | 'packages' | 'wizard' | 'servers' | 'progress' | 'flows' | 'models' | 'visual' | 'writing' | 'analysis' | 'storyboards'
+type View = 'lambda' | 'terminal' | 'packages' | 'wizard' | 'servers' | 'flows' | 'models' | 'visual' | 'writing' | 'analysis' | 'storyboards'
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>('packages')
+  const [currentView, setCurrentView] = useState<View>('lambda')
   const { installing } = usePackageStore()
 
   return (
@@ -60,10 +59,10 @@ function App() {
         {/* Content Area */}
         <div className="flex-1 overflow-hidden">
           {currentView === 'lambda' && <LambdaView />}
+          {currentView === 'terminal' && <TerminalView />}
           {currentView === 'packages' && <PackageGrid />}
           {currentView === 'wizard' && <WizardFlow />}
           {currentView === 'servers' && <ServerManager />}
-          {currentView === 'progress' && <InstallProgress />}
           {currentView === 'flows' && <WorkflowsView />}
           {currentView === 'models' && <ModelsView />}
           {currentView === 'visual' && <VisualView />}

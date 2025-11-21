@@ -58,6 +58,12 @@ pub struct Instance {
     pub hostname: Option<String>,
     pub jupyter_token: Option<String>,
     pub jupyter_url: Option<String>,
+    #[serde(default)]
+    pub is_reserved: Option<bool>,
+    #[serde(default)]
+    pub actions: Option<serde_json::Value>,
+    #[serde(default)]
+    pub firewall_rulesets: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,11 +73,20 @@ pub enum InstanceStatus {
     Booting,
     Unhealthy,
     Terminated,
+    Terminating,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceTypeName {
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub gpu_description: Option<String>,
+    #[serde(default)]
+    pub price_cents_per_hour: Option<u64>,
+    #[serde(default)]
+    pub specs: Option<InstanceSpecs>,
 }
 
 // SSH Keys
@@ -107,8 +122,13 @@ pub struct LaunchInstanceRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct LaunchInstanceResponse {
+pub struct LaunchInstanceResponseData {
     pub instance_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LaunchInstanceResponse {
+    pub data: LaunchInstanceResponseData,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,8 +168,13 @@ pub struct TerminateInstanceRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TerminateInstanceResponseData {
+    pub terminated_instances: Vec<Instance>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TerminateInstanceResponse {
-    pub terminated_instances: Vec<String>,
+    pub data: TerminateInstanceResponseData,
 }
 
 #[derive(Debug, Serialize)]

@@ -96,29 +96,79 @@ impl LambdaClient {
 
     pub async fn launch_instance(&self, request: LaunchInstanceRequest) -> Result<Vec<String>> {
         let url = format!("{}/instance-operations/launch", LAMBDA_API_BASE);
-        let response = self.client.post(&url).json(&request).send().await?;
+        eprintln!("[launch_instance] Making request to: {}", url);
+        eprintln!("[launch_instance] Request payload: {:?}", request);
 
-        if !response.status().is_success() {
-            let error: ApiError = response.json().await?;
-            return Err(anyhow!("API Error: {}", error.error.message));
+        let response = self.client.post(&url).json(&request).send().await
+            .map_err(|e| {
+                eprintln!("[launch_instance] Network error: {}", e);
+                anyhow!("Network error: {}", e)
+            })?;
+
+        let status = response.status();
+        eprintln!("[launch_instance] Response status: {}", status);
+
+        let body_text = response.text().await
+            .map_err(|e| {
+                eprintln!("[launch_instance] Failed to read response body: {}", e);
+                anyhow!("Failed to read response body: {}", e)
+            })?;
+
+        eprintln!("[launch_instance] Raw response body: {}", body_text);
+
+        if !status.is_success() {
+            eprintln!("[launch_instance] Error response");
+            return Err(anyhow!("Lambda API request failed with status {}. Response: {}", status, body_text));
         }
 
-        let result: LaunchInstanceResponse = response.json().await?;
-        Ok(result.instance_ids)
+        let result: LaunchInstanceResponse = serde_json::from_str(&body_text)
+            .map_err(|e| {
+                eprintln!("[launch_instance] Failed to parse response: {}", e);
+                eprintln!("[launch_instance] Response was: {}", body_text);
+                anyhow!("Failed to parse response: {}", e)
+            })?;
+
+        eprintln!("[launch_instance] Successfully launched: {:?}", result.data.instance_ids);
+        Ok(result.data.instance_ids)
     }
 
     pub async fn terminate_instances(&self, instance_ids: Vec<String>) -> Result<Vec<String>> {
         let url = format!("{}/instance-operations/terminate", LAMBDA_API_BASE);
-        let request = TerminateInstanceRequest { instance_ids };
-        let response = self.client.post(&url).json(&request).send().await?;
+        eprintln!("[terminate_instances] Terminating instances: {:?}", instance_ids);
 
-        if !response.status().is_success() {
-            let error: ApiError = response.json().await?;
-            return Err(anyhow!("API Error: {}", error.error.message));
+        let request = TerminateInstanceRequest { instance_ids };
+        let response = self.client.post(&url).json(&request).send().await
+            .map_err(|e| {
+                eprintln!("[terminate_instances] Network error: {}", e);
+                anyhow!("Network error: {}", e)
+            })?;
+
+        let status = response.status();
+        eprintln!("[terminate_instances] Response status: {}", status);
+
+        let body_text = response.text().await
+            .map_err(|e| {
+                eprintln!("[terminate_instances] Failed to read response body: {}", e);
+                anyhow!("Failed to read response body: {}", e)
+            })?;
+
+        eprintln!("[terminate_instances] Raw response body: {}", body_text);
+
+        if !status.is_success() {
+            eprintln!("[terminate_instances] Error response");
+            return Err(anyhow!("Lambda API request failed with status {}. Response: {}", status, body_text));
         }
 
-        let result: TerminateInstanceResponse = response.json().await?;
-        Ok(result.terminated_instances)
+        let result: TerminateInstanceResponse = serde_json::from_str(&body_text)
+            .map_err(|e| {
+                eprintln!("[terminate_instances] Failed to parse response: {}", e);
+                eprintln!("[terminate_instances] Response was: {}", body_text);
+                anyhow!("Failed to parse response: {}", e)
+            })?;
+
+        let terminated_ids: Vec<String> = result.data.terminated_instances.iter().map(|inst| inst.id.clone()).collect();
+        eprintln!("[terminate_instances] Successfully terminated: {:?}", terminated_ids);
+        Ok(terminated_ids)
     }
 
     pub async fn restart_instances(&self, instance_ids: Vec<String>) -> Result<Vec<String>> {

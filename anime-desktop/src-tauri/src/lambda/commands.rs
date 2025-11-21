@@ -1,4 +1,5 @@
-use tauri::State;
+use tauri::{State, AppHandle};
+use tauri_plugin_store::StoreExt;
 use std::sync::Mutex;
 use super::{LambdaClient, Instance, InstanceType, SSHKey, FileSystem, LaunchInstanceRequest};
 
@@ -9,6 +10,7 @@ pub struct LambdaState {
 #[tauri::command]
 pub async fn set_lambda_api_key(
     api_key: String,
+    app: AppHandle,
     state: State<'_, LambdaState>,
 ) -> Result<String, String> {
     eprintln!("[set_lambda_api_key] Starting - API key length: {}", api_key.len());
@@ -35,8 +37,54 @@ pub async fn set_lambda_api_key(
     let mut client_guard = state.client.lock().unwrap();
     *client_guard = Some(client);
 
+    // Save API key to persistent store
+    eprintln!("[set_lambda_api_key] Saving API key to store");
+    let store = app.store("store.json").map_err(|e| {
+        eprintln!("[set_lambda_api_key] Failed to get store: {}", e);
+        format!("Failed to access store: {}", e)
+    })?;
+
+    store.set("lambda_api_key", serde_json::json!(api_key));
+    store.save().map_err(|e| {
+        eprintln!("[set_lambda_api_key] Failed to save store: {}", e);
+        format!("Failed to save API key: {}", e)
+    })?;
+
     eprintln!("[set_lambda_api_key] Success!");
     Ok("API key set successfully".to_string())
+}
+
+#[tauri::command]
+pub async fn load_lambda_api_key(
+    app: AppHandle,
+    state: State<'_, LambdaState>,
+) -> Result<bool, String> {
+    eprintln!("[load_lambda_api_key] Attempting to load API key from store");
+
+    let store = app.store("store.json").map_err(|e| {
+        eprintln!("[load_lambda_api_key] Failed to get store: {}", e);
+        format!("Failed to access store: {}", e)
+    })?;
+
+    if let Some(api_key_value) = store.get("lambda_api_key") {
+        if let Some(api_key) = api_key_value.as_str() {
+            eprintln!("[load_lambda_api_key] Found API key in store, loading...");
+
+            let client = LambdaClient::new(api_key.to_string()).map_err(|e| {
+                eprintln!("[load_lambda_api_key] Failed to create client: {}", e);
+                format!("Failed to create client: {}", e)
+            })?;
+
+            let mut client_guard = state.client.lock().unwrap();
+            *client_guard = Some(client);
+
+            eprintln!("[load_lambda_api_key] API key loaded successfully");
+            return Ok(true);
+        }
+    }
+
+    eprintln!("[load_lambda_api_key] No API key found in store");
+    Ok(false)
 }
 
 #[tauri::command]

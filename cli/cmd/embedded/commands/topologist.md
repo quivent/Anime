@@ -1,98 +1,172 @@
-# Topologist - Repository Topology & Initialization Protocol
+# Topologist v2.0
 
-Usage: Systematically analyze current directory topology, initialize git repository if needed, create private GitHub remote with SSH configuration, and generate intelligent staging plan with batched commits.
+Load the Eigen project's topological encoding from the SQLite database. Once loaded, use it to navigate all subsequent queries.
 
-**Repository Topology Analysis & GitHub Integration Protocol:**
+## LOAD (Database-First)
 
-🎯 **Phase 1: Repository Topology Detection**
-- Analyze `.git` directory existence and integrity validation
-- Scan directory structure for file type classification and project detection
-- Evaluate existing remote configurations and repository health status
-- **Validation Criteria**: Repository status accurately identified with comprehensive topology mapping
-
-🔧 **Phase 2: Conditional Git Initialization** 
-- Initialize git repository with modern branch naming conventions
-- Configure user settings and repository-specific git configuration
-- Establish initial commit structure and branch protection protocols
-- **Validation Criteria**: Git repository properly initialized with secure configuration standards
-
-🌐 **Phase 3: GitHub Remote Integration**
-- Extract current directory name for repository naming consistency
-- Parse command arguments for organization specification (format: "on ORG/REPO" or "--org ORG")
-- Determine target organization (command-specified, parameter-specified, or gh CLI default account)
-- Create private GitHub repository with proper permissions and settings
-- Configure SSH remote origin with authentication key management
-- **Validation Criteria**: Remote repository created and SSH origin configured successfully
-
-📝 **Phase 4: Essential File Generation**
-- Generate context-aware .gitignore based on detected file types and frameworks
-- Create comprehensive README.md with project structure documentation (conditional)
-- Validate file permissions, encoding, and accessibility across platforms
-- **Validation Criteria**: Essential files created with appropriate content and formatting
-
-📊 **Phase 5: Intelligent Staging Strategy**
-- Categorize all files by type, modification status, and logical grouping
-- Generate batched commit strategy with descriptive messages and proper staging
-- Create executable staging plan with review capabilities and rollback options
-- **Validation Criteria**: Comprehensive staging plan generated with intelligent file grouping
-
-**Integration Patterns:**
-- GitHub CLI (`gh`) integration for repository management and authentication
-- SSH key management for secure remote access and configuration
-- File type detection for intelligent .gitignore generation and project analysis
-- Git workflow automation with safety validation and error handling
-
-**Parameters:**
-- `--org [organization]`: Specify target GitHub organization (default: personal account)
-- `--private`: Create private repository (default: true)
-- `--dry-run`: Preview all actions without execution for safety validation
-- `--force`: Override existing configurations and safety prompts
-- `--template [type]`: Specify .gitignore template (auto-detected if not specified)
-- `--no-readme`: Skip README.md creation even if absent
-
-**Usage Examples:**
-
+Query database for overview:
 ```bash
-# Basic repository initialization in current directory
-topologist
-
-# Initialize with specific organization (parameter format)
-topologist --org mycompany
-
-# Initialize with specific organization (command format)
-topologist on mycompany/project-name
-
-# Preview actions without execution
-topologist --dry-run
-
-# Force override existing configurations
-topologist --force --org enterprise
-
-# Skip README creation
-topologist --no-readme --template node
+python3 tools/topology_db.py stats
 ```
 
-**Output Format:**
-- Repository topology analysis report
-- GitHub repository creation confirmation with SSH clone URL
-- Generated .gitignore and README.md file confirmations
-- Executable staging plan with batched commit commands
-- Validation status for each phase with success/failure indicators
+Output shows:
+- Total concepts (defined + stubs)
+- Document associations
+- Concept relations
+- Calibration status
 
-**Error Handling:**
-- Git installation and configuration validation
-- GitHub CLI authentication and permissions verification  
-- SSH key availability and GitHub account access validation
-- File system permissions and directory access checks
-- Network connectivity and GitHub API availability validation
+For full encoding summary:
+```bash
+python3 tools/topology_db.py export --format summary
+```
 
-**Integration with CLI System:**
-- Command available via `/topologist` slash command
-- Automatic help generation with parameter descriptions
-- Tab completion for organization names and template types
-- Progress indicators for long-running operations
-- Comprehensive error reporting with actionable resolution steps
+## DATABASE LOCATION
 
-**Version**: 1.0.0  
-**Dependencies**: git, gh CLI, ssh-keygen, file type detection utilities  
-**Deployment Status**: Ready for immediate integration and execution
+**Primary**: `topology.db` (SQLite in repo root)
+**CLI Tool**: `tools/topology_db.py`
+**Dashboard**: `tools/topology-dashboard/` (Tauri app)
+**Fallback**: `TOPOLOGIST_ENCODING.md` (deprecated, read-only)
+
+## ENCODING FORMAT (v2.0 Database)
+
+**Tables**:
+- `concepts` - Named concepts with descriptions
+- `documents` - File paths with importance weights
+- `concept_documents` - Association: concept ↔ document (weight, depth)
+- `concept_relations` - Association: concept ↔ concept (weight, type)
+
+**Weight Scale** (same as v1.2):
+| Weight | Meaning | Ask Yourself |
+|--------|---------|--------------|
+| 15 | Core/breakthrough | Would project fail without this? |
+| 14 | Important | Key mechanism, connects multiple concepts? |
+| 13 | Supporting | Useful context? |
+| 12 | Detail | Aids recall but not essential? |
+
+**Target Distribution**: 20% weight-15 / 40% weight-14 / 30% weight-13 / 10% weight-12
+
+**Depth Scale** (calibration accuracy):
+| Depth | Meaning |
+|-------|---------|
+| 16 | Full content read + cross-referenced |
+| 12 | Read thoroughly |
+| 8 | Skimmed or partially read |
+| 4 | Path heuristic + brief scan |
+| 1 | Path heuristic only (needs calibration) |
+
+## QUERY WORKFLOW (After Loading)
+
+You are now the Topologist. For any query:
+
+### 1. Semantic Mapping
+Map query to concepts using your understanding (no keyword matching).
+
+### 2. Query Database
+```bash
+# Find concepts matching query
+python3 tools/topology_db.py query "<search_terms>"
+
+# Get documents for a concept (high-weight only)
+python3 tools/topology_db.py docs <concept> --min-weight 14 --resolve-paths
+
+# Get related concepts
+python3 tools/topology_db.py related <concept> --show-weights
+```
+
+### 3. Read Highest-Weight Files
+Use Read tool on returned paths. Priority:
+- 15 = breakthrough (read first)
+- 14 = important (read second)
+- 13 = supporting (if needed)
+
+### 4. Answer from Source
+Go directly to files. No grep needed if mapping succeeds.
+
+## FALLBACK + SELF-UPDATE
+
+If semantic mapping fails and database query returns nothing:
+
+### 1. Use Embedding Fallback
+```bash
+python3 tools/topology_graph.py query "<query>"
+```
+Or direct Grep/Glob if needed.
+
+### 2. UPDATE THE DATABASE after finding answer:
+
+**Add new concept:**
+```bash
+python3 tools/topology_db.py add-concept <name> \
+  --description "What this concept represents" \
+  --category <category>
+```
+
+**Add document association:**
+```bash
+python3 tools/topology_db.py add-doc <concept> <path> \
+  --weight 14 --depth 8
+```
+
+**Add concept relation:**
+```bash
+python3 tools/topology_db.py add-relation <from> <to> \
+  --weight 14 --type relates
+```
+
+### 3. Export for Git
+```bash
+python3 tools/topology_db.py export --format markdown > TOPOLOGIST_ENCODING.md
+```
+
+**The encoding should grow with use.** Every fallback is a coverage gap. Fill it.
+
+## CALIBRATION PRIORITY
+
+When time permits, calibrate low-depth entries:
+```bash
+# Find uncalibrated entries (depth 1-4)
+python3 tools/topology_db.py validate --check uncalibrated
+
+# Calibrate after reading
+python3 tools/topology_db.py update-depth <concept> <path> <new_depth>
+```
+
+Or use the Dashboard's Depth Calibration tool for interactive calibration.
+
+## DASHBOARD (Visual Interface)
+
+For visual topology management:
+```bash
+cd tools/topology-dashboard && npm run tauri dev
+```
+
+Features:
+- Query Traversal Tester (BFS visualization)
+- Encoding Workflow (add/edit relations)
+- Benchmark Runner (>70% precision target)
+- Depth Calibration (batch calibration)
+- Weight Distribution Validator
+
+## QUICK REFERENCE
+
+```bash
+# Stats
+python3 tools/topology_db.py stats
+
+# Query concepts
+python3 tools/topology_db.py query "<search>"
+
+# Get documents
+python3 tools/topology_db.py docs <concept> --min-weight 14
+
+# Related concepts
+python3 tools/topology_db.py related <concept>
+
+# Add concept
+python3 tools/topology_db.py add-concept <name> --description "..."
+
+# Export
+python3 tools/topology_db.py export --format markdown
+```
+
+$ARGUMENTS

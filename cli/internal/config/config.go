@@ -108,6 +108,11 @@ type LaunchedApp struct {
 	AuthType       string `yaml:"auth_type,omitempty"`
 	SSLEnabled     bool   `yaml:"ssl_enabled,omitempty"`
 	PackageManager string `yaml:"package_manager,omitempty"`
+	DatabaseType   string `yaml:"database_type,omitempty"`
+	DatabaseName   string `yaml:"database_name,omitempty"`
+	DatabaseUser   string `yaml:"database_user,omitempty"`
+	DatabaseLocal  bool   `yaml:"database_local,omitempty"`
+	MigrationsRun  bool   `yaml:"migrations_run,omitempty"`
 	CreatedAt      string `yaml:"created_at"`
 }
 

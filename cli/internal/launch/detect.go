@@ -53,8 +53,9 @@ type DetectionResult struct {
 	Project  *DetectedProject
 	AllFound []ProjectType // all project types detected
 	Issues   []ProjectIssue
-	Clean    bool   // true if no issues found
-	EnvFile  string // path to .env file if found
+	Clean    bool           // true if no issues found
+	EnvFile  string         // path to .env file if found
+	Database *DatabaseInfo  // database detection results
 }
 
 // DetectProject scans the given path for project indicators
@@ -227,6 +228,18 @@ func AnalyzeProject(path string) *DetectionResult {
 	// ── Port detection from source ──
 	if detectedPort := detectPortFromSource(path, result.Project); detectedPort > 0 {
 		result.Project.Port = detectedPort
+	}
+
+	// ── Database detection ──
+	result.Database = detectDatabase(path, result.Project.Type, result.Project.Framework)
+	if result.Database != nil && result.Database.Detected {
+		// Also extract tables from SQL migration files
+		sqlTables := extractTablesFromSQLFiles(path)
+		result.Database.Tables = append(result.Database.Tables, sqlTables...)
+		result.Database.Tables = dedup(result.Database.Tables)
+		// Generate database-related issues
+		dbIssues := databaseIssues(result.Database, result.EnvFile)
+		result.Issues = append(result.Issues, dbIssues...)
 	}
 
 	result.Clean = len(result.Issues) == 0

@@ -1,0 +1,94 @@
+# LLM Models - Frontier Class
+# Best quality models, typically require multi-GPU clusters
+# Ordered by benchmark performance - highest quality first
+
+modules:
+  - id: deepseek-r1-671b
+    name: "DeepSeek-R1 671B"
+    description: "SOTA reasoning, rivals O3/Gemini 2.5 Pro. MoE: 671B total, 37B active"
+    time_minutes: 90
+    script: model-deepseek-r1-671b
+    category: LLM-Frontier
+    size: "~400GB"
+    dependencies:
+      - ollama
+    cluster:
+      min_gpus: 4
+      recommended_gpus: 8
+      min_vram_per_gpu: 80
+      total_vram: 480
+      parallelism: "TP4EP2 (4-way tensor, 2-way expert parallelism)"
+      inference_engine: "vllm or tensorrt-llm"
+      notes: "Use --max-model-len 32768 for stability. Wide-EP recommended for B200 NVL72. Enable FP8 quantization for 30% memory reduction."
+
+  - id: deepseek-v3-671b
+    name: "DeepSeek-V3 671B"
+    description: "Latest V3 architecture. MoE: 671B total + 14B MTP, 37B active per token"
+    time_minutes: 90
+    script: model-deepseek-v3-671b
+    category: LLM-Frontier
+    size: "~400GB"
+    dependencies:
+      - ollama
+    cluster:
+      min_gpus: 4
+      recommended_gpus: 8
+      min_vram_per_gpu: 80
+      total_vram: 480
+      parallelism: "TP4EP2 (4-way tensor, 2-way expert parallelism)"
+      inference_engine: "vllm or tensorrt-llm"
+      notes: "MTP head adds 14B params. Use --trust-remote-code. Achieves 368 tok/s with TensorRT-LLM on 8×B200."
+
+  - id: qwen3-235b-a22b
+    name: "Qwen3 235B-A22B"
+    description: "Flagship Qwen3 MoE. 235B total, 22B active. 119 languages, 36T training tokens"
+    time_minutes: 60
+    script: model-qwen3-235b-a22b
+    category: LLM-Frontier
+    size: "~142GB"
+    dependencies:
+      - ollama
+    cluster:
+      min_gpus: 2
+      recommended_gpus: 4
+      min_vram_per_gpu: 80
+      total_vram: 192
+      parallelism: "TP2 or TP4 (tensor parallelism only)"
+      inference_engine: "vllm or ollama"
+      notes: "Smaller MoE than DeepSeek. Fits on 2×H100/A100. Use BF16 for best quality, INT8 for speed."
+
+  - id: llama4-maverick
+    name: "Llama 4 Maverick"
+    description: "Meta's multimodal MoE. 400B total, 17B active, 128 experts, 512K context"
+    time_minutes: 75
+    script: model-llama4-maverick
+    category: LLM-Frontier
+    size: "~240GB"
+    dependencies:
+      - ollama
+    cluster:
+      min_gpus: 4
+      recommended_gpus: 8
+      min_vram_per_gpu: 80
+      total_vram: 320
+      parallelism: "TP4EP2 (handles 128 experts efficiently)"
+      inference_engine: "vllm"
+      notes: "128 experts benefit from Wide Expert Parallelism on large clusters. Use --max-model-len 65536 for 64K context, scale up for 512K."
+
+  - id: llama4-scout
+    name: "Llama 4 Scout"
+    description: "Meta's efficient MoE. 109B total, 17B active, 10M context! Fits single H100"
+    time_minutes: 45
+    script: model-llama4-scout
+    category: LLM-Frontier
+    size: "~65GB"
+    dependencies:
+      - ollama
+    cluster:
+      min_gpus: 1
+      recommended_gpus: 2
+      min_vram_per_gpu: 80
+      total_vram: 80
+      parallelism: "TP1 or TP2 (efficient MoE)"
+      inference_engine: "vllm or ollama"
+      notes: "Most efficient frontier model! Fits single H100/A100 80GB. 10M context requires chunked attention. Use --enable-chunked-prefill."

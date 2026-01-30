@@ -1,0 +1,73 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle with gradient -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0f0f1e;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="sakuraGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff6b9d;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ffc6d9;stop-opacity:1" />
+    </linearGradient>
+    <radialGradient id="glowGradient">
+      <stop offset="0%" style="stop-color:#ff6b9d;stop-opacity:0.6" />
+      <stop offset="100%" style="stop-color:#ff6b9d;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <circle cx="256" cy="256" r="256" fill="url(#bgGradient)"/>
+
+  <!-- Glow effect -->
+  <circle cx="256" cy="256" r="200" fill="url(#glowGradient)"/>
+
+  <!-- Cherry blossom petals arranged in a circular pattern -->
+  <!-- Center circle -->
+  <circle cx="256" cy="256" r="40" fill="#ffd700"/>
+
+  <!-- Top petal -->
+  <path d="M 256 120 Q 220 140 230 180 Q 240 200 256 200 Q 272 200 282 180 Q 292 140 256 120 Z"
+        fill="url(#sakuraGradient)" stroke="#ff4d7d" stroke-width="2"/>
+
+  <!-- Top-right petal -->
+  <path d="M 340 175 Q 315 165 290 190 Q 275 205 280 220 Q 285 235 300 230 Q 335 220 340 175 Z"
+        fill="url(#sakuraGradient)" stroke="#ff4d7d" stroke-width="2"/>
+
+  <!-- Bottom-right petal -->
+  <path d="M 360 300 Q 340 280 310 285 Q 290 290 285 305 Q 280 320 295 325 Q 330 335 360 300 Z"
+        fill="url(#sakuraGradient)" stroke="#ff4d7d" stroke-width="2"/>
+
+  <!-- Bottom petal -->
+  <path d="M 256 392 Q 290 372 280 332 Q 270 312 256 312 Q 242 312 232 332 Q 222 372 256 392 Z"
+        fill="url(#sakuraGradient)" stroke="#ff4d7d" stroke-width="2"/>
+
+  <!-- Bottom-left petal -->
+  <path d="M 152 300 Q 182 280 202 285 Q 222 290 227 305 Q 232 320 217 325 Q 182 335 152 300 Z"
+        fill="url(#sakuraGradient)" stroke="#ff4d7d" stroke-width="2"/>
+
+  <!-- Top-left petal -->
+  <path d="M 172 175 Q 197 165 222 190 Q 237 205 232 220 Q 227 235 212 230 Q 177 220 172 175 Z"
+        fill="url(#sakuraGradient)" stroke="#ff4d7d" stroke-width="2"/>
+
+  <!-- Center decorative elements -->
+  <circle cx="256" cy="256" r="35" fill="#ffe066" opacity="0.8"/>
+  <circle cx="256" cy="256" r="25" fill="#ffd700"/>
+  <circle cx="256" cy="256" r="15" fill="#ffed4e"/>
+
+  <!-- Small accent circles in center -->
+  <circle cx="246" cy="246" r="3" fill="#ff6b9d"/>
+  <circle cx="266" cy="246" r="3" fill="#ff6b9d"/>
+  <circle cx="256" cy="256" r="3" fill="#ff6b9d"/>
+  <circle cx="246" cy="266" r="3" fill="#ff6b9d"/>
+  <circle cx="266" cy="266" r="3" fill="#ff6b9d"/>
+
+  <!-- Outer sparkles -->
+  <circle cx="150" cy="150" r="8" fill="#ff6b9d" opacity="0.6"/>
+  <circle cx="362" cy="150" r="6" fill="#ffc6d9" opacity="0.7"/>
+  <circle cx="362" cy="362" r="8" fill="#ff6b9d" opacity="0.6"/>
+  <circle cx="150" cy="362" r="6" fill="#ffc6d9" opacity="0.7"/>
+
+  <!-- Cloud accent for Lambda Cloud -->
+  <path d="M 380 420 Q 370 410 360 415 Q 355 405 340 405 Q 330 405 325 415 Q 315 410 305 420 Q 300 430 310 435 Q 300 445 310 450 Q 315 455 325 450 Q 330 460 345 460 Q 360 460 365 450 Q 375 455 380 450 Q 390 445 380 435 Q 390 430 380 420 Z"
+        fill="#4facfe" opacity="0.3" stroke="#4facfe" stroke-width="1"/>
+</svg>

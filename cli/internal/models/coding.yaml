@@ -1,0 +1,356 @@
+# Coding Models
+# Last updated: December 2025
+
+models:
+  # ===========================================================================
+  # QWEN CODER (November 2024)
+  # ===========================================================================
+  - id: qwen2.5-coder-32b
+    name: "Qwen2.5-Coder 32B"
+    provider: Alibaba
+    description: "SOTA open-source coding, GPT-4o level"
+    type: Coding
+    category: Large
+    architecture: Dense
+    total_params: "32B"
+    active_params: "32B"
+    size: "~20GB"
+    vram: "24GB"
+    huggingface_id: Qwen/Qwen2.5-Coder-32B-Instruct
+    vllm_model: Qwen/Qwen2.5-Coder-32B-Instruct
+    ollama_id: qwen2.5-coder:32b
+    release_date: "Nov 2024"
+    license: "Apache 2.0"
+    use_cases: ["Code generation", "Debugging", "Review"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct
+
+  - id: qwen2.5-coder-14b
+    name: "Qwen2.5-Coder 14B"
+    provider: Alibaba
+    description: "Excellent coding in smaller package"
+    type: Coding
+    category: Medium
+    architecture: Dense
+    total_params: "14B"
+    active_params: "14B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: Qwen/Qwen2.5-Coder-14B-Instruct
+    vllm_model: Qwen/Qwen2.5-Coder-14B-Instruct
+    ollama_id: qwen2.5-coder:14b
+    release_date: "Nov 2024"
+    license: "Apache 2.0"
+    use_cases: ["Code completion", "Refactoring"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct
+
+  - id: qwen2.5-coder-7b
+    name: "Qwen2.5-Coder 7B"
+    provider: Alibaba
+    description: "Efficient coding specialist"
+    type: Coding
+    category: Small
+    architecture: Dense
+    total_params: "7B"
+    active_params: "7B"
+    size: "~4.5GB"
+    vram: "10GB"
+    huggingface_id: Qwen/Qwen2.5-Coder-7B-Instruct
+    vllm_model: Qwen/Qwen2.5-Coder-7B-Instruct
+    ollama_id: qwen2.5-coder:7b
+    release_date: "Nov 2024"
+    license: "Apache 2.0"
+    use_cases: ["Code completion", "Scripts"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct
+
+  - id: qwen2.5-coder-3b
+    name: "Qwen2.5-Coder 3B"
+    provider: Alibaba
+    description: "Tiny but capable coder"
+    type: Coding
+    category: Tiny
+    architecture: Dense
+    total_params: "3B"
+    active_params: "3B"
+    size: "~2GB"
+    vram: "6GB"
+    huggingface_id: Qwen/Qwen2.5-Coder-3B-Instruct
+    vllm_model: Qwen/Qwen2.5-Coder-3B-Instruct
+    ollama_id: qwen2.5-coder:3b
+    release_date: "Nov 2024"
+    license: "Apache 2.0"
+    use_cases: ["Autocomplete", "Simple tasks"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct
+
+  - id: qwen2.5-coder-1.5b
+    name: "Qwen2.5-Coder 1.5B"
+    provider: Alibaba
+    description: "Ultra-lightweight coder"
+    type: Coding
+    category: Tiny
+    architecture: Dense
+    total_params: "1.5B"
+    active_params: "1.5B"
+    size: "~1GB"
+    vram: "4GB"
+    huggingface_id: Qwen/Qwen2.5-Coder-1.5B-Instruct
+    vllm_model: Qwen/Qwen2.5-Coder-1.5B-Instruct
+    ollama_id: qwen2.5-coder:1.5b
+    release_date: "Nov 2024"
+    license: "Apache 2.0"
+    use_cases: ["Editor plugins", "Fast completion"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct
+
+  # ===========================================================================
+  # MISTRAL CODING
+  # ===========================================================================
+  - id: devstral-small-2
+    name: "Devstral Small 2"
+    provider: Mistral
+    description: "Agentic coding model, Dec 2025"
+    type: Coding
+    category: Agentic
+    architecture: Dense
+    total_params: "24B"
+    active_params: "24B"
+    size: "~15GB"
+    vram: "24GB"
+    huggingface_id: mistralai/Devstral-Small-2
+    vllm_model: mistralai/Devstral-Small-2
+    release_date: "Dec 2025"
+    license: "Apache 2.0"
+    use_cases: ["Agentic coding", "Code generation"]
+    hf_link: https://huggingface.co/mistralai/Devstral-Small-2
+
+  - id: codestral-2501
+    name: "Codestral 2501"
+    provider: Mistral
+    description: "Latest Mistral coding model"
+    type: Coding
+    category: General
+    architecture: Dense
+    total_params: "22B"
+    active_params: "22B"
+    size: "~14GB"
+    vram: "24GB"
+    huggingface_id: mistralai/Codestral-2501
+    vllm_model: mistralai/Codestral-2501
+    release_date: "Jan 2025"
+    license: "Mistral Research"
+    use_cases: ["Code generation", "FIM", "80+ languages"]
+    hf_link: https://huggingface.co/mistralai/Codestral-2501
+
+  - id: codestral-22b
+    name: "Codestral 22B"
+    provider: Mistral
+    description: "Mistral's coding model, 32K context"
+    type: Coding
+    category: Medium
+    architecture: Dense
+    total_params: "22B"
+    active_params: "22B"
+    size: "~14GB"
+    vram: "24GB"
+    huggingface_id: mistralai/Codestral-22B-v0.1
+    vllm_model: mistralai/Codestral-22B-v0.1
+    release_date: "May 2024"
+    license: "Mistral Research"
+    use_cases: ["Code generation", "Long context"]
+    hf_link: https://huggingface.co/mistralai/Codestral-22B-v0.1
+
+  # ===========================================================================
+  # DEEPSEEK CODER
+  # ===========================================================================
+  - id: deepseek-coder-v2-lite
+    name: "DeepSeek-Coder-V2-Lite 16B"
+    provider: DeepSeek
+    description: "Efficient coding MoE, 2.4B active"
+    type: Coding
+    category: MoE
+    architecture: MoE
+    total_params: "16B"
+    active_params: "2.4B"
+    size: "~10GB"
+    vram: "16GB"
+    huggingface_id: deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+    vllm_model: deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+    release_date: "Jun 2024"
+    license: "MIT"
+    use_cases: ["Code generation", "Review"]
+    hf_link: https://huggingface.co/deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+
+  - id: deepseek-coder-33b
+    name: "DeepSeek-Coder 33B"
+    provider: DeepSeek
+    description: "Strong coding with fill-in-middle support"
+    type: Coding
+    category: Large
+    architecture: Dense
+    total_params: "33B"
+    active_params: "33B"
+    size: "~20GB"
+    vram: "24GB"
+    huggingface_id: deepseek-ai/deepseek-coder-33b-instruct
+    vllm_model: deepseek-ai/deepseek-coder-33b-instruct
+    ollama_id: deepseek-coder:33b
+    release_date: "Nov 2023"
+    license: "MIT"
+    use_cases: ["Code generation", "FIM"]
+    hf_link: https://huggingface.co/deepseek-ai/deepseek-coder-33b-instruct
+
+  - id: deepseek-coder-6.7b
+    name: "DeepSeek-Coder 6.7B"
+    provider: DeepSeek
+    description: "Efficient coding model"
+    type: Coding
+    category: Small
+    architecture: Dense
+    total_params: "6.7B"
+    active_params: "6.7B"
+    size: "~4GB"
+    vram: "10GB"
+    huggingface_id: deepseek-ai/deepseek-coder-6.7b-instruct
+    vllm_model: deepseek-ai/deepseek-coder-6.7b-instruct
+    ollama_id: deepseek-coder:6.7b
+    release_date: "Nov 2023"
+    license: "MIT"
+    use_cases: ["Code completion", "Scripts"]
+    hf_link: https://huggingface.co/deepseek-ai/deepseek-coder-6.7b-instruct
+
+  # ===========================================================================
+  # CODELLAMA
+  # ===========================================================================
+  - id: codellama-70b
+    name: "CodeLlama 70B"
+    provider: Meta
+    description: "Meta's largest code-specialized model"
+    type: Coding
+    category: Large
+    architecture: Dense
+    total_params: "70B"
+    active_params: "70B"
+    size: "~40GB"
+    vram: "48GB+"
+    huggingface_id: codellama/CodeLlama-70b-Instruct-hf
+    vllm_model: codellama/CodeLlama-70b-Instruct-hf
+    ollama_id: codellama:70b
+    release_date: "Jan 2024"
+    license: "Llama 2"
+    use_cases: ["Code generation", "Code review"]
+    hf_link: https://huggingface.co/codellama/CodeLlama-70b-Instruct-hf
+
+  - id: codellama-34b
+    name: "CodeLlama 34B"
+    provider: Meta
+    description: "Meta's code specialist"
+    type: Coding
+    category: Large
+    architecture: Dense
+    total_params: "34B"
+    active_params: "34B"
+    size: "~20GB"
+    vram: "24GB"
+    huggingface_id: codellama/CodeLlama-34b-Instruct-hf
+    vllm_model: codellama/CodeLlama-34b-Instruct-hf
+    ollama_id: codellama:34b
+    release_date: "Aug 2023"
+    license: "Llama 2"
+    use_cases: ["Code generation", "Infilling"]
+    hf_link: https://huggingface.co/codellama/CodeLlama-34b-Instruct-hf
+
+  - id: codellama-13b
+    name: "CodeLlama 13B"
+    provider: Meta
+    description: "Balanced CodeLlama"
+    type: Coding
+    category: Medium
+    architecture: Dense
+    total_params: "13B"
+    active_params: "13B"
+    size: "~8GB"
+    vram: "16GB"
+    huggingface_id: codellama/CodeLlama-13b-Instruct-hf
+    vllm_model: codellama/CodeLlama-13b-Instruct-hf
+    ollama_id: codellama:13b
+    release_date: "Aug 2023"
+    license: "Llama 2"
+    use_cases: ["Code completion"]
+    hf_link: https://huggingface.co/codellama/CodeLlama-13b-Instruct-hf
+
+  - id: codellama-7b
+    name: "CodeLlama 7B"
+    provider: Meta
+    description: "Efficient CodeLlama"
+    type: Coding
+    category: Small
+    architecture: Dense
+    total_params: "7B"
+    active_params: "7B"
+    size: "~4GB"
+    vram: "10GB"
+    huggingface_id: codellama/CodeLlama-7b-Instruct-hf
+    vllm_model: codellama/CodeLlama-7b-Instruct-hf
+    ollama_id: codellama:7b
+    release_date: "Aug 2023"
+    license: "Llama 2"
+    use_cases: ["Fast completion"]
+    hf_link: https://huggingface.co/codellama/CodeLlama-7b-Instruct-hf
+
+  # ===========================================================================
+  # STARCODER
+  # ===========================================================================
+  - id: starcoder2-15b
+    name: "StarCoder2 15B"
+    provider: BigCode
+    description: "BigCode's latest, 600+ languages"
+    type: Coding
+    category: Medium
+    architecture: Dense
+    total_params: "15B"
+    active_params: "15B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: bigcode/starcoder2-15b
+    vllm_model: bigcode/starcoder2-15b
+    ollama_id: starcoder2:15b
+    release_date: "Feb 2024"
+    license: "BigCode OpenRAIL-M"
+    use_cases: ["Multi-language", "Completion"]
+    hf_link: https://huggingface.co/bigcode/starcoder2-15b
+
+  - id: starcoder2-7b
+    name: "StarCoder2 7B"
+    provider: BigCode
+    description: "Efficient multi-language coder"
+    type: Coding
+    category: Small
+    architecture: Dense
+    total_params: "7B"
+    active_params: "7B"
+    size: "~4.5GB"
+    vram: "10GB"
+    huggingface_id: bigcode/starcoder2-7b
+    vllm_model: bigcode/starcoder2-7b
+    ollama_id: starcoder2:7b
+    release_date: "Feb 2024"
+    license: "BigCode OpenRAIL-M"
+    use_cases: ["Completion", "Scripts"]
+    hf_link: https://huggingface.co/bigcode/starcoder2-7b
+
+  - id: starcoder2-3b
+    name: "StarCoder2 3B"
+    provider: BigCode
+    description: "Tiny StarCoder"
+    type: Coding
+    category: Tiny
+    architecture: Dense
+    total_params: "3B"
+    active_params: "3B"
+    size: "~2GB"
+    vram: "6GB"
+    huggingface_id: bigcode/starcoder2-3b
+    vllm_model: bigcode/starcoder2-3b
+    ollama_id: starcoder2:3b
+    release_date: "Feb 2024"
+    license: "BigCode OpenRAIL-M"
+    use_cases: ["Autocomplete"]
+    hf_link: https://huggingface.co/bigcode/starcoder2-3b

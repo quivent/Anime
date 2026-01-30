@@ -1,0 +1,23 @@
+# Tool Modules
+# Development and workflow tools
+
+modules:
+  - id: comfyui
+    name: "ComfyUI"
+    description: "Node-based image/video generation UI"
+    time_minutes: 2
+    script: comfyui
+    category: Tools
+    size: "~500MB"
+    dependencies:
+      - pytorch
+
+  - id: claude
+    name: "Claude Code CLI"
+    description: "Anthropic Claude Code CLI assistant"
+    time_minutes: 1
+    script: claude
+    category: Tools
+    size: "~100MB"
+    dependencies:
+      - core

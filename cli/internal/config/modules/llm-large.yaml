@@ -1,0 +1,23 @@
+# LLM Models - Large Class
+# 70B+ models, typically need 2+ GPUs or quantization for single GPU
+
+modules:
+  - id: deepseek-r1-70b
+    name: "DeepSeek-R1 70B"
+    description: "Distilled R1, near frontier performance. Strong math/code/logic"
+    time_minutes: 35
+    script: model-deepseek-r1-70b
+    category: LLM-Large
+    size: "~43GB"
+    dependencies:
+      - ollama
+
+  - id: llama-3.3-70b
+    name: "Llama 3.3 70B"
+    description: "Meta's flagship dense model. Exceptional reasoning & coding"
+    time_minutes: 30
+    script: model-llama-3.3-70b
+    category: LLM-Large
+    size: "~40GB"
+    dependencies:
+      - ollama

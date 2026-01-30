@@ -1,0 +1,47 @@
+# Image Generation Models
+# Text-to-image and image manipulation models
+
+modules:
+  - id: sdxl
+    name: "Stable Diffusion XL"
+    description: "High-quality images, great composition"
+    time_minutes: 8
+    script: model-sdxl
+    category: Image
+    size: "~7GB"
+    dependencies:
+      - pytorch
+      - comfyui
+
+  - id: sd15
+    name: "Stable Diffusion 1.5"
+    description: "Classic model, huge LoRA ecosystem"
+    time_minutes: 5
+    script: model-sd15
+    category: Image
+    size: "~4GB"
+    dependencies:
+      - pytorch
+      - comfyui
+
+  - id: flux-dev
+    name: "Flux.1 Dev"
+    description: "Exceptional prompt following & photorealism"
+    time_minutes: 12
+    script: model-flux-dev
+    category: Image
+    size: "~12GB"
+    dependencies:
+      - pytorch
+      - comfyui
+
+  - id: flux-schnell
+    name: "Flux.1 Schnell"
+    description: "Fast Flux variant, rapid iteration"
+    time_minutes: 12
+    script: model-flux-schnell
+    category: Image
+    size: "~12GB"
+    dependencies:
+      - pytorch
+      - comfyui

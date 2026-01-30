@@ -1,0 +1,246 @@
+# Media Models - Image, Video, Enhancement, Control
+# Last updated: December 2025
+
+models:
+  # ===========================================================================
+  # IMAGE GENERATION
+  # ===========================================================================
+  - id: sdxl
+    name: "Stable Diffusion XL"
+    provider: Stability
+    description: "Latest SD with improved quality"
+    type: Image
+    category: General
+    size: "~7GB"
+    vram: "12GB"
+    huggingface_id: stabilityai/stable-diffusion-xl-base-1.0
+    hf_link: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+
+  - id: sd15
+    name: "Stable Diffusion 1.5"
+    provider: Stability
+    description: "Classic SD with huge ecosystem"
+    type: Image
+    category: Classic
+    size: "~4GB"
+    vram: "8GB"
+    huggingface_id: runwayml/stable-diffusion-v1-5
+    hf_link: https://huggingface.co/runwayml/stable-diffusion-v1-5
+
+  - id: flux-dev
+    name: "Flux.1 Dev"
+    provider: Black Forest Labs
+    description: "Exceptional prompt following"
+    type: Image
+    category: Professional
+    size: "~12GB"
+    vram: "24GB"
+    huggingface_id: black-forest-labs/FLUX.1-dev
+    hf_link: https://huggingface.co/black-forest-labs/FLUX.1-dev
+
+  - id: flux-schnell
+    name: "Flux.1 Schnell"
+    provider: Black Forest Labs
+    description: "Fast Flux optimized for speed"
+    type: Image
+    category: Fast
+    size: "~12GB"
+    vram: "24GB"
+    huggingface_id: black-forest-labs/FLUX.1-schnell
+    hf_link: https://huggingface.co/black-forest-labs/FLUX.1-schnell
+
+  - id: sd35-large
+    name: "SD 3.5 Large"
+    provider: Stability
+    description: "8B param flagship SD3"
+    type: Image
+    category: Flagship
+    size: "~16GB"
+    vram: "24GB"
+    huggingface_id: stabilityai/stable-diffusion-3.5-large
+    hf_link: https://huggingface.co/stabilityai/stable-diffusion-3.5-large
+
+  - id: playground-v25
+    name: "Playground v2.5"
+    provider: Playground
+    description: "State-of-the-art aesthetics"
+    type: Image
+    category: Aesthetic
+    size: "~7GB"
+    vram: "12GB"
+    huggingface_id: playgroundai/playground-v2.5-1024px-aesthetic
+    hf_link: https://huggingface.co/playgroundai/playground-v2.5-1024px-aesthetic
+
+  # ===========================================================================
+  # VIDEO GENERATION
+  # ===========================================================================
+  - id: cogvideox-5b
+    name: "CogVideoX 5B"
+    provider: THUDM
+    description: "10-second videos at high res"
+    type: Video
+    category: Text-to-Video
+    size: "~18GB"
+    vram: "24GB"
+    huggingface_id: THUDM/CogVideoX-5b
+    hf_link: https://huggingface.co/THUDM/CogVideoX-5b
+
+  - id: hunyuan-video
+    name: "HunyuanVideo"
+    provider: Tencent
+    description: "Open-source text-to-video"
+    type: Video
+    category: Text-to-Video
+    size: "~20GB"
+    vram: "32GB"
+    huggingface_id: tencent/HunyuanVideo
+    hf_link: https://huggingface.co/tencent/HunyuanVideo
+
+  - id: svd
+    name: "Stable Video Diffusion"
+    provider: Stability
+    description: "Image-to-video model"
+    type: Video
+    category: Image-to-Video
+    size: "~10GB"
+    vram: "16GB"
+    huggingface_id: stabilityai/stable-video-diffusion-img2vid-xt
+    hf_link: https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt
+
+  - id: mochi
+    name: "Mochi-1"
+    provider: Genmo
+    description: "Open source 10B video gen"
+    type: Video
+    category: Text-to-Video
+    size: "~12GB"
+    vram: "24GB"
+    huggingface_id: genmo/mochi-1-preview
+    hf_link: https://huggingface.co/genmo/mochi-1-preview
+
+  - id: ltxvideo
+    name: "LTXVideo"
+    provider: Lightricks
+    description: "Fast video generation"
+    type: Video
+    category: Fast
+    size: "~7GB"
+    vram: "16GB"
+    huggingface_id: Lightricks/LTX-Video
+    hf_link: https://huggingface.co/Lightricks/LTX-Video
+
+  - id: animatediff
+    name: "AnimateDiff"
+    provider: Community
+    description: "Motion module for SD"
+    type: Video
+    category: Animation
+    size: "~4GB"
+    vram: "12GB"
+    huggingface_id: guoyww/animatediff-motion-adapter-v1-5-3
+    hf_link: https://huggingface.co/guoyww/animatediff-motion-adapter-v1-5-3
+
+  # ===========================================================================
+  # ENHANCEMENT MODELS
+  # ===========================================================================
+  - id: real-esrgan
+    name: "Real-ESRGAN"
+    provider: Community
+    description: "4x upscaling with artifact removal"
+    type: Enhance
+    category: Upscaler
+    size: "~200MB"
+    vram: "4GB"
+    huggingface_id: ai-forever/Real-ESRGAN
+    hf_link: https://huggingface.co/ai-forever/Real-ESRGAN
+
+  - id: gfpgan
+    name: "GFPGAN"
+    provider: Tencent
+    description: "Face restoration"
+    type: Enhance
+    category: Face
+    size: "~350MB"
+    vram: "4GB"
+    huggingface_id: TencentARC/GFPGAN
+    hf_link: https://huggingface.co/TencentARC/GFPGAN
+
+  - id: supir
+    name: "SUPIR"
+    provider: Community
+    description: "Photo-realistic restoration"
+    type: Enhance
+    category: Restoration
+    size: "~12GB"
+    vram: "24GB"
+    huggingface_id: Fanghua-Yu/SUPIR
+    hf_link: https://huggingface.co/Fanghua-Yu/SUPIR
+
+  - id: rife
+    name: "RIFE"
+    provider: Community
+    description: "Video frame interpolation"
+    type: Enhance
+    category: Interpolation
+    size: "~200MB"
+    vram: "4GB"
+    huggingface_id: hzwer/ECCV2022-RIFE
+    hf_link: https://huggingface.co/hzwer/ECCV2022-RIFE
+
+  # ===========================================================================
+  # CONTROLNET MODELS
+  # ===========================================================================
+  - id: controlnet-canny
+    name: "ControlNet Canny"
+    provider: Community
+    description: "Edge detection conditioning"
+    type: Control
+    category: Edge
+    size: "~1.5GB"
+    vram: "8GB"
+    huggingface_id: lllyasviel/control_v11p_sd15_canny
+    hf_link: https://huggingface.co/lllyasviel/control_v11p_sd15_canny
+
+  - id: controlnet-depth
+    name: "ControlNet Depth"
+    provider: Community
+    description: "Depth map conditioning"
+    type: Control
+    category: Depth
+    size: "~1.5GB"
+    vram: "8GB"
+    huggingface_id: lllyasviel/control_v11f1p_sd15_depth
+    hf_link: https://huggingface.co/lllyasviel/control_v11f1p_sd15_depth
+
+  - id: controlnet-openpose
+    name: "ControlNet OpenPose"
+    provider: Community
+    description: "Pose conditioning"
+    type: Control
+    category: Pose
+    size: "~1.5GB"
+    vram: "8GB"
+    huggingface_id: lllyasviel/control_v11p_sd15_openpose
+    hf_link: https://huggingface.co/lllyasviel/control_v11p_sd15_openpose
+
+  - id: ip-adapter
+    name: "IP-Adapter"
+    provider: Community
+    description: "Image prompt adapter"
+    type: Control
+    category: Adapter
+    size: "~100MB"
+    vram: "8GB"
+    huggingface_id: h94/IP-Adapter
+    hf_link: https://huggingface.co/h94/IP-Adapter
+
+  - id: instantid
+    name: "InstantID"
+    provider: Community
+    description: "Identity-preserving generation"
+    type: Control
+    category: Identity
+    size: "~2GB"
+    vram: "12GB"
+    huggingface_id: InstantX/InstantID
+    hf_link: https://huggingface.co/InstantX/InstantID

@@ -1,0 +1,58 @@
+# Video Generation Models
+# Text-to-video and image-to-video generation models
+
+modules:
+  - id: svd
+    name: "Stable Video Diffusion"
+    description: "Image-to-video, smooth animations"
+    time_minutes: 10
+    script: model-svd
+    category: Video
+    size: "~10GB"
+    dependencies:
+      - pytorch
+      - comfyui
+
+  - id: animatediff
+    name: "AnimateDiff"
+    description: "Motion module, animates SD images"
+    time_minutes: 6
+    script: model-animatediff
+    category: Video
+    size: "~4GB"
+    dependencies:
+      - pytorch
+      - comfyui
+
+  - id: cogvideo
+    name: "CogVideoX-5B"
+    description: "Text-to-video with temporal consistency"
+    time_minutes: 18
+    script: model-cogvideo
+    category: Video
+    size: "~14GB"
+    dependencies:
+      - pytorch
+      - comfyui
+
+  - id: wan2
+    name: "Wan2.2"
+    description: "State-of-the-art image-to-video quality"
+    time_minutes: 12
+    script: model-wan2
+    category: Video
+    size: "~10GB"
+    dependencies:
+      - pytorch
+      - comfyui
+
+  - id: ltxvideo
+    name: "LTXVideo"
+    description: "Fast video generation, quick previews"
+    time_minutes: 8
+    script: model-ltxvideo
+    category: Video
+    size: "~7GB"
+    dependencies:
+      - pytorch
+      - comfyui

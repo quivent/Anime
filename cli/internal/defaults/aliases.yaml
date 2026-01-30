@@ -1,0 +1,7 @@
+# Default server aliases - embedded in binary
+# Edit this file and rebuild to update defaults
+aliases:
+  lambda: "ubuntu@209.20.159.132"
+  # Add more default aliases here:
+  # staging: "ubuntu@10.0.0.100"
+  # prod: "ubuntu@10.0.0.200"

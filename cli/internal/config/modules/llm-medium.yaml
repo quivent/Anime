@@ -1,0 +1,123 @@
+# LLM Models - Medium Class
+# 14-34B models, single GPU friendly with good performance
+
+modules:
+  - id: qwq-32b
+    name: "QwQ 32B"
+    description: "Qwen's reasoning specialist. Rivals DeepSeek-R1 & o1-mini at 32B!"
+    time_minutes: 18
+    script: model-qwq-32b
+    category: LLM-Medium
+    size: "~20GB"
+    dependencies:
+      - ollama
+
+  - id: deepseek-r1-32b
+    name: "DeepSeek-R1 32B"
+    description: "Distilled R1, performs like o1-mini. Excellent reasoning"
+    time_minutes: 16
+    script: model-deepseek-r1-32b
+    category: LLM-Medium
+    size: "~20GB"
+    dependencies:
+      - ollama
+
+  - id: qwen3-32b
+    name: "Qwen3 32B"
+    description: "Large dense Qwen3. Strong reasoning, coding, multilingual"
+    time_minutes: 15
+    script: model-qwen3-32b
+    category: LLM-Medium
+    size: "~20GB"
+    dependencies:
+      - ollama
+
+  - id: qwen3-30b-a3b
+    name: "Qwen3 30B-A3B MoE"
+    description: "Small MoE, beats QwQ-32B with only 3B active! Ultra efficient"
+    time_minutes: 14
+    script: model-qwen3-30b-a3b
+    category: LLM-Medium
+    size: "~19GB"
+    dependencies:
+      - ollama
+
+  - id: qwen3-coder-30b-a3b
+    name: "Qwen3-Coder 30B-A3B"
+    description: "Most agentic code model. MoE 30B/3.3B active, 256K context"
+    time_minutes: 14
+    script: model-qwen3-coder-30b-a3b
+    category: LLM-Medium
+    size: "~19GB"
+    dependencies:
+      - ollama
+
+  - id: gemma3-27b
+    name: "Gemma3 27B"
+    description: "Google's largest Gemma3. Vision capable, single GPU"
+    time_minutes: 14
+    script: model-gemma3-27b
+    category: LLM-Medium
+    size: "~17GB"
+    dependencies:
+      - ollama
+
+  - id: mixtral-8x7b
+    name: "Mixtral 8x7B"
+    description: "Mistral's MoE. 47B total, ~13B active. Multi-task efficient"
+    time_minutes: 18
+    script: model-mixtral-8x7b
+    category: LLM-Medium
+    size: "~26GB"
+    dependencies:
+      - ollama
+
+  - id: deepseek-coder-33b
+    name: "DeepSeek Coder 33B"
+    description: "Code specialist. 2T+ training tokens of code"
+    time_minutes: 15
+    script: model-deepseek-coder-33b
+    category: LLM-Medium
+    size: "~18GB"
+    dependencies:
+      - ollama
+
+  - id: deepseek-r1-14b
+    name: "DeepSeek-R1 14B"
+    description: "Distilled R1 on Qwen2.5. Great reasoning at modest size"
+    time_minutes: 10
+    script: model-deepseek-r1-14b
+    category: LLM-Medium
+    size: "~9GB"
+    dependencies:
+      - ollama
+
+  - id: qwen3-14b
+    name: "Qwen3 14B"
+    description: "Dense Qwen3. Excellent bilingual Chinese/English"
+    time_minutes: 8
+    script: model-qwen3-14b
+    category: LLM-Medium
+    size: "~9GB"
+    dependencies:
+      - ollama
+
+  - id: phi-4
+    name: "Phi-4 14B"
+    description: "Microsoft's reasoning model. Punches way above weight class"
+    time_minutes: 6
+    script: model-phi-4
+    category: LLM-Medium
+    size: "~9GB"
+    dependencies:
+      - ollama
+
+  - id: gemma3-12b
+    name: "Gemma3 12B"
+    description: "Google's multimodal. Vision + 140 languages"
+    time_minutes: 6
+    script: model-gemma3-12b
+    category: LLM-Medium
+    size: "~8GB"
+    dependencies:
+      - ollama

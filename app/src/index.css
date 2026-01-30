@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased;
+    font-feature-settings: 'liga' 1, 'calt' 1;
+  }
+}
+
+@layer utilities {
+  .sakura-gradient {
+    background: linear-gradient(135deg, #FF69B4 0%, #BD93F9 100%);
+  }
+
+  .electric-gradient {
+    background: linear-gradient(135deg, #00D9FF 0%, #50FA7B 100%);
+  }
+
+  .anime-glow {
+    box-shadow: 0 0 20px rgba(255, 105, 180, 0.3);
+  }
+
+  .anime-glow-electric {
+    box-shadow: 0 0 20px rgba(0, 217, 255, 0.3);
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-900;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-sakura-500 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-sakura-400;
+  }
+}
+
+/* Sakura petal animation */
+@keyframes sakura-fall {
+  0% {
+    transform: translateY(-10vh) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+.sakura-petal {
+  position: absolute;
+  width: 0;
+  height: 0;
+  animation: sakura-fall 10s linear infinite;
+  opacity: 0.6;
+}
+
+.sakura-petal::before {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: radial-gradient(ellipse at center, #fda4af 0%, #ec4899 100%);
+  border-radius: 50% 0 50% 0;
+  transform: rotate(45deg);
+}
+
+.sakura-petal::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: radial-gradient(ellipse at center, #fda4af 0%, #f472b6 100%);
+  border-radius: 50% 0 50% 0;
+  transform: rotate(-45deg);
+  left: -4px;
+}
+
+/* Toast and Modal animations */
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.2s ease-out;
+}

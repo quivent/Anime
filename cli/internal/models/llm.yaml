@@ -1,0 +1,792 @@
+# LLM Models - Language Models
+# Last updated: December 2025
+
+models:
+  # ===========================================================================
+  # META LLAMA 4 (April 2025)
+  # ===========================================================================
+  - id: llama-4-scout
+    name: "Llama 4 Scout"
+    provider: Meta
+    description: "Multimodal MoE with 10M context window, 16 experts"
+    type: LLM
+    category: Multimodal
+    architecture: MoE
+    total_params: "109B"
+    active_params: "17B"
+    size: "~65GB"
+    vram: "48GB+"
+    huggingface_id: meta-llama/Llama-4-Scout-17B-16E-Instruct
+    vllm_model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+    ollama_id: llama4-scout
+    release_date: "Apr 2025"
+    license: "Llama 4"
+    use_cases: ["Long context", "Document analysis", "Multimodal"]
+    hf_link: https://huggingface.co/meta-llama/Llama-4-Scout-17B-16E-Instruct
+
+  # ===========================================================================
+  # META LLAMA 3.3 (December 2024)
+  # ===========================================================================
+  - id: llama-3.3-70b
+    name: "Llama 3.3 70B"
+    provider: Meta
+    description: "405B-level performance in 70B, Meta's best open weight"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "70B"
+    active_params: "70B"
+    size: "~40GB"
+    vram: "48GB+"
+    huggingface_id: meta-llama/Llama-3.3-70B-Instruct
+    vllm_model: meta-llama/Llama-3.3-70B-Instruct
+    ollama_id: llama3.3:70b
+    release_date: "Dec 2024"
+    license: "Llama 3.3"
+    use_cases: ["Code generation", "Complex reasoning", "Research"]
+    hf_link: https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct
+
+  # ===========================================================================
+  # META LLAMA 3.2 (October 2024)
+  # ===========================================================================
+  - id: llama-3.2-3b
+    name: "Llama 3.2 3B"
+    provider: Meta
+    description: "Tiny powerhouse for edge deployment"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "3B"
+    active_params: "3B"
+    size: "~2GB"
+    vram: "4GB"
+    huggingface_id: meta-llama/Llama-3.2-3B-Instruct
+    vllm_model: meta-llama/Llama-3.2-3B-Instruct
+    ollama_id: llama3.2:3b
+    release_date: "Oct 2024"
+    license: "Llama 3.2"
+    use_cases: ["Edge", "Mobile", "Fast chat"]
+    hf_link: https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct
+
+  - id: llama-3.2-1b
+    name: "Llama 3.2 1B"
+    provider: Meta
+    description: "Ultra-lightweight for on-device AI"
+    type: LLM
+    category: Tiny
+    architecture: Dense
+    total_params: "1B"
+    active_params: "1B"
+    size: "~1GB"
+    vram: "2GB"
+    huggingface_id: meta-llama/Llama-3.2-1B-Instruct
+    vllm_model: meta-llama/Llama-3.2-1B-Instruct
+    ollama_id: llama3.2:1b
+    release_date: "Oct 2024"
+    license: "Llama 3.2"
+    use_cases: ["Mobile", "IoT", "Embedded"]
+    hf_link: https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct
+
+  # ===========================================================================
+  # DEEPSEEK R1 DISTILLATIONS (January 2025)
+  # ===========================================================================
+  - id: deepseek-r1-llama-70b
+    name: "DeepSeek-R1-Distill-Llama-70B"
+    provider: DeepSeek
+    description: "R1 distilled to Llama 70B, near-frontier reasoning"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "70B"
+    active_params: "70B"
+    size: "~43GB"
+    vram: "48GB+"
+    huggingface_id: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    vllm_model: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+    ollama_id: deepseek-r1:70b
+    release_date: "Jan 2025"
+    license: "Llama 3.3"
+    use_cases: ["Math", "Code", "Logic", "Research"]
+    hf_link: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+
+  - id: deepseek-r1-qwen-32b
+    name: "DeepSeek-R1-Distill-Qwen-32B"
+    provider: DeepSeek
+    description: "R1 distilled to Qwen 32B, outperforms o1-mini"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "32B"
+    active_params: "32B"
+    size: "~20GB"
+    vram: "24GB"
+    huggingface_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+    vllm_model: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+    ollama_id: deepseek-r1:32b
+    release_date: "Jan 2025"
+    license: "Apache 2.0"
+    use_cases: ["Math", "Logic", "Reasoning"]
+    hf_link: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+
+  - id: deepseek-r1-qwen-14b
+    name: "DeepSeek-R1-Distill-Qwen-14B"
+    provider: DeepSeek
+    description: "R1 distilled to Qwen 14B, efficient reasoning"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "14B"
+    active_params: "14B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+    vllm_model: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+    ollama_id: deepseek-r1:14b
+    release_date: "Jan 2025"
+    license: "Apache 2.0"
+    use_cases: ["Math", "Reasoning"]
+    hf_link: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+
+  - id: deepseek-r1-llama-8b
+    name: "DeepSeek-R1-Distill-Llama-8B"
+    provider: DeepSeek
+    description: "R1 reasoning in compact 8B package"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "8B"
+    active_params: "8B"
+    size: "~5GB"
+    vram: "12GB"
+    huggingface_id: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+    vllm_model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+    ollama_id: deepseek-r1:8b
+    release_date: "Jan 2025"
+    license: "Llama 3.1"
+    use_cases: ["Math", "Logic", "Consumer GPU"]
+    hf_link: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+
+  - id: deepseek-r1-qwen-7b
+    name: "DeepSeek-R1-Distill-Qwen-7B"
+    provider: DeepSeek
+    description: "R1 distilled to Qwen 7B"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "7B"
+    active_params: "7B"
+    size: "~4.5GB"
+    vram: "10GB"
+    huggingface_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    vllm_model: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    ollama_id: deepseek-r1:7b
+    release_date: "Jan 2025"
+    license: "Apache 2.0"
+    use_cases: ["Reasoning", "Math"]
+    hf_link: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+
+  - id: deepseek-r1-qwen-1.5b
+    name: "DeepSeek-R1-Distill-Qwen-1.5B"
+    provider: DeepSeek
+    description: "Tiny R1 distillation, runs anywhere"
+    type: LLM
+    category: Tiny
+    architecture: Dense
+    total_params: "1.5B"
+    active_params: "1.5B"
+    size: "~1GB"
+    vram: "4GB"
+    huggingface_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+    vllm_model: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+    ollama_id: deepseek-r1:1.5b
+    release_date: "Jan 2025"
+    license: "Apache 2.0"
+    use_cases: ["Mobile", "Edge", "Fast"]
+    hf_link: https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+
+  # ===========================================================================
+  # ALIBABA QWEN3 (April 2025)
+  # ===========================================================================
+  - id: qwen3-32b
+    name: "Qwen3 32B"
+    provider: Alibaba
+    description: "Latest Qwen dense model, 36T tokens training"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "32B"
+    active_params: "32B"
+    size: "~20GB"
+    vram: "24GB"
+    huggingface_id: Qwen/Qwen3-32B-Instruct
+    vllm_model: Qwen/Qwen3-32B-Instruct
+    ollama_id: qwen3:32b
+    release_date: "Apr 2025"
+    license: "Apache 2.0"
+    use_cases: ["General", "Coding", "Math"]
+    hf_link: https://huggingface.co/Qwen/Qwen3-32B-Instruct
+
+  - id: qwen3-14b
+    name: "Qwen3 14B"
+    provider: Alibaba
+    description: "Qwen3 mid-size dense model"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "14B"
+    active_params: "14B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: Qwen/Qwen3-14B-Instruct
+    vllm_model: Qwen/Qwen3-14B-Instruct
+    ollama_id: qwen3:14b
+    release_date: "Apr 2025"
+    license: "Apache 2.0"
+    use_cases: ["General", "Reasoning"]
+    hf_link: https://huggingface.co/Qwen/Qwen3-14B-Instruct
+
+  - id: qwen3-8b
+    name: "Qwen3 8B"
+    provider: Alibaba
+    description: "Qwen3 efficient 8B model"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "8B"
+    active_params: "8B"
+    size: "~5GB"
+    vram: "12GB"
+    huggingface_id: Qwen/Qwen3-8B-Instruct
+    vllm_model: Qwen/Qwen3-8B-Instruct
+    ollama_id: qwen3:8b
+    release_date: "Apr 2025"
+    license: "Apache 2.0"
+    use_cases: ["General", "Fast"]
+    hf_link: https://huggingface.co/Qwen/Qwen3-8B-Instruct
+
+  - id: qwen3-4b
+    name: "Qwen3 4B"
+    provider: Alibaba
+    description: "Qwen3 compact model"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "4B"
+    active_params: "4B"
+    size: "~2.5GB"
+    vram: "8GB"
+    huggingface_id: Qwen/Qwen3-4B-Instruct
+    vllm_model: Qwen/Qwen3-4B-Instruct
+    ollama_id: qwen3:4b
+    release_date: "Apr 2025"
+    license: "Apache 2.0"
+    use_cases: ["Edge", "Mobile"]
+    hf_link: https://huggingface.co/Qwen/Qwen3-4B-Instruct
+
+  # ===========================================================================
+  # ALIBABA QWQ (March 2025) - Reasoning
+  # ===========================================================================
+  - id: qwq-32b
+    name: "QwQ 32B"
+    provider: Alibaba
+    description: "o1-style reasoning model, step-by-step thinking"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "32B"
+    active_params: "32B"
+    size: "~20GB"
+    vram: "24GB"
+    huggingface_id: Qwen/QwQ-32B
+    vllm_model: Qwen/QwQ-32B
+    ollama_id: qwq:32b
+    release_date: "Mar 2025"
+    license: "Apache 2.0"
+    use_cases: ["Step-by-step reasoning", "Math", "Logic"]
+    hf_link: https://huggingface.co/Qwen/QwQ-32B
+
+  # ===========================================================================
+  # ALIBABA QWEN2.5 (September 2024)
+  # ===========================================================================
+  - id: qwen2.5-72b
+    name: "Qwen2.5 72B"
+    provider: Alibaba
+    description: "Alibaba's flagship, exceptional coding & math"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "72B"
+    active_params: "72B"
+    size: "~45GB"
+    vram: "48GB+"
+    huggingface_id: Qwen/Qwen2.5-72B-Instruct
+    vllm_model: Qwen/Qwen2.5-72B-Instruct
+    ollama_id: qwen2.5:72b
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["Coding", "Math", "Multilingual"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-72B-Instruct
+
+  - id: qwen2.5-32b
+    name: "Qwen2.5 32B"
+    provider: Alibaba
+    description: "Dense 32B, excellent balance of capability"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "32B"
+    active_params: "32B"
+    size: "~20GB"
+    vram: "24GB"
+    huggingface_id: Qwen/Qwen2.5-32B-Instruct
+    vllm_model: Qwen/Qwen2.5-32B-Instruct
+    ollama_id: qwen2.5:32b
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["General tasks", "Coding"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-32B-Instruct
+
+  - id: qwen2.5-14b
+    name: "Qwen2.5 14B"
+    provider: Alibaba
+    description: "Efficient 14B with strong multilingual"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "14B"
+    active_params: "14B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: Qwen/Qwen2.5-14B-Instruct
+    vllm_model: Qwen/Qwen2.5-14B-Instruct
+    ollama_id: qwen2.5:14b
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["Multilingual", "General"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct
+
+  - id: qwen2.5-7b
+    name: "Qwen2.5 7B"
+    provider: Alibaba
+    description: "Strong 7B, excellent multilingual"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "7B"
+    active_params: "7B"
+    size: "~4.5GB"
+    vram: "10GB"
+    huggingface_id: Qwen/Qwen2.5-7B-Instruct
+    vllm_model: Qwen/Qwen2.5-7B-Instruct
+    ollama_id: qwen2.5:7b
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["Multilingual", "Coding"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
+
+  - id: qwen2.5-3b
+    name: "Qwen2.5 3B"
+    provider: Alibaba
+    description: "Tiny but capable Qwen"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "3B"
+    active_params: "3B"
+    size: "~2GB"
+    vram: "6GB"
+    huggingface_id: Qwen/Qwen2.5-3B-Instruct
+    vllm_model: Qwen/Qwen2.5-3B-Instruct
+    ollama_id: qwen2.5:3b
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["Edge", "Mobile"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct
+
+  - id: qwen2.5-1.5b
+    name: "Qwen2.5 1.5B"
+    provider: Alibaba
+    description: "Ultra-lightweight Qwen"
+    type: LLM
+    category: Tiny
+    architecture: Dense
+    total_params: "1.5B"
+    active_params: "1.5B"
+    size: "~1GB"
+    vram: "4GB"
+    huggingface_id: Qwen/Qwen2.5-1.5B-Instruct
+    vllm_model: Qwen/Qwen2.5-1.5B-Instruct
+    ollama_id: qwen2.5:1.5b
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["Edge", "IoT"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct
+
+  - id: qwen2.5-0.5b
+    name: "Qwen2.5 0.5B"
+    provider: Alibaba
+    description: "Smallest Qwen, still useful"
+    type: LLM
+    category: Tiny
+    architecture: Dense
+    total_params: "0.5B"
+    active_params: "0.5B"
+    size: "~350MB"
+    vram: "2GB"
+    huggingface_id: Qwen/Qwen2.5-0.5B-Instruct
+    vllm_model: Qwen/Qwen2.5-0.5B-Instruct
+    ollama_id: qwen2.5:0.5b
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["Embedded", "Testing"]
+    hf_link: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct
+
+  # ===========================================================================
+  # MISTRAL AI
+  # ===========================================================================
+  - id: ministral-3-14b
+    name: "Ministral 3 14B"
+    provider: Mistral
+    description: "Edge model with vision, Dec 2025"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "14B"
+    active_params: "14B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: mistralai/Ministral-3-14B-Instruct
+    vllm_model: mistralai/Ministral-3-14B-Instruct
+    ollama_id: ministral3:14b
+    release_date: "Dec 2025"
+    license: "Apache 2.0"
+    use_cases: ["Edge", "Vision", "General"]
+    hf_link: https://huggingface.co/mistralai/Ministral-3-14B-Instruct
+
+  - id: ministral-3-8b
+    name: "Ministral 3 8B"
+    provider: Mistral
+    description: "Efficient edge model with vision"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "8B"
+    active_params: "8B"
+    size: "~5GB"
+    vram: "12GB"
+    huggingface_id: mistralai/Ministral-3-8B-Instruct
+    vllm_model: mistralai/Ministral-3-8B-Instruct
+    ollama_id: ministral3:8b
+    release_date: "Dec 2025"
+    license: "Apache 2.0"
+    use_cases: ["Edge", "Vision", "Fast"]
+    hf_link: https://huggingface.co/mistralai/Ministral-3-8B-Instruct
+
+  - id: ministral-3-3b
+    name: "Ministral 3 3B"
+    provider: Mistral
+    description: "Tiny edge model with vision"
+    type: LLM
+    category: Tiny
+    architecture: Dense
+    total_params: "3B"
+    active_params: "3B"
+    size: "~2GB"
+    vram: "6GB"
+    huggingface_id: mistralai/Ministral-3-3B-Instruct
+    vllm_model: mistralai/Ministral-3-3B-Instruct
+    ollama_id: ministral3:3b
+    release_date: "Dec 2025"
+    license: "Apache 2.0"
+    use_cases: ["Mobile", "Edge", "Vision"]
+    hf_link: https://huggingface.co/mistralai/Ministral-3-3B-Instruct
+
+  - id: mistral-small-22b
+    name: "Mistral Small 22B"
+    provider: Mistral
+    description: "Efficient 22B, strong coding"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "22B"
+    active_params: "22B"
+    size: "~14GB"
+    vram: "24GB"
+    huggingface_id: mistralai/Mistral-Small-Instruct-2409
+    vllm_model: mistralai/Mistral-Small-Instruct-2409
+    release_date: "Sep 2024"
+    license: "Apache 2.0"
+    use_cases: ["Coding", "General tasks"]
+    hf_link: https://huggingface.co/mistralai/Mistral-Small-Instruct-2409
+
+  - id: mixtral-8x7b
+    name: "Mixtral 8x7B"
+    provider: Mistral
+    description: "47B MoE, ~13B active, fast & capable"
+    type: LLM
+    category: MoE
+    architecture: MoE
+    total_params: "47B"
+    active_params: "13B"
+    size: "~26GB"
+    vram: "24GB"
+    huggingface_id: mistralai/Mixtral-8x7B-Instruct-v0.1
+    vllm_model: mistralai/Mixtral-8x7B-Instruct-v0.1
+    ollama_id: mixtral
+    release_date: "Dec 2023"
+    license: "Apache 2.0"
+    use_cases: ["Multi-task", "Long context"]
+    hf_link: https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1
+
+  - id: mistral-7b
+    name: "Mistral 7B v0.3"
+    provider: Mistral
+    description: "Mistral's workhorse, excellent coding"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "7B"
+    active_params: "7B"
+    size: "~4GB"
+    vram: "10GB"
+    huggingface_id: mistralai/Mistral-7B-Instruct-v0.3
+    vllm_model: mistralai/Mistral-7B-Instruct-v0.3
+    ollama_id: mistral
+    release_date: "May 2024"
+    license: "Apache 2.0"
+    use_cases: ["Coding", "Chat"]
+    hf_link: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
+
+  # ===========================================================================
+  # MICROSOFT PHI
+  # ===========================================================================
+  - id: phi-4
+    name: "Phi-4"
+    provider: Microsoft
+    description: "14B reasoning champion, beats GPT-4 on math"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "14B"
+    active_params: "14B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: microsoft/phi-4
+    vllm_model: microsoft/phi-4
+    ollama_id: phi4
+    release_date: "Dec 2024"
+    license: "MIT"
+    use_cases: ["Reasoning", "Math", "STEM"]
+    hf_link: https://huggingface.co/microsoft/phi-4
+
+  - id: phi-4-reasoning
+    name: "Phi-4-reasoning"
+    provider: Microsoft
+    description: "Enhanced reasoning, beats DeepSeek-R1 70B distill"
+    type: LLM
+    category: Reasoning
+    architecture: Dense
+    total_params: "14B"
+    active_params: "14B"
+    size: "~9GB"
+    vram: "16GB"
+    huggingface_id: microsoft/Phi-4-reasoning
+    vllm_model: microsoft/Phi-4-reasoning
+    release_date: "2025"
+    license: "MIT"
+    use_cases: ["Complex reasoning", "Math olympiad"]
+    hf_link: https://huggingface.co/microsoft/Phi-4-reasoning
+
+  - id: phi-4-mini
+    name: "Phi-4-mini"
+    provider: Microsoft
+    description: "3.8B with multilingual & function calling"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "3.8B"
+    active_params: "3.8B"
+    size: "~2.5GB"
+    vram: "6GB"
+    huggingface_id: microsoft/Phi-4-mini-instruct
+    vllm_model: microsoft/Phi-4-mini-instruct
+    ollama_id: phi4-mini
+    release_date: "2025"
+    license: "MIT"
+    use_cases: ["Multilingual", "Function calling", "Edge"]
+    hf_link: https://huggingface.co/microsoft/Phi-4-mini-instruct
+
+  - id: phi-3.5-mini
+    name: "Phi-3.5 Mini"
+    provider: Microsoft
+    description: "Previous gen tiny reasoning model"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "3.8B"
+    active_params: "3.8B"
+    size: "~2.5GB"
+    vram: "6GB"
+    huggingface_id: microsoft/Phi-3.5-mini-instruct
+    vllm_model: microsoft/Phi-3.5-mini-instruct
+    ollama_id: phi3.5
+    release_date: "Aug 2024"
+    license: "MIT"
+    use_cases: ["Reasoning", "Edge"]
+    hf_link: https://huggingface.co/microsoft/Phi-3.5-mini-instruct
+
+  - id: phi-3.5-moe
+    name: "Phi-3.5 MoE"
+    provider: Microsoft
+    description: "42B MoE with 6.6B active"
+    type: LLM
+    category: MoE
+    architecture: MoE
+    total_params: "42B"
+    active_params: "6.6B"
+    size: "~25GB"
+    vram: "24GB"
+    huggingface_id: microsoft/Phi-3.5-MoE-instruct
+    vllm_model: microsoft/Phi-3.5-MoE-instruct
+    release_date: "Aug 2024"
+    license: "MIT"
+    use_cases: ["General", "Efficient"]
+    hf_link: https://huggingface.co/microsoft/Phi-3.5-MoE-instruct
+
+  # ===========================================================================
+  # GOOGLE GEMMA
+  # ===========================================================================
+  - id: gemma-2-27b
+    name: "Gemma 2 27B"
+    provider: Google
+    description: "Previous gen, still excellent"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "27B"
+    active_params: "27B"
+    size: "~17GB"
+    vram: "24GB"
+    huggingface_id: google/gemma-2-27b-it
+    vllm_model: google/gemma-2-27b-it
+    ollama_id: gemma2:27b
+    release_date: "Jun 2024"
+    license: "Gemma"
+    use_cases: ["Chat", "Reasoning"]
+    hf_link: https://huggingface.co/google/gemma-2-27b-it
+
+  - id: gemma-2-9b
+    name: "Gemma 2 9B"
+    provider: Google
+    description: "Efficient 9B, strong reasoning"
+    type: LLM
+    category: Small
+    architecture: Dense
+    total_params: "9B"
+    active_params: "9B"
+    size: "~6GB"
+    vram: "12GB"
+    huggingface_id: google/gemma-2-9b-it
+    vllm_model: google/gemma-2-9b-it
+    ollama_id: gemma2:9b
+    release_date: "Jun 2024"
+    license: "Gemma"
+    use_cases: ["Reasoning", "Chat"]
+    hf_link: https://huggingface.co/google/gemma-2-9b-it
+
+  - id: gemma-2-2b
+    name: "Gemma 2 2B"
+    provider: Google
+    description: "Tiny Gemma for edge"
+    type: LLM
+    category: Tiny
+    architecture: Dense
+    total_params: "2B"
+    active_params: "2B"
+    size: "~1.5GB"
+    vram: "4GB"
+    huggingface_id: google/gemma-2-2b-it
+    vllm_model: google/gemma-2-2b-it
+    ollama_id: gemma2:2b
+    release_date: "Jul 2024"
+    license: "Gemma"
+    use_cases: ["Edge", "Mobile"]
+    hf_link: https://huggingface.co/google/gemma-2-2b-it
+
+  - id: gemma-3-1b
+    name: "Gemma 3 1B"
+    provider: Google
+    description: "Tiny Gemma 3, text-only, 32K context"
+    type: LLM
+    category: Tiny
+    architecture: Dense
+    total_params: "1B"
+    active_params: "1B"
+    size: "~700MB"
+    vram: "4GB"
+    huggingface_id: google/gemma-3-1b-it
+    vllm_model: google/gemma-3-1b-it
+    ollama_id: gemma3:1b
+    release_date: "Mar 2025"
+    license: "Gemma"
+    use_cases: ["Mobile", "Edge"]
+    hf_link: https://huggingface.co/google/gemma-3-1b-it
+
+  # ===========================================================================
+  # OTHER LLMs
+  # ===========================================================================
+  - id: nemotron-70b
+    name: "Nemotron 70B"
+    provider: NVIDIA
+    description: "NVIDIA's 70B based on Llama 3.1"
+    type: LLM
+    category: General
+    architecture: Dense
+    total_params: "70B"
+    active_params: "70B"
+    size: "~40GB"
+    vram: "48GB+"
+    huggingface_id: nvidia/Llama-3.1-Nemotron-70B-Instruct
+    vllm_model: nvidia/Llama-3.1-Nemotron-70B-Instruct
+    release_date: "Oct 2024"
+    license: "Llama 3.1"
+    use_cases: ["Instruction following", "Chat"]
+    hf_link: https://huggingface.co/nvidia/Llama-3.1-Nemotron-70B-Instruct
+
+  - id: command-r
+    name: "Command R 35B"
+    provider: Cohere
+    description: "RAG-optimized with tool use"
+    type: LLM
+    category: RAG
+    architecture: Dense
+    total_params: "35B"
+    active_params: "35B"
+    size: "~21GB"
+    vram: "24GB"
+    huggingface_id: CohereForAI/c4ai-command-r-v01
+    vllm_model: CohereForAI/c4ai-command-r-v01
+    ollama_id: command-r
+    release_date: "Mar 2024"
+    license: "CC-BY-NC"
+    use_cases: ["RAG", "Tool use", "Enterprise"]
+    hf_link: https://huggingface.co/CohereForAI/c4ai-command-r-v01
+
+  - id: glm-4-9b
+    name: "GLM-4 9B"
+    provider: Z.ai
+    description: "Bilingual with tool use and 128K context"
+    type: LLM
+    category: Bilingual
+    architecture: Dense
+    total_params: "9B"
+    active_params: "9B"
+    size: "~6GB"
+    vram: "12GB"
+    huggingface_id: THUDM/glm-4-9b-chat-hf
+    vllm_model: THUDM/glm-4-9b-chat-hf
+    ollama_id: glm4:9b
+    release_date: "Jun 2024"
+    license: "Apache 2.0"
+    use_cases: ["Tool use", "Chinese", "English"]
+    hf_link: https://huggingface.co/THUDM/glm-4-9b-chat-hf

@@ -1,0 +1,43 @@
+# System Modules - Core infrastructure components
+# These modules provide the foundational layer for all other modules
+
+modules:
+  - id: core
+    name: "Core System"
+    description: "CUDA, Python, Node.js, Docker - required base"
+    time_minutes: 5
+    script: core
+    category: System
+    size: "~2GB"
+    dependencies: []
+
+  - id: pytorch
+    name: "PyTorch + AI Libraries"
+    description: "PyTorch, Transformers, Diffusers, xformers"
+    time_minutes: 2
+    script: pytorch
+    category: System
+    size: "~8GB"
+    dependencies:
+      - core
+
+  - id: ollama
+    name: "Ollama Server"
+    description: "Ollama LLM server (required for LLM models)"
+    time_minutes: 1
+    script: ollama
+    category: System
+    size: "~500MB"
+    dependencies:
+      - core
+
+  - id: vllm
+    name: "vLLM Inference Engine"
+    description: "High-performance LLM inference with PagedAttention"
+    time_minutes: 8
+    script: vllm
+    category: System
+    size: "~2GB"
+    dependencies:
+      - core
+      - pytorch

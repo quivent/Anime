@@ -1,0 +1,40 @@
+# Model Shortcuts - Friendly aliases for common models
+# These are in addition to auto-generated shortcuts from model IDs
+# Last updated: December 2025
+
+aliases:
+  # Friendly names → Full HuggingFace IDs
+  llama-70b: meta-llama/Llama-3.3-70B-Instruct
+  llama4-scout: meta-llama/Llama-4-Scout-17B-16E-Instruct
+
+  # Qwen shortcuts
+  qwen-72b: Qwen/Qwen2.5-72B-Instruct
+  qwen-32b: Qwen/Qwen2.5-32B-Instruct
+  qwen-14b: Qwen/Qwen2.5-14B-Instruct
+  qwen-7b: Qwen/Qwen2.5-7B-Instruct
+
+  # DeepSeek shortcuts
+  deepseek-r1: deepseek-ai/DeepSeek-R1-Distill-Llama-70B
+  deepseek-32b: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+
+  # Mistral shortcuts
+  mistral-7b: mistralai/Mistral-7B-Instruct-v0.3
+  mixtral: mistralai/Mixtral-8x7B-Instruct-v0.1
+
+  # Microsoft shortcuts
+  phi-4: microsoft/phi-4
+
+  # Meta shortcuts
+  codellama: codellama/CodeLlama-34b-Instruct-hf
+
+  # AWQ quantized models (4-bit) - significantly smaller, faster inference
+  llama-70b-awq: hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4
+  qwen-72b-awq: Qwen/Qwen2.5-72B-Instruct-AWQ
+  qwen-32b-awq: Qwen/Qwen2.5-32B-Instruct-AWQ
+  deepseek-r1-awq: cognitivecomputations/DeepSeek-R1-Distill-Llama-70B-AWQ
+  mixtral-awq: TheBloke/Mixtral-8x7B-Instruct-v0.1-AWQ
+
+  # GPTQ quantized models (4-bit) - alternative quantization method
+  llama-70b-gptq: TheBloke/Llama-2-70B-Chat-GPTQ
+  qwen-72b-gptq: Qwen/Qwen2.5-72B-Instruct-GPTQ-Int4
+  mixtral-gptq: TheBloke/Mixtral-8x7B-Instruct-v0.1-GPTQ

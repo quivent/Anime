@@ -468,6 +468,19 @@ func setNamecheapARecords(cfg *namecheapConfig, domain, ip string) {
 		return
 	}
 
+	// Step 0: Ensure domain is using Namecheap BasicDNS
+	fmt.Printf("  %s Activating Namecheap DNS...\n", theme.SymbolBolt)
+	setDefaultParams := url.Values{}
+	setDefaultParams.Set("SLD", sld)
+	setDefaultParams.Set("TLD", tld)
+	_, err = namecheapAPICall(cfg, clientIP, "namecheap.domains.dns.setDefault", setDefaultParams)
+	if err != nil {
+		// Log but continue - might already be set or might still work
+		fmt.Printf("    %s %s (continuing anyway)\n", theme.WarningStyle.Render("⚠"), theme.DimTextStyle.Render(err.Error()))
+	} else {
+		fmt.Printf("    %s %s\n", theme.SuccessStyle.Render("✓"), theme.DimTextStyle.Render("Namecheap BasicDNS active"))
+	}
+
 	// Step 1: Get existing host records
 	fmt.Printf("  %s Fetching existing records...\n", theme.SymbolBolt)
 	getParams := url.Values{}

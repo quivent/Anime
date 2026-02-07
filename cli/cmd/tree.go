@@ -2,183 +2,168 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
+var treeDepth int
+var treeCompact bool
+
 var treeCmd = &cobra.Command{
 	Use:   "tree",
 	Short: "Show anime CLI command tree",
-	Long:  "Display a beautiful tree visualization of all available anime commands",
+	Long:  "Display a complete tree visualization of all available anime commands, subcommands, and flags",
 	Run:   runTree,
 }
 
 func init() {
+	treeCmd.Flags().IntVarP(&treeDepth, "depth", "d", 0, "Maximum depth to display (0 = unlimited)")
+	treeCmd.Flags().BoolVarP(&treeCompact, "compact", "c", false, "Compact view without descriptions")
 	rootCmd.AddCommand(treeCmd)
 }
 
 func runTree(cmd *cobra.Command, args []string) {
-	fmt.Println(theme.RenderBanner("🌸 ANIME COMMAND TREE 🌸"))
+	theme.RenderBanner("ANIME COMMAND TREE")
 	fmt.Println()
 
-	commands := []struct {
-		name string
-		desc string
-		subs []struct {
-			name string
-			desc string
+	// Count total commands
+	total := countCommands(rootCmd)
+	fmt.Printf("  %s %d commands\n\n", theme.DimTextStyle.Render("Total:"), total)
+
+	// Print the tree starting from root
+	printCommandTree(rootCmd, "", true, 0)
+
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  ─────────────────────────────────────────────────────"))
+	fmt.Println(theme.InfoStyle.Render("  💡 Tips:"))
+	fmt.Println(theme.DimTextStyle.Render("     anime tree --compact     Compact view"))
+	fmt.Println(theme.DimTextStyle.Render("     anime tree --depth 2     Limit depth"))
+	fmt.Println(theme.DimTextStyle.Render("     anime <cmd> --help       Detailed help"))
+	fmt.Println()
+}
+
+func countCommands(cmd *cobra.Command) int {
+	count := 1
+	for _, sub := range cmd.Commands() {
+		if !sub.Hidden {
+			count += countCommands(sub)
 		}
-	}{
-		{
-			name: "📦 Package Management",
-			desc: "Install and manage software packages",
-			subs: []struct{ name, desc string }{
-				{"packages", "List all available packages"},
-				{"packages status", "Show installation status"},
-				{"packages --tree", "Show dependency tree"},
-				{"install <id>", "Install packages with dependencies"},
-				{"install --dry-run", "Preview installation plan"},
-				{"install --phased", "Install with confirmations"},
-				{"install --remote -s <server>", "Remote installation via SSH"},
-				{"interactive", "Interactive package selection TUI"},
-				{"parallelize", "Smart parallel installation planning"},
-			},
-		},
-		{
-			name: "💡 Recommendations",
-			desc: "Get personalized workflow and package suggestions",
-			subs: []struct{ name, desc string }{
-				{"suggest", "Analyze setup and suggest workflows/packages"},
-				{"wizard", "Interactive setup wizard for node configuration"},
-				{"guide", "Comprehensive usage documentation"},
-			},
-		},
-		{
-			name: "🎬 Assets & Workflows",
-			desc: "Manage collections and run AI workflows",
-			subs: []struct{ name, desc string }{
-				{"collection create <name> <path>", "Create asset collection"},
-				{"collection list", "List all collections"},
-				{"collection info <name>", "Show collection details"},
-				{"workflow", "Browse and run workflows"},
-				{"workstation", "Interactive workstation dashboard"},
-			},
-		},
-		{
-			name: "☁️  Lambda Cloud",
-			desc: "Manage Lambda Labs GPU instances",
-			subs: []struct{ name, desc string }{
-				{"lambda list", "List Lambda instances"},
-				{"lambda launch", "Launch new instance"},
-				{"lambda ssh <instance>", "SSH into instance"},
-				{"lambda terminate <instance>", "Terminate instance"},
-				{"lambda defaults", "Show default packages"},
-				{"metrics", "Real-time GPU metrics and cost tracking"},
-			},
-		},
-		{
-			name: "🖥️  Server Management",
-			desc: "Configure and manage remote servers",
-			subs: []struct{ name, desc string }{
-				{"add <name> <host>", "Add new server"},
-				{"list", "List all servers"},
-				{"remove <name>", "Remove server"},
-				{"status", "Check server status"},
-				{"set lambda <server>", "Set default Lambda server"},
-				{"explore <server>", "Discover untracked models on server"},
-				{"push", "Deploy CLI to remote servers"},
-			},
-		},
-		{
-			name: "⚙️  Configuration",
-			desc: "System and deployment configuration",
-			subs: []struct{ name, desc string }{
-				{"config", "Open config TUI"},
-				{"modules", "Select modules"},
-				{"set-modules", "Set modules via CLI"},
-				{"bootstrap", "Bootstrap configuration"},
-			},
-		},
-		{
-			name: "🚀 Deployment",
-			desc: "Deploy and execute on servers",
-			subs: []struct{ name, desc string }{
-				{"deploy", "Deploy to server"},
-				{"ship <source> <dest>", "Tar, rsync, and untar files to remote"},
-				{"gen", "Generate bash commands"},
-				{"sequence", "Show command sequence"},
-			},
-		},
-		{
-			name: "🛠️  Development",
-			desc: "Developer tools and source access",
-			subs: []struct{ name, desc string }{
-				{"home", "Navigate to anime source directory"},
-				{"develop", "Launch Claude Code in anime's source directory"},
-			},
-		},
-		{
-			name: "🎯 Help & Utilities",
-			desc: "Navigation and assistance",
-			subs: []struct{ name, desc string }{
-				{"tree", "Show this command tree"},
-				{"help [command]", "Get help on commands"},
-				{"version", "Show version information"},
-				{"completion", "Generate shell completion"},
-			},
-		},
+	}
+	return count
+}
+
+func printCommandTree(cmd *cobra.Command, _ string, isRoot bool, depth int) {
+	if treeDepth > 0 && depth > treeDepth {
+		return
 	}
 
-	for i, group := range commands {
-		isLast := i == len(commands)-1
+	// Get visible subcommands
+	subs := getVisibleCommands(cmd)
 
-		// Group header
-		fmt.Println(theme.GlowStyle.Render(group.name))
-		fmt.Println(theme.DimTextStyle.Render("  " + group.desc))
+	if isRoot {
+		// Print root command
+		fmt.Printf("  %s\n", theme.HighlightStyle.Render("anime"))
+		if !treeCompact {
+			fmt.Printf("  %s\n", theme.DimTextStyle.Render(cmd.Short))
+		}
 		fmt.Println()
 
-		// Commands in group
-		for j, subcmd := range group.subs {
-			marker := theme.SymbolBranch
-			pipe := theme.SymbolPipe
-			if j == len(group.subs)-1 {
-				marker = theme.SymbolLastBranch
-				if isLast {
-					pipe = " "
-				}
-			}
-
-			fmt.Printf("%s %s %s\n",
-				theme.InfoStyle.Render(marker),
-				theme.HighlightStyle.Render("anime "+subcmd.name),
-				theme.DimTextStyle.Render("- "+subcmd.desc))
-
-			if j < len(group.subs)-1 || !isLast {
-				fmt.Println(theme.DimTextStyle.Render(pipe))
-			}
-		}
-
-		if !isLast {
-			fmt.Println()
+		// Print subcommands
+		for i, sub := range subs {
+			isLast := i == len(subs)-1
+			printSubcommand(sub, "  ", isLast, depth+1)
 		}
 	}
+}
 
-	fmt.Println()
-	fmt.Println(theme.SuccessStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
-	fmt.Println(theme.InfoStyle.Render("💡 What to do next:"))
-	fmt.Println(theme.SuccessStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
-	fmt.Println()
-	fmt.Printf("  %s\n", theme.HighlightStyle.Render("anime packages"))
-	fmt.Println(theme.DimTextStyle.Render("    Browse all available packages"))
-	fmt.Println()
-	fmt.Printf("  %s\n", theme.HighlightStyle.Render("anime interactive"))
-	fmt.Println(theme.DimTextStyle.Render("    Launch interactive package selector"))
-	fmt.Println()
-	fmt.Printf("  %s\n", theme.HighlightStyle.Render("anime workstation"))
-	fmt.Println(theme.DimTextStyle.Render("    Monitor GPU, models, and system resources"))
-	fmt.Println()
-	fmt.Printf("  %s\n", theme.HighlightStyle.Render("anime <command> --help"))
-	fmt.Println(theme.DimTextStyle.Render("    Get detailed help for any command"))
-	fmt.Println()
+func printSubcommand(cmd *cobra.Command, prefix string, isLast bool, depth int) {
+	if treeDepth > 0 && depth > treeDepth {
+		return
+	}
+
+	// Determine branch characters
+	branch := "├── "
+	childPrefix := "│   "
+	if isLast {
+		branch = "└── "
+		childPrefix = "    "
+	}
+
+	// Command name with styling
+	cmdName := cmd.Name()
+	if len(cmd.Commands()) > 0 {
+		// Has subcommands - show as group
+		cmdName = theme.InfoStyle.Render(cmdName)
+	} else {
+		cmdName = theme.HighlightStyle.Render(cmdName)
+	}
+
+	// Print command
+	if treeCompact {
+		fmt.Printf("%s%s%s\n", prefix, theme.DimTextStyle.Render(branch), cmdName)
+	} else {
+		desc := cmd.Short
+		if len(desc) > 50 {
+			desc = desc[:47] + "..."
+		}
+		fmt.Printf("%s%s%s %s\n", prefix, theme.DimTextStyle.Render(branch), cmdName, theme.DimTextStyle.Render("- "+desc))
+	}
+
+	// Get visible subcommands
+	subs := getVisibleCommands(cmd)
+
+	// Print subcommands
+	for i, sub := range subs {
+		subIsLast := i == len(subs)-1
+		printSubcommand(sub, prefix+childPrefix, subIsLast, depth+1)
+	}
+}
+
+func getVisibleCommands(cmd *cobra.Command) []*cobra.Command {
+	var visible []*cobra.Command
+	for _, sub := range cmd.Commands() {
+		if !sub.Hidden && sub.Name() != "help" && sub.Name() != "completion" {
+			visible = append(visible, sub)
+		}
+	}
+	// Sort alphabetically
+	sort.Slice(visible, func(i, j int) bool {
+		return visible[i].Name() < visible[j].Name()
+	})
+	return visible
+}
+
+// TreeStats returns statistics about the command tree
+func TreeStats() (commands, subcommands, flags int) {
+	return walkCommandTree(rootCmd)
+}
+
+func walkCommandTree(cmd *cobra.Command) (commands, subcommands, flags int) {
+	commands = 1
+	flags = cmd.Flags().NFlag()
+
+	for _, sub := range cmd.Commands() {
+		if !sub.Hidden {
+			subcommands++
+			c, s, f := walkCommandTree(sub)
+			commands += c
+			subcommands += s
+			flags += f
+		}
+	}
+	return
+}
+
+// PrintCommandPath prints the full path to a command
+func PrintCommandPath(cmd *cobra.Command) string {
+	var parts []string
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() != "" {
+			parts = append([]string{c.Name()}, parts...)
+		}
+	}
+	return strings.Join(parts, " ")
 }

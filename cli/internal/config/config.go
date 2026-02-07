@@ -105,7 +105,7 @@ type LaunchedApp struct {
 	Server      string `yaml:"server,omitempty"`
 	RemotePath  string `yaml:"remote_path,omitempty"`
 	ServiceName    string `yaml:"service_name"`
-	AuthType       string `yaml:"auth_type,omitempty"`
+	AuthType       string `yaml:"auth_type,omitempty"` // DEPRECATED: use Auth
 	SSLEnabled     bool   `yaml:"ssl_enabled,omitempty"`
 	PackageManager string `yaml:"package_manager,omitempty"`
 	DatabaseType   string `yaml:"database_type,omitempty"`
@@ -114,6 +114,150 @@ type LaunchedApp struct {
 	DatabaseLocal  bool   `yaml:"database_local,omitempty"`
 	MigrationsRun  bool   `yaml:"migrations_run,omitempty"`
 	CreatedAt      string `yaml:"created_at"`
+
+	// Auth holds the full authentication configuration
+	Auth *AppAuthConfig `yaml:"auth,omitempty"`
+}
+
+// AppAuthConfig holds complete authentication configuration for a launched app
+type AppAuthConfig struct {
+	// Methods enabled for this app (can combine multiple)
+	// Values: "none", "basic", "oauth2-google", "oauth2-github", "oauth2-oidc", "web3-siwe", "api-key"
+	Methods []string `yaml:"methods,omitempty"`
+
+	// OAuth2 configuration
+	OAuth2 *AppOAuth2Config `yaml:"oauth2,omitempty"`
+
+	// Basic auth configuration
+	Basic *AppBasicAuthConfig `yaml:"basic,omitempty"`
+
+	// Web3/SIWE configuration
+	Web3 *AppWeb3Config `yaml:"web3,omitempty"`
+
+	// API key configuration
+	APIKey *AppAPIKeyConfig `yaml:"api_key,omitempty"`
+
+	// IP access control
+	IPAccess *AppIPAccessConfig `yaml:"ip_access,omitempty"`
+
+	// Rate limiting
+	RateLimit *AppRateLimitConfig `yaml:"rate_limit,omitempty"`
+
+	// Security headers
+	Security *AppSecurityConfig `yaml:"security,omitempty"`
+}
+
+// AppOAuth2Config holds OAuth2 provider settings
+type AppOAuth2Config struct {
+	Provider     string   `yaml:"provider"`                // google, github, oidc
+	ClientID     string   `yaml:"client_id"`
+	ClientSecret string   `yaml:"client_secret"`
+	CookieSecret string   `yaml:"cookie_secret"`
+	EmailDomain  string   `yaml:"email_domain,omitempty"`  // Google: * for any
+	Org          string   `yaml:"org,omitempty"`           // GitHub: require org
+	Team         string   `yaml:"team,omitempty"`          // GitHub: require team
+	IssuerURL    string   `yaml:"issuer_url,omitempty"`    // OIDC issuer
+	Scopes       []string `yaml:"scopes,omitempty"`
+}
+
+// AppBasicAuthConfig holds basic auth settings
+type AppBasicAuthConfig struct {
+	Username     string `yaml:"username"`
+	PasswordHash string `yaml:"password_hash"`
+	Realm        string `yaml:"realm,omitempty"`
+}
+
+// AppWeb3Config holds SIWE settings
+type AppWeb3Config struct {
+	ChainID          int      `yaml:"chain_id"`
+	AllowedAddresses []string `yaml:"allowed_addresses,omitempty"`
+	ServicePort      int      `yaml:"service_port"`
+	NonceExpiry      string   `yaml:"nonce_expiry,omitempty"`
+	SessionTTL       string   `yaml:"session_ttl,omitempty"`
+}
+
+// AppAPIKeyConfig holds API key settings
+type AppAPIKeyConfig struct {
+	HeaderName string      `yaml:"header_name"`
+	Keys       []AppAPIKey `yaml:"keys"`
+}
+
+// AppAPIKey represents a single API key
+type AppAPIKey struct {
+	ID        string   `yaml:"id"`
+	Name      string   `yaml:"name"`
+	KeyHash   string   `yaml:"key_hash"`
+	Scopes    []string `yaml:"scopes,omitempty"`
+	RateLimit int      `yaml:"rate_limit,omitempty"`
+	ExpiresAt string   `yaml:"expires_at,omitempty"`
+	CreatedAt string   `yaml:"created_at"`
+	LastUsed  string   `yaml:"last_used,omitempty"`
+}
+
+// AppIPAccessConfig holds IP access control settings
+type AppIPAccessConfig struct {
+	Mode  string   `yaml:"mode"`  // "allow" or "deny"
+	CIDRs []string `yaml:"cidrs"`
+}
+
+// AppRateLimitConfig holds rate limiting settings
+type AppRateLimitConfig struct {
+	RequestsPerSec int    `yaml:"requests_per_sec"`
+	BurstSize      int    `yaml:"burst_size"`
+	ZoneSize       string `yaml:"zone_size"`
+}
+
+// AppSecurityConfig holds security header settings
+type AppSecurityConfig struct {
+	HSTS            bool   `yaml:"hsts"`
+	HSTSMaxAge      int    `yaml:"hsts_max_age,omitempty"`
+	HSTSIncludeSubs bool   `yaml:"hsts_include_subs,omitempty"`
+	CSP             string `yaml:"csp,omitempty"`
+	XFrameOptions   string `yaml:"x_frame_options,omitempty"`
+	XContentType    bool   `yaml:"x_content_type_options"`
+	ReferrerPolicy  string `yaml:"referrer_policy,omitempty"`
+}
+
+// HasAuthMethod checks if a specific auth method is enabled
+func (c *AppAuthConfig) HasAuthMethod(method string) bool {
+	if c == nil {
+		return false
+	}
+	for _, m := range c.Methods {
+		if m == method {
+			return true
+		}
+	}
+	return false
+}
+
+// IsEmpty returns true if no authentication is configured
+func (c *AppAuthConfig) IsEmpty() bool {
+	if c == nil {
+		return true
+	}
+	return len(c.Methods) == 0 || (len(c.Methods) == 1 && c.Methods[0] == "none")
+}
+
+// GetEffectiveAuth returns the auth config, migrating from legacy AuthType if needed
+func (app *LaunchedApp) GetEffectiveAuth() *AppAuthConfig {
+	if app.Auth != nil {
+		return app.Auth
+	}
+	// Migrate legacy AuthType
+	if app.AuthType != "" {
+		auth := &AppAuthConfig{}
+		switch app.AuthType {
+		case "oauth2":
+			auth.Methods = []string{"oauth2-google"}
+		case "basic":
+			auth.Methods = []string{"basic"}
+		default:
+			auth.Methods = []string{"none"}
+		}
+		return auth
+	}
+	return &AppAuthConfig{Methods: []string{"none"}}
 }
 
 // Capsule represents a saved environment/deployment capsule

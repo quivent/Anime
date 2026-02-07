@@ -12,6 +12,7 @@ import (
 	"github.com/joshkornreich/anime/internal/config"
 	"github.com/joshkornreich/anime/internal/launch"
 	"github.com/joshkornreich/anime/internal/ssh"
+	"github.com/joshkornreich/anime/internal/stack"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -75,12 +76,36 @@ var serveListCmd = &cobra.Command{
 	RunE:    runServeList,
 }
 
+var serveRemoveCmd = &cobra.Command{
+	Use:   "remove <app>",
+	Short: "Stop and completely remove a deployed app",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runServeRemove,
+}
+
+var serveStackCmd = &cobra.Command{
+	Use:   "stack [path]",
+	Short: "Deploy a multi-service stack from anime.yaml",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runServeStack,
+}
+
+var serveEditCmd = &cobra.Command{
+	Use:   "edit <app>",
+	Short: "Interactively reconfigure a deployed app",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runServeEdit,
+}
+
 func init() {
 	serveCmd.AddCommand(serveSetupCmd)
 	serveCmd.AddCommand(serveStatusCmd)
 	serveCmd.AddCommand(serveStopCmd)
 	serveCmd.AddCommand(serveLogsCmd)
 	serveCmd.AddCommand(serveListCmd)
+	serveCmd.AddCommand(serveRemoveCmd)
+	serveCmd.AddCommand(serveStackCmd)
+	serveCmd.AddCommand(serveEditCmd)
 
 	serveLogsCmd.Flags().IntVarP(&serveLogLines, "lines", "n", 50, "Number of log lines")
 
@@ -99,6 +124,17 @@ func runServeSetup(cmd *cobra.Command, args []string) error {
 	absPath, err := filepath.Abs(projectPath)
 	if err != nil {
 		return fmt.Errorf("invalid path: %w", err)
+	}
+
+	// Check for anime.yaml stack config
+	if configPath, err := stack.FindStackConfig(absPath); err == nil {
+		fmt.Println()
+		fmt.Printf("  %s Found anime.yaml at %s\n", theme.InfoStyle.Render("*"), theme.DimTextStyle.Render(configPath))
+		if promptUserYesNo(reader, "  Deploy as stack", true) {
+			// Delegate to stack deployment
+			return runServeStack(cmd, args)
+		}
+		fmt.Println(theme.DimTextStyle.Render("  Continuing with single-service wizard..."))
 	}
 
 	fmt.Println()
@@ -930,6 +966,364 @@ func runServeList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runServeRemove(cmd *cobra.Command, args []string) error {
+	appName := args[0]
+
+	// Load config and get app
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	app, err := cfg.GetLaunchedApp(appName)
+	if err != nil {
+		return err
+	}
+
+	// Confirm with user
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println()
+	if !promptUserYesNo(reader, "  This will stop the app and remove all server configuration. Continue", false) {
+		fmt.Println(theme.DimTextStyle.Render("  Aborted"))
+		fmt.Println()
+		return nil
+	}
+
+	// Get runner for the app's server
+	runner, err := getRunnerForApp(*app)
+	if err != nil {
+		return err
+	}
+
+	// Prompt for sudo password
+	fmt.Print(theme.HighlightStyle.Render("  Sudo password ▶ "))
+	password, _ := reader.ReadString('\n')
+	password = strings.TrimSpace(password)
+
+	fmt.Println()
+	fmt.Printf("  Removing %s...\n", appName)
+
+	// Stop the service (handle both static and process apps)
+	if app.ServiceName == "" {
+		// For static apps, nginx config removal will be handled below
+		fmt.Println(theme.DimTextStyle.Render("  Static app - no process to stop"))
+	} else {
+		// Stop the systemd service
+		fmt.Println(theme.DimTextStyle.Render("  Stopping service..."))
+		if err := launch.StopService(app.ServiceName, password, runner); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Warning: failed to stop service: " + err.Error()))
+		}
+	}
+
+	// Also stop OAuth2 proxy if applicable
+	if app.AuthType == "oauth2" {
+		oauthService := "anime-" + appName + "-oauth2"
+		fmt.Println(theme.DimTextStyle.Render("  Stopping OAuth2 proxy..."))
+		launch.StopService(oauthService, password, runner)
+	}
+
+	// Remove nginx config
+	fmt.Println(theme.DimTextStyle.Render("  Removing nginx config..."))
+	sitesEnabled := fmt.Sprintf("/etc/nginx/sites-enabled/%s", appName)
+	sitesAvailable := fmt.Sprintf("/etc/nginx/sites-available/%s", appName)
+
+	if _, err := runner.RunSudo(fmt.Sprintf("rm -f %s", sitesEnabled), password); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  Warning: failed to remove sites-enabled: " + err.Error()))
+	}
+	if _, err := runner.RunSudo(fmt.Sprintf("rm -f %s", sitesAvailable), password); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  Warning: failed to remove sites-available: " + err.Error()))
+	}
+
+	// Reload nginx
+	if _, err := runner.RunSudo("systemctl reload nginx", password); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  Warning: nginx reload failed: " + err.Error()))
+	}
+
+	// Remove systemd service (for non-static apps)
+	if app.ServiceName != "" {
+		fmt.Println(theme.DimTextStyle.Render("  Removing systemd service..."))
+		serviceFile := fmt.Sprintf("/etc/systemd/system/%s.service", app.ServiceName)
+
+		// Disable the service
+		if _, err := runner.RunSudo(fmt.Sprintf("systemctl disable %s 2>/dev/null || true", app.ServiceName), password); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Warning: failed to disable service: " + err.Error()))
+		}
+
+		// Remove the service file
+		if _, err := runner.RunSudo(fmt.Sprintf("rm -f %s", serviceFile), password); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Warning: failed to remove service file: " + err.Error()))
+		}
+
+		// Reload systemd
+		if _, err := runner.RunSudo("systemctl daemon-reload", password); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Warning: systemctl daemon-reload failed: " + err.Error()))
+		}
+	}
+
+	// Remove OAuth2 proxy service if it was enabled
+	if app.AuthType == "oauth2" {
+		fmt.Println(theme.DimTextStyle.Render("  Removing OAuth2 proxy service..."))
+		oauthService := "anime-" + appName + "-oauth2"
+		oauthServiceFile := fmt.Sprintf("/etc/systemd/system/%s.service", oauthService)
+
+		// Disable the service
+		if _, err := runner.RunSudo(fmt.Sprintf("systemctl disable %s 2>/dev/null || true", oauthService), password); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Warning: failed to disable OAuth2 service: " + err.Error()))
+		}
+
+		// Remove the service file
+		if _, err := runner.RunSudo(fmt.Sprintf("rm -f %s", oauthServiceFile), password); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Warning: failed to remove OAuth2 service file: " + err.Error()))
+		}
+
+		// Reload systemd
+		if _, err := runner.RunSudo("systemctl daemon-reload", password); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Warning: systemctl daemon-reload failed: " + err.Error()))
+		}
+	}
+
+	// Remove rate limit config if exists
+	rateLimitConf := fmt.Sprintf("/etc/nginx/conf.d/%s-ratelimit.conf", appName)
+	fmt.Println(theme.DimTextStyle.Render("  Removing rate limit config..."))
+	if _, err := runner.RunSudo(fmt.Sprintf("rm -f %s", rateLimitConf), password); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  Warning: failed to remove rate limit config: " + err.Error()))
+	}
+
+	// Remove from config
+	cfg.RemoveLaunchedApp(appName)
+
+	// Save config
+	if err := cfg.Save(); err != nil {
+		fmt.Println(theme.ErrorStyle.Render("  Failed to save config: " + err.Error()))
+	}
+
+	fmt.Println()
+	fmt.Println(theme.SuccessStyle.Render("  App removed successfully"))
+	fmt.Println()
+
+	return nil
+}
+
+func runServeStack(cmd *cobra.Command, args []string) error {
+	reader := bufio.NewReader(os.Stdin)
+
+	// Get path from args (default to current dir)
+	projectPath := "."
+	if len(args) > 0 {
+		projectPath = args[0]
+	}
+	absPath, err := filepath.Abs(projectPath)
+	if err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println(theme.RenderBanner("STACK DEPLOY"))
+	fmt.Println()
+
+	// Find anime.yaml
+	printServeStep(1, 6, "Finding stack config")
+	configPath, err := stack.FindStackConfig(absPath)
+	if err != nil {
+		return fmt.Errorf("anime.yaml not found: %w", err)
+	}
+	fmt.Printf("  %s %s\n", theme.SuccessStyle.Render("Found:"), theme.DimTextStyle.Render(configPath))
+	fmt.Println()
+
+	// Load and parse config
+	printServeStep(2, 6, "Loading stack config")
+	stackCfg, err := stack.LoadStackConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load stack config: %w", err)
+	}
+	fmt.Printf("  %s %s\n", theme.SuccessStyle.Render("Stack:"), theme.HighlightStyle.Render(stackCfg.Name))
+	fmt.Println()
+
+	// Validate config
+	printServeStep(3, 6, "Validating config")
+	if err := stack.ValidateStackConfig(stackCfg); err != nil {
+		return fmt.Errorf("invalid stack config: %w", err)
+	}
+	fmt.Println(theme.SuccessStyle.Render("  Config is valid"))
+	fmt.Println()
+
+	// Show stack summary
+	printServeStep(4, 6, "Stack summary")
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Name:"), theme.HighlightStyle.Render(stackCfg.Name))
+	fmt.Printf("  %s %d\n", theme.DimTextStyle.Render("Services:"), len(stackCfg.Services))
+
+	// List services with their dependencies
+	for name, svc := range stackCfg.Services {
+		svcType := "app"
+		if svc.Type == "postgres" {
+			svcType = "database"
+		}
+		fmt.Printf("    - %s (%s)", theme.HighlightStyle.Render(name), svcType)
+		if len(svc.DependsOn) > 0 {
+			fmt.Printf(" -> depends on: %s", strings.Join(svc.DependsOn, ", "))
+		}
+		fmt.Println()
+	}
+
+	if stackCfg.Routing != nil && stackCfg.Routing.Domain != "" {
+		fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Domain:"), stackCfg.Routing.Domain)
+	}
+	if stackCfg.SSL {
+		fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("SSL:"), "enabled")
+	}
+	fmt.Println()
+
+	// Server selection
+	printServeStep(5, 6, "Target server")
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	var serverChoices []string
+
+	// Add "local" as first option
+	serverChoices = append(serverChoices, "1")
+	fmt.Println("  1. Local (this machine)")
+
+	// Add configured servers
+	for i, srv := range cfg.Servers {
+		num := strconv.Itoa(i + 2)
+		serverChoices = append(serverChoices, num)
+		fmt.Printf("  %s. %s (%s@%s)\n", num, srv.Name, srv.User, srv.Host)
+	}
+
+	// Add "other" option for manual entry
+	otherNum := strconv.Itoa(len(cfg.Servers) + 2)
+	serverChoices = append(serverChoices, otherNum)
+	fmt.Printf("  %s. Other (enter manually)\n", otherNum)
+
+	serverChoice := promptUserChoice(reader, "  Select server", serverChoices)
+
+	var runner launch.CommandRunner
+	var serverName string
+	var sshUser string
+
+	choiceIdx, _ := strconv.Atoi(serverChoice)
+	if choiceIdx == 1 {
+		// Local
+		runner = launch.NewLocalRunner()
+		serverName = "local"
+		sshUser = runner.User()
+	} else if choiceIdx <= len(cfg.Servers)+1 {
+		// Configured server
+		srv := cfg.Servers[choiceIdx-2]
+		sshClient, err := ssh.NewClient(srv.Host, srv.User, "")
+		if err != nil {
+			return fmt.Errorf("failed to connect to %s: %w", srv.Name, err)
+		}
+		runner = launch.NewRemoteRunner(sshClient, srv.User)
+		serverName = srv.Name
+		sshUser = srv.User
+	} else {
+		// Manual entry
+		fmt.Print(theme.HighlightStyle.Render("  Server (alias or user@host) ▶ "))
+		serverInput, _ := reader.ReadString('\n')
+		serverInput = strings.TrimSpace(serverInput)
+
+		target, err := parseServerTarget(serverInput)
+		if err != nil {
+			return fmt.Errorf("failed to resolve server: %w", err)
+		}
+
+		parts := strings.SplitN(target, "@", 2)
+		user := parts[0]
+		host := target
+		if len(parts) == 2 {
+			host = parts[1]
+		}
+
+		sshClient, err := ssh.NewClient(host, user, "")
+		if err != nil {
+			return fmt.Errorf("failed to connect to %s: %w", target, err)
+		}
+		runner = launch.NewRemoteRunner(sshClient, user)
+		serverName = serverInput
+		sshUser = user
+	}
+	fmt.Println()
+
+	// Prompt for sudo password
+	fmt.Print(theme.HighlightStyle.Render("  Sudo password ▶ "))
+	sudoPassword, _ := reader.ReadString('\n')
+	sudoPassword = strings.TrimSpace(sudoPassword)
+	fmt.Println()
+
+	// Deploy stack
+	printServeStep(6, 6, "Deploying stack")
+	fmt.Println(theme.DimTextStyle.Render("  This may take a few minutes..."))
+	fmt.Println()
+
+	if err := stack.DeployStack(stackCfg, serverName, sudoPassword, runner); err != nil {
+		return fmt.Errorf("stack deployment failed: %w", err)
+	}
+
+	// Save stack info to config
+	for name, svc := range stackCfg.Services {
+		// Skip database services for LaunchedApp tracking
+		if svc.Type == "postgres" {
+			continue
+		}
+
+		app := config.LaunchedApp{
+			Name:        stackCfg.Name + "-" + name,
+			Path:        absPath,
+			ProjectType: "stack",
+			RunCommand:  svc.Start,
+			Port:        svc.Port,
+			Domain:      svc.Domain,
+			Server:      serverName,
+			ServiceName: launch.ServiceName(stackCfg.Name + "-" + name),
+			CreatedAt:   time.Now().Format(time.RFC3339),
+		}
+		cfg.AddLaunchedApp(app)
+	}
+
+	if err := cfg.Save(); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  Warning: failed to save config: " + err.Error()))
+	}
+
+	// Success summary
+	fmt.Println()
+	fmt.Println(theme.RenderBanner("STACK DEPLOYED"))
+	fmt.Println()
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Stack:"), theme.HighlightStyle.Render(stackCfg.Name))
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Server:"), serverName)
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("User:"), sshUser)
+	fmt.Println()
+
+	// Show URLs for each service
+	fmt.Println(theme.InfoStyle.Render("  Services:"))
+	protocol := "http"
+	if stackCfg.SSL {
+		protocol = "https"
+	}
+	for name, svc := range stackCfg.Services {
+		if svc.Type == "postgres" {
+			fmt.Printf("    %s %s (database)\n", theme.SuccessStyle.Render("*"), name)
+		} else if svc.Domain != "" {
+			fmt.Printf("    %s %s -> %s://%s\n", theme.SuccessStyle.Render("*"), name, protocol, svc.Domain)
+		} else if svc.Port > 0 {
+			fmt.Printf("    %s %s -> port %d\n", theme.SuccessStyle.Render("*"), name, svc.Port)
+		} else {
+			fmt.Printf("    %s %s\n", theme.SuccessStyle.Render("*"), name)
+		}
+	}
+	fmt.Println()
+
+	fmt.Printf("  %s anime serve status\n", theme.DimTextStyle.Render("Check:"))
+	fmt.Printf("  %s anime serve stop %s-<service>\n", theme.DimTextStyle.Render("Stop:"), stackCfg.Name)
+	fmt.Println()
+
+	return nil
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 
 func printServeStep(current, total int, title string) {
@@ -968,4 +1362,198 @@ func getRunnerForApp(app config.LaunchedApp) (launch.CommandRunner, error) {
 	}
 
 	return launch.NewRemoteRunner(client, user), nil
+}
+
+func runServeEdit(cmd *cobra.Command, args []string) error {
+	appName := args[0]
+
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	app, err := cfg.GetLaunchedApp(appName)
+	if err != nil {
+		return fmt.Errorf("app not found: %s", appName)
+	}
+
+	runner, err := getRunnerForApp(*app)
+	if err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Println()
+	fmt.Println(theme.RenderBanner("EDIT: " + appName))
+	fmt.Println()
+
+	// Track changes
+	var changes []string
+	needsNginxReload := false
+	needsServiceRestart := false
+
+	// Show current configuration
+	fmt.Println(theme.InfoStyle.Render("  Current configuration:"))
+	protocol := "http"
+	if app.SSLEnabled {
+		protocol = "https"
+	}
+	fmt.Printf("    %s %s://%s\n", theme.DimTextStyle.Render("URL:"), protocol, app.Domain)
+	if app.ServiceName != "" {
+		fmt.Printf("    %s %d\n", theme.DimTextStyle.Render("Port:"), app.Port)
+	}
+	fmt.Printf("    %s %s\n", theme.DimTextStyle.Render("Auth:"), app.AuthType)
+	fmt.Printf("    %s %s\n", theme.DimTextStyle.Render("SSL:"), boolToYesNo(app.SSLEnabled))
+	fmt.Println()
+
+	// Domain change
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Current domain:"), theme.HighlightStyle.Render(app.Domain))
+	if promptUserYesNo(reader, "  Change domain", false) {
+		fmt.Print(theme.HighlightStyle.Render("  New domain ▶ "))
+		newDomain, _ := reader.ReadString('\n')
+		newDomain = strings.TrimSpace(newDomain)
+		if newDomain != "" && newDomain != app.Domain {
+			app.Domain = newDomain
+			changes = append(changes, fmt.Sprintf("Domain: %s", newDomain))
+			needsNginxReload = true
+		}
+	}
+	fmt.Println()
+
+	// Port change (only for apps with services)
+	if app.ServiceName != "" {
+		fmt.Printf("  %s %d\n", theme.DimTextStyle.Render("Current port:"), app.Port)
+		if promptUserYesNo(reader, "  Change port", false) {
+			fmt.Print(theme.HighlightStyle.Render("  New port ▶ "))
+			portInput, _ := reader.ReadString('\n')
+			portInput = strings.TrimSpace(portInput)
+			if portInput != "" {
+				if newPort, err := strconv.Atoi(portInput); err == nil && newPort != app.Port {
+					app.Port = newPort
+					changes = append(changes, fmt.Sprintf("Port: %d", newPort))
+					needsNginxReload = true
+					needsServiceRestart = true
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Auth type change
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Current auth:"), app.AuthType)
+	if promptUserYesNo(reader, "  Change authentication", false) {
+		fmt.Println("    1. Google OAuth")
+		fmt.Println("    2. HTTP Basic Auth")
+		fmt.Println("    3. No authentication")
+		authChoice := promptUserChoice(reader, "    Select", []string{"1", "2", "3"})
+
+		newAuthType := app.AuthType
+		switch authChoice {
+		case "1":
+			newAuthType = "oauth2"
+		case "2":
+			newAuthType = "basic"
+		case "3":
+			newAuthType = "none"
+		}
+
+		if newAuthType != app.AuthType {
+			app.AuthType = newAuthType
+			changes = append(changes, fmt.Sprintf("Auth: %s", newAuthType))
+			needsNginxReload = true
+		}
+	}
+	fmt.Println()
+
+	// SSL change
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Current SSL:"), boolToYesNo(app.SSLEnabled))
+	if promptUserYesNo(reader, "  Toggle SSL", false) {
+		app.SSLEnabled = !app.SSLEnabled
+		changes = append(changes, fmt.Sprintf("SSL: %s", boolToYesNo(app.SSLEnabled)))
+		needsNginxReload = true
+	}
+	fmt.Println()
+
+	// If no changes, exit early
+	if len(changes) == 0 {
+		fmt.Println(theme.DimTextStyle.Render("  No changes made"))
+		fmt.Println()
+		return nil
+	}
+
+	// Show summary and confirm
+	fmt.Println(theme.InfoStyle.Render("  Changes to apply:"))
+	for _, change := range changes {
+		fmt.Printf("    - %s\n", change)
+	}
+	fmt.Println()
+
+	if !promptUserYesNo(reader, "  Apply changes", true) {
+		fmt.Println(theme.DimTextStyle.Render("  Aborted"))
+		return nil
+	}
+
+	// Get sudo password if needed
+	var sudoPassword string
+	if needsNginxReload || needsServiceRestart {
+		fmt.Print(theme.HighlightStyle.Render("  Sudo password ▶ "))
+		sudoPassword, _ = reader.ReadString('\n')
+		sudoPassword = strings.TrimSpace(sudoPassword)
+	}
+
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  Applying changes..."))
+
+	// Regenerate nginx config if needed
+	if needsNginxReload {
+		nginxCfg := launch.NginxConfig{
+			Domain:   app.Domain,
+			Port:     app.Port,
+			AppName:  app.Name,
+			AuthType: app.AuthType,
+		}
+		nginxContent, err := launch.GenerateNginxConfig(nginxCfg)
+		if err != nil {
+			return fmt.Errorf("failed to generate nginx config: %w", err)
+		}
+		if err := launch.InstallNginxConfig(app.Name, nginxContent, sudoPassword, runner); err != nil {
+			fmt.Println(theme.ErrorStyle.Render("  Nginx update failed: " + err.Error()))
+		} else {
+			fmt.Println(theme.SuccessStyle.Render("  Nginx config updated"))
+		}
+	}
+
+	// Restart service if needed (port change affects systemd environment)
+	if needsServiceRestart && app.ServiceName != "" {
+		// Use systemctl restart via RunSudo
+		if _, err := runner.RunSudo(fmt.Sprintf("systemctl restart %s", app.ServiceName), sudoPassword); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Service restart failed: " + err.Error()))
+		} else {
+			fmt.Println(theme.SuccessStyle.Render("  Service restarted"))
+		}
+	}
+
+	// Save updated config
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Summary
+	fmt.Println()
+	fmt.Println(theme.RenderBanner("UPDATED"))
+	fmt.Println()
+	for _, change := range changes {
+		fmt.Printf("  %s %s\n", theme.SuccessStyle.Render("*"), change)
+	}
+	fmt.Println()
+
+	newProtocol := "http"
+	if app.SSLEnabled {
+		newProtocol = "https"
+	}
+	fmt.Printf("  %s %s://%s\n", theme.SuccessStyle.Render("URL:"), newProtocol, app.Domain)
+	fmt.Println()
+
+	return nil
 }

@@ -423,6 +423,17 @@ func (c *Config) DeleteLaunchedApp(name string) error {
 	return fmt.Errorf("launched app %s not found", name)
 }
 
+// RemoveLaunchedApp removes a launched app by name (does not error if not found)
+func (c *Config) RemoveLaunchedApp(name string) {
+	apps := []LaunchedApp{}
+	for _, app := range c.LaunchedApps {
+		if app.Name != name {
+			apps = append(apps, app)
+		}
+	}
+	c.LaunchedApps = apps
+}
+
 // SetActiveWorkflow sets the active workflow
 func (c *Config) SetActiveWorkflow(name string) error {
 	c.ActiveWorkflow = name

@@ -31,6 +31,26 @@ tmp/
 temp/
 *.tmp
 
+# Secrets & credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+*.crt
+credentials.json
+secrets.*
+
+# macOS resource forks
+._*
+
+# Build outputs
+node_modules/
+target/
+dist/
+
 # Old shell scripts (keeping for reference)
 setup-*.sh
 anime-cli/build

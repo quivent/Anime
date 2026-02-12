@@ -1,298 +1,134 @@
-# 🎌 anime - Lambda GH200 Management CLI
+# anime
 
-A beautiful Go CLI for managing Lambda Labs GH200 instances. No more shell scripts!
+A toolkit for provisioning and managing AI workloads on Lambda Labs GH200 GPU instances. Includes a Go CLI for package installation and model management, and a Tauri desktop app for server monitoring.
 
-## Features
+> **Status:** Work in progress. The installer scripts and package definitions are complete. The CLI and desktop app are partially implemented.
 
-- 🎨 **Beautiful TUI** - Interactive terminal UI using Bubble Tea
-- 🚀 **Easy Configuration** - Configure servers, modules, and API keys visually
-- 💰 **Cost Estimation** - See estimated costs before deployment
-- 📊 **Real-time Progress** - Watch installation progress live
-- 🔌 **SSH Management** - Automatic SSH connection and script deployment
-- 📦 **Modular Installation** - Install only what you need
+## Components
 
-## Installation
+### anime-cli
 
+Go CLI built with [Cobra](https://github.com/spf13/cobra) and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+
+**What works:**
+- 30+ installable packages with dependency resolution
+- Embedded bash install scripts for each package
+- Model catalog browser (interactive TUI and CLI modes)
+- Local and remote model file scanning
+
+**Commands:**
 ```bash
-cd /Users/joshkornreich/lambda
-go build -o anime
-sudo mv anime /usr/local/bin/
-
-# Or install directly
-go install
+anime models              # Interactive TUI model browser
+anime models --catalog    # Print full model catalog
+anime models --local      # Scan local filesystem for model files
+anime models list         # List all installable models
+anime install <package>   # Install a package (resolves dependencies)
+anime packages            # Show available packages
 ```
 
-## Quick Start
+### anime-desktop
 
-### 1. Configure Your Servers
+[Tauri 2.0](https://tauri.app/) desktop app with a Rust backend and React/TypeScript frontend.
 
-```bash
-anime config
-```
+**Backend (Rust):**
+- Lambda Labs API client
+- SSH connection management
+- Real-time server monitoring
 
-This opens an interactive TUI where you can:
-- Add/edit Lambda servers
-- Select installation modules
-- Configure API keys (Anthropic, OpenAI, HuggingFace, Lambda Labs)
-- See cost estimates
+**Frontend (React):**
+- Lambda instance dashboard
+- Server monitoring view
 
-### 2. Deploy to a Server
+## Installable Packages
 
-```bash
-anime deploy lambda-gh200-1
-```
+### Infrastructure
 
-Watch the installation progress in real-time with:
-- Module-by-module status
-- Live output streaming
-- Real-time cost tracking
-- Beautiful progress indicators
+| Package | Description | Size |
+|---------|-------------|------|
+| `core` | Build tools, git, curl, Python 3 | ~500MB |
+| `nvidia` | NVIDIA drivers + CUDA 12.4 | ~4GB |
+| `docker` | Docker container platform | ~500MB |
+| `python` | Python 3.11+, numpy, scipy, pandas | ~500MB |
+| `pytorch` | PyTorch, transformers, diffusers | ~8GB |
+| `ollama` | Ollama LLM server with systemd | ~200MB |
+| `nodejs` | Node.js 20.x LTS | ~100MB |
+| `claude` | Anthropic Claude Code CLI | ~100MB |
+| `comfyui` | ComfyUI with Manager | ~5GB |
 
-### 3. Check Server Status
+### LLM Models (via Ollama)
 
-```bash
-anime status lambda-gh200-1
-```
+| Package | Model | Size |
+|---------|-------|------|
+| `llama-3.3-70b` | Llama 3.3 70B | ~40GB |
+| `llama-3.3-8b` | Llama 3.3 8B | ~5GB |
+| `mistral` | Mistral 7B | ~4GB |
+| `mixtral` | Mixtral 8x7B | ~26GB |
+| `qwen-2.5-72b` | Qwen 2.5 72B | ~42GB |
+| `qwen-2.5-14b` | Qwen 2.5 14B | ~8GB |
+| `qwen-2.5-7b` | Qwen 2.5 7B | ~4GB |
+| `deepseek-coder-33b` | DeepSeek Coder 33B | ~18GB |
+| `deepseek-v3` | DeepSeek V3 (671B MoE) | ~250GB |
+| `phi-3.5` | Phi-3.5 Mini 3.8B | ~2GB |
 
-See:
-- System information
-- Installed components
-- GPU status
-- Available models
+Model bundles are also available: `models-small`, `models-medium`, `models-large`.
 
-### 4. List All Servers
+### Image Generation (for ComfyUI)
 
-```bash
-anime list
-```
+| Package | Model | Size |
+|---------|-------|------|
+| `sdxl` | Stable Diffusion XL | ~7GB |
+| `sd15` | Stable Diffusion 1.5 | ~4GB |
+| `flux-dev` | Flux.1 Dev | ~12GB |
+| `flux-schnell` | Flux.1 Schnell | ~12GB |
 
-## Available Modules
+### Video Generation
 
-| Module | Time | Description |
-|--------|------|-------------|
-| **Core System** | 5 min | CUDA 12.4, Python, Node.js, Docker |
-| **PyTorch** | 2 min | PyTorch, Transformers, Diffusers, xformers |
-| **Ollama** | 1 min | Ollama LLM server (no models) |
-| **Small Models** | 8 min | Mistral, Llama 3.3 8B, Qwen 2.5 7B |
-| **Medium Models** | 25 min | Qwen 2.5 14B, Mixtral, DeepSeek Coder |
-| **Large Models** | 40 min | Llama 3.3 70B, Qwen 2.5 72B |
-| **ComfyUI** | 2 min | Stable Diffusion UI with Manager |
-| **Claude Code** | 1 min | Anthropic Claude Code CLI |
+| Package | Model | Size |
+|---------|-------|------|
+| `mochi` | Mochi-1 (10B) | ~12GB |
+| `svd` | Stable Video Diffusion | ~8GB |
+| `animatediff` | AnimateDiff | ~4GB |
+| `cogvideo` | CogVideoX-5B | ~14GB |
+| `opensora` | Open-Sora 2.0 | ~16GB |
+| `ltxvideo` | LTXVideo | ~7GB |
+| `wan2` | Wan2.2 | ~10GB |
+| `comfyui-wan2` | Wan2 ComfyUI wrapper | ~100MB |
 
-## Configuration
-
-Config is stored in `~/.config/anime/config.yaml`:
-
-```yaml
-servers:
-  - name: lambda-gh200-1
-    host: 192.168.1.100
-    user: ubuntu
-    ssh_key: ~/.ssh/lambda_key.pem
-    cost_per_hour: 20.0
-    modules:
-      - core
-      - pytorch
-      - ollama
-      - models-small
-
-api_keys:
-  anthropic: sk-ant-...
-  openai: sk-...
-  huggingface: hf_...
-  lambda_labs: lambda_...
-```
-
-## Usage Examples
-
-### Basic Setup (Minimal Cost)
-
-```bash
-# 1. Configure server
-anime config
-  # Add server with basic info
-  # Select: Core + PyTorch (~$3 total)
-
-# 2. Deploy
-anime deploy my-server
-
-# 3. Check status
-anime status my-server
-```
-
-### Production Setup
-
-```bash
-# 1. Configure with all modules
-anime config
-  # Select: Core + PyTorch + Ollama + Small Models (~$8 total)
-
-# 2. Deploy and watch progress
-anime deploy production-server
-```
-
-### Multiple Servers
-
-```bash
-# Configure different servers for different purposes
-anime config
-  # Server 1: "dev" - Core + PyTorch
-  # Server 2: "llm" - Core + Ollama + Large Models
-  # Server 3: "imaging" - Core + PyTorch + ComfyUI
-
-# Deploy to specific server
-anime deploy llm
-anime deploy imaging
-```
-
-## TUI Navigation
-
-### Main Menu
-- `↑/↓` or `j/k` - Navigate
-- `Enter` - Select
-- `q` - Quit
-
-### Server List
-- `↑/↓` - Navigate
-- `Enter` - Configure modules
-- `d` - Delete server
-- `Esc` - Back to menu
-
-### Module Selection
-- `↑/↓` - Navigate
-- `Space` - Toggle module
-- `Enter` - Save selection
-- `Esc` - Cancel
-
-### Form Inputs
-- `Tab` - Next field
-- `Shift+Tab` - Previous field
-- `Enter` - Save
-- `Esc` - Cancel
-
-## Cost Estimation
-
-The CLI automatically calculates estimated costs based on:
-- Selected modules and their installation time
-- Module dependencies (auto-included)
-- Server's cost per hour
-
-Example output:
-```
-Estimated cost: $8.50 @ $20/hr
-  Core System: 5 min
-  PyTorch: 2 min
-  Ollama: 1 min
-  Small Models: 8 min
-  ---
-  Total: ~17 minutes
-```
-
-## Architecture
+## Project Structure
 
 ```
 anime/
-├── cmd/                  # CLI commands
-│   ├── root.go          # Root command
-│   ├── config.go        # Config TUI command
-│   ├── deploy.go        # Deploy command
-│   ├── install.go       # Install/list commands
-│   └── status.go        # Status command
-├── internal/
-│   ├── config/          # Configuration management
-│   │   └── config.go    # Config struct and modules
-│   ├── installer/       # Installation logic
-│   │   ├── installer.go # SSH deployment
-│   │   └── scripts.go   # Embedded bash scripts
-│   ├── ssh/             # SSH client
-│   │   └── client.go    # SSH operations
-│   └── tui/             # Terminal UI
-│       ├── config.go    # Config TUI
-│       └── install.go   # Install progress TUI
-└── main.go              # Entry point
-```
-
-## Development
-
-```bash
-# Run without installing
-go run main.go config
-
-# Build
-go build -o anime
-
-# Install
-go install
-
-# Run tests
-go test ./...
-
-# Format
-go fmt ./...
+├── anime-cli/
+│   ├── cmd/
+│   │   └── models.go           # Model browser + install commands
+│   └── internal/
+│       └── installer/
+│           ├── packages.go     # Package definitions + dependency resolution
+│           └── scripts.go      # Embedded bash install scripts
+├── anime-desktop/
+│   ├── src/                    # React frontend
+│   │   ├── App.tsx
+│   │   └── components/
+│   └── src-tauri/              # Rust backend
+│       └── src/
+│           ├── lambda/         # Lambda Labs API client
+│           └── server/         # SSH + server monitoring
+├── .gitignore
+└── README.md
 ```
 
 ## Dependencies
 
-- `github.com/charmbracelet/bubbletea` - TUI framework
-- `github.com/charmbracelet/lipgloss` - Terminal styling
-- `github.com/charmbracelet/bubbles` - TUI components
-- `github.com/spf13/cobra` - CLI framework
-- `golang.org/x/crypto/ssh` - SSH client
-- `gopkg.in/yaml.v3` - YAML config
+**CLI (Go):**
+- `github.com/charmbracelet/bubbletea` — TUI framework
+- `github.com/charmbracelet/lipgloss` — Terminal styling
+- `github.com/spf13/cobra` — CLI framework
+- `golang.org/x/crypto/ssh` — SSH client
 
-## Troubleshooting
-
-### Connection Issues
-
-```bash
-# Test SSH manually
-ssh -i ~/.ssh/lambda_key.pem ubuntu@192.168.1.100
-
-# Check config
-cat ~/.config/anime/config.yaml
-```
-
-### Installation Failures
-
-```bash
-# Check status to see what's installed
-anime status my-server
-
-# Check server logs
-ssh ubuntu@YOUR_IP
-journalctl -u ollama -f
-cat /tmp/anime-install-*.sh
-```
-
-### Permission Issues
-
-```bash
-# Ensure SSH key has correct permissions
-chmod 600 ~/.ssh/lambda_key.pem
-
-# Ensure user has sudo access
-ssh ubuntu@YOUR_IP "sudo -v"
-```
-
-## Comparison with Shell Scripts
-
-| Feature | anime CLI | Shell Scripts |
-|---------|-----------|---------------|
-| Configuration | Interactive TUI | Manual editing |
-| Cost Estimation | Built-in | Manual calculation |
-| Progress Tracking | Real-time UI | Text output |
-| Error Handling | Graceful | Exit on error |
-| Module Selection | Visual checkboxes | Comment/uncomment |
-| Multiple Servers | Easy switching | Multiple files |
-| API Key Management | Encrypted storage | Plain text files |
+**Desktop (Rust/TypeScript):**
+- Tauri 2.0, reqwest, ssh2, rusqlite
+- React, TypeScript
 
 ## License
 
 MIT
-
-## Contributing
-
-PRs welcome! Please ensure:
-- Code is formatted (`go fmt`)
-- Tests pass (`go test ./...`)
-- TUI flows work correctly

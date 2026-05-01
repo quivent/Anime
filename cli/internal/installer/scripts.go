@@ -90,15 +90,41 @@ else
 fi
 
 # ============================================================
+# Pick the right PyTorch wheel index for THIS host.
+# ARM64 + CUDA-13 driver (GH200/H200) → cu130 nightly directly,
+# avoiding the wasteful "install cu128 then have wantorch swap it" flow.
+# Everything else stays on cu128 stable.
+# ============================================================
+ARCH=$(uname -m)
+TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+TORCH_FLAVOR="cu128 stable"
+PIP_PRE_FLAG=""
+DRIVER_MAJOR=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+    DRIVER_MAJOR=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1 || echo "")
+    CUDA_DRV=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 || echo "")
+fi
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    # GH200/H200 — prefer cu130 nightly so the comfy_kitchen.cuda backend lights up.
+    if [ "${CUDA_DRV%%.*}" = "13" ] || [ -n "${FORCE_CU130:-}" ]; then
+        TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"
+        TORCH_FLAVOR="cu130 nightly (ARM64 + CUDA13 detected)"
+        PIP_PRE_FLAG="--pre"
+    fi
+fi
+echo "==> torch flavor: $TORCH_FLAVOR"
+
+# ============================================================
 # GPU BASE FAST PATH - No TensorFlow to remove
 # ============================================================
 if [ "$IS_GPU_BASE" = true ]; then
     if python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
         TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
-        echo "==> PyTorch $TORCH_VERSION already installed with CUDA"
+        TORCH_CUDA=$(python3 -c "import torch; print(torch.version.cuda or '')" 2>/dev/null)
+        echo "==> PyTorch $TORCH_VERSION (cuda=$TORCH_CUDA) already installed"
     else
-        echo "==> Installing PyTorch with CUDA 12.8..."
-        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+        echo "==> Installing PyTorch ($TORCH_FLAVOR)..."
+        pip3 install $PIP_PRE_FLAG torch torchvision torchaudio --index-url "$TORCH_INDEX"
     fi
 
     echo "==> Installing AI libraries..."
@@ -166,8 +192,8 @@ if python3 -c "import torch" 2>/dev/null; then
         transformers diffusers safetensors bitsandbytes \
         numpy scipy pandas matplotlib pillow opencv-python
 else
-    echo "==> Installing PyTorch with CUDA 12.8..."
-    pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    echo "==> Installing PyTorch ($TORCH_FLAVOR)..."
+    pip3 install $PIP_PRE_FLAG torch torchvision torchaudio --index-url "$TORCH_INDEX"
     pip3 install transformers diffusers accelerate safetensors bitsandbytes \
         numpy scipy pandas matplotlib pillow opencv-python
 fi
@@ -592,87 +618,78 @@ echo "  comfy --help               - Show all commands"
 `,
 
 	"comfyui": `#!/bin/bash
-set -e
-echo "==> Installing ComfyUI"
+set -euo pipefail
+echo "==> Installing ComfyUI (manual venv install, host-aware torch)"
 
 COMFYUI_DIR="$HOME/ComfyUI"
+VENV="$COMFYUI_DIR/venv"
 
-# Check if ComfyUI is already installed
-if [ -d "$COMFYUI_DIR" ]; then
-    echo "ComfyUI already exists at $COMFYUI_DIR"
+if [ -f "$COMFYUI_DIR/main.py" ] && [ -x "$VENV/bin/python" ]; then
+    echo "==> ComfyUI already at $COMFYUI_DIR (venv at $VENV)"
     exit 0
 fi
 
-# Prefer comfy-cli if available (uses isolated venv)
-if command -v comfy &> /dev/null; then
-    echo "==> Using comfy-cli for installation (recommended)"
-    echo "==> This creates an isolated Python environment to avoid conflicts"
+# ─── pick the right torch wheel index for this host ───
+ARCH=$(uname -m)
+TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+PIP_PRE=""
+TORCH_FLAVOR="cu128 stable"
+CUDA_DRV=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_DRV=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 || true)
+fi
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    if [ "${CUDA_DRV%%.*}" = "13" ] || [ -n "${FORCE_CU130:-}" ]; then
+        TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"
+        PIP_PRE="--pre"
+        TORCH_FLAVOR="cu130 nightly (ARM64+CUDA13)"
+    fi
+fi
+echo "==> torch flavor: $TORCH_FLAVOR  (driver=$CUDA_DRV, arch=$ARCH)"
 
-    # Install ComfyUI with GPU support
-    comfy install --nvidia
-
-    # Install ComfyUI Manager
-    echo "==> Installing ComfyUI Manager..."
-    comfy node install ComfyUI-Manager
-
-    echo "==> ComfyUI installed successfully via comfy-cli"
-    echo ""
-    echo "Quick commands:"
-    echo "  comfy launch               - Start ComfyUI server"
-    echo "  comfy launch --browser     - Start and open browser"
-    echo "  comfy node list            - List custom nodes"
-    echo "  comfy model list           - List installed models"
-    exit 0
+# ─── clone ComfyUI if missing ───
+if [ ! -f "$COMFYUI_DIR/main.py" ]; then
+    echo "==> Cloning ComfyUI..."
+    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
 fi
 
-# Fallback: Manual installation
-echo "==> comfy-cli not found, using manual installation"
-echo "==> Note: Install comfy-cli first for better venv isolation: anime install comfy-cli"
-
-# Verify PyTorch is installed
-if ! python3 -c "import torch" 2>/dev/null; then
-    echo "Error: PyTorch not found. Please install 'pytorch' package first: anime install pytorch"
-    exit 1
+# ─── create venv at $COMFYUI_DIR/venv (canonical path used by wantorch) ───
+if [ ! -x "$VENV/bin/python" ]; then
+    echo "==> Creating venv at $VENV..."
+    python3 -m venv "$VENV"
 fi
 
-# Create virtual environment for ComfyUI to isolate dependencies
-VENV_DIR="$HOME/.comfyui-venv"
-if [ ! -d "$VENV_DIR" ]; then
-    echo "==> Creating isolated Python virtual environment..."
-    python3 -m venv "$VENV_DIR"
+"$VENV/bin/pip" install --upgrade -q pip wheel setuptools
+
+echo "==> Installing torch ($TORCH_FLAVOR) into venv..."
+"$VENV/bin/pip" install $PIP_PRE torch torchvision torchaudio --index-url "$TORCH_INDEX"
+
+echo "==> Installing ComfyUI requirements..."
+"$VENV/bin/pip" install -r "$COMFYUI_DIR/requirements.txt"
+
+# ─── install ComfyUI Manager (so users can browse/install nodes from UI) ───
+NODES="$COMFYUI_DIR/custom_nodes"
+mkdir -p "$NODES"
+if [ ! -d "$NODES/ComfyUI-Manager" ]; then
+    echo "==> Installing ComfyUI-Manager..."
+    git clone --depth 1 https://github.com/Comfy-Org/ComfyUI-Manager.git "$NODES/ComfyUI-Manager"
 fi
 
-# Activate venv
-source "$VENV_DIR/bin/activate"
+# ─── verify ───
+"$VENV/bin/python" -c "import torch; print(f'torch={torch.__version__} cuda={torch.version.cuda} device={torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"cpu\"}')"
 
-echo "Cloning ComfyUI..."
-git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
-
-echo "Installing ComfyUI dependencies in isolated venv..."
-# Install PyTorch in venv if needed
-pip install --upgrade pip
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-
-# Install ComfyUI requirements
-pip install -r "$COMFYUI_DIR/requirements.txt"
-
-echo "Installing ComfyUI Manager..."
-git clone https://github.com/ltdrdata/ComfyUI-Manager.git "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager"
-
-# Create launch script
-cat > "$COMFYUI_DIR/launch.sh" << 'LAUNCH_EOF'
+# ─── launch script ───
+cat > "$COMFYUI_DIR/launch.sh" <<'LAUNCH_EOF'
 #!/bin/bash
-source "$HOME/.comfyui-venv/bin/activate"
 cd "$HOME/ComfyUI"
-python main.py "$@"
+exec ./venv/bin/python main.py "$@"
 LAUNCH_EOF
 chmod +x "$COMFYUI_DIR/launch.sh"
 
-echo "==> ComfyUI installed successfully in isolated virtual environment"
 echo ""
-echo "To start ComfyUI:"
-echo "  $COMFYUI_DIR/launch.sh"
-echo "  or: source ~/.comfyui-venv/bin/activate && cd ~/ComfyUI && python main.py"
+echo "==> ComfyUI installed at $COMFYUI_DIR (venv: $VENV)"
+echo "==> Start with: screen -dmS comfyui bash -c 'cd $COMFYUI_DIR && ./venv/bin/python main.py --listen'"
+echo "    or: $COMFYUI_DIR/launch.sh --listen"
 `,
 
 	"nvidia": `#!/bin/bash
@@ -1809,6 +1826,283 @@ mkdir -p ~/ComfyUI/models/instantid
 cd ~/ComfyUI/models/instantid
 huggingface-cli download InstantX/InstantID --local-dir instantid --max-workers 8
 echo "==> InstantID installed successfully"
+`,
+
+	// =========================================================================
+	// GH200 + Wan 2.2 stack (added — captures tuned May 2026 workflow)
+	// =========================================================================
+
+	"wantorch": `#!/bin/bash
+set -euo pipefail
+echo "==> Installing PyTorch cu130 nightly + sage attention into ComfyUI venv"
+
+VENV="$HOME/ComfyUI/venv"
+if [ ! -x "$VENV/bin/python" ]; then
+    echo "ERROR: $VENV/bin/python not found. Install 'comfyui' first."
+    exit 1
+fi
+
+ARCH=$(uname -m)
+echo "==> arch=$ARCH"
+
+if [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "arm64" ]; then
+    echo "WARNING: pytorch-gh200 is tuned for ARM64 GH200/H200. On x86, prefer the standard 'pytorch' package."
+fi
+
+# Quick: are we already on cu130?
+CUR=$("$VENV/bin/python" -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo none)
+if [ "$CUR" = "13.0" ]; then
+    echo "==> torch already cu130 ($CUR), skipping torch swap"
+else
+    echo "==> Installing torch nightly cu130 (drops in ~3GB of wheels)"
+    "$VENV/bin/pip" install --pre --upgrade --force-reinstall \
+        torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/nightly/cu130
+fi
+
+echo "==> Installing hf_transfer (fast HF downloads) and sageattention"
+"$VENV/bin/pip" install -q hf_transfer sageattention
+
+# Verify
+"$VENV/bin/python" - <<'PY'
+import torch
+assert torch.cuda.is_available(), "CUDA not available after install"
+print(f"torch={torch.__version__}  cuda={torch.version.cuda}  device={torch.cuda.get_device_name(0)}")
+try:
+    from importlib.metadata import version as _v
+    print(f"sageattention={_v('sageattention')}")
+except Exception:
+    import sageattention as _s  # noqa: F401
+    print("sageattention=installed")
+PY
+
+echo ""
+echo "==> Done. Restart ComfyUI with --use-sage-attention to engage:"
+echo "    cd ~/ComfyUI && ./venv/bin/python main.py --listen --use-sage-attention"
+echo ""
+echo "    On GH200, comfy_kitchen.cuda backend will now ENABLE (was disabled on cu128)."
+`,
+
+	"wannodes": `#!/bin/bash
+set -euo pipefail
+echo "==> Installing Kijai's Wan custom-node stack into ComfyUI"
+
+VENV="$HOME/ComfyUI/venv"
+NODES="$HOME/ComfyUI/custom_nodes"
+
+if [ ! -d "$HOME/ComfyUI" ]; then
+    echo "ERROR: ~/ComfyUI not found. Install 'comfyui' first."
+    exit 1
+fi
+mkdir -p "$NODES"
+
+clone_or_pull() {
+    local url=$1 name=$2
+    if [ -d "$NODES/$name/.git" ]; then
+        echo "==> $name already cloned, pulling latest"
+        git -C "$NODES/$name" pull --ff-only
+    else
+        echo "==> Cloning $name"
+        git clone --depth 1 "$url" "$NODES/$name"
+    fi
+}
+
+clone_or_pull https://github.com/kijai/ComfyUI-WanVideoWrapper.git ComfyUI-WanVideoWrapper
+clone_or_pull https://github.com/kijai/ComfyUI-KJNodes.git           ComfyUI-KJNodes
+clone_or_pull https://github.com/Comfy-Org/ComfyUI-Manager.git       ComfyUI-Manager
+
+echo "==> Installing custom-node Python deps (skipping numpy/torchcodec pins to avoid downgrades)"
+"$VENV/bin/pip" install -q \
+    ftfy "accelerate>=1.2.1" einops "diffusers>=0.33.0" "peft>=0.17.0" \
+    "sentencepiece>=0.2.0" protobuf pyloudnorm "gguf>=0.17.1" \
+    opencv-python-headless scipy color-matcher matplotlib mss \
+    GitPython PyGithub typer rich toml uv chardet "transformers>=4.50.3"
+
+# Drop in the no-LoRA max-quality T2V workflow if we have it embedded
+WF_DIR="$HOME/ComfyUI/user/default/workflows"
+mkdir -p "$WF_DIR"
+WF_FILE="$WF_DIR/Wan2.2_14B_T2V_NoLoRA_MaxQuality.json"
+if [ ! -f "$WF_FILE" ]; then
+    cat >"$WF_FILE" <<'WFEOF'
+{"placeholder":true,"note":"Run gh200-wan-full to install the full workflow JSON, or copy from anime/cli/embedded/workflows/."}
+WFEOF
+fi
+
+echo "==> Custom-node stack installed. Restart ComfyUI to load."
+`,
+
+	"wanmodels": `#!/bin/bash
+set -euo pipefail
+echo "==> Downloading Wan 2.2 full model set (T2V+I2V dual-expert, TI2V-5B, LoRAs, encoders, VAEs)"
+
+VENV="$HOME/ComfyUI/venv"
+MODELS="$HOME/ComfyUI/models"
+
+if [ ! -d "$HOME/ComfyUI" ]; then
+    echo "ERROR: ~/ComfyUI not found. Install 'comfyui' first."
+    exit 1
+fi
+mkdir -p "$MODELS/diffusion_models" "$MODELS/text_encoders" "$MODELS/vae" "$MODELS/loras"
+
+# hf_transfer dramatically speeds up large downloads; install if missing
+"$VENV/bin/pip" show hf_transfer >/dev/null 2>&1 || "$VENV/bin/pip" install -q hf_transfer
+
+export HF_HUB_ENABLE_HF_TRANSFER=1
+
+# Each (repo, file_in_repo, dest_subdir) — flatten to dest_subdir/<basename>
+"$VENV/bin/python" - <<'PY'
+import os, shutil, time
+from pathlib import Path
+from huggingface_hub import hf_hub_download
+
+ROOT = Path(os.path.expanduser("~/ComfyUI/models"))
+
+ITEMS = [
+    # Wan 2.2 dual-expert T2V (high + low noise) fp8
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models"),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models"),
+    # Wan 2.2 dual-expert I2V (high + low noise) fp8
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models"),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models"),
+    # Wan 2.2 TI2V 5B (small/fast)
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "diffusion_models"),
+    # 4-step lightx2v LoRAs (one per expert)
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "loras"),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",  "loras"),
+    # Text encoder + VAEs
+    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "text_encoders"),
+    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/vae/wan_2.1_vae.safetensors", "vae"),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan2.2_vae.safetensors", "vae"),
+]
+
+for repo, fname, sub in ITEMS:
+    dest_dir = ROOT / sub
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    target = dest_dir / Path(fname).name
+    if target.exists() and target.stat().st_size > 0:
+        print(f"SKIP  {target.name} ({target.stat().st_size/1024/1024:.0f}MB)")
+        continue
+    print(f"PULL  {target.name}", flush=True)
+    t0 = time.time()
+    p = hf_hub_download(repo_id=repo, filename=fname, local_dir=str(dest_dir))
+    src = Path(p)
+    if src != target:
+        shutil.move(str(src), str(target))
+        # cleanup nested split_files dir if empty
+        nest = dest_dir / "split_files"
+        if nest.exists():
+            shutil.rmtree(nest, ignore_errors=True)
+    sz = target.stat().st_size / (1024**3)
+    print(f"  done  {sz:.1f}GB in {time.time()-t0:.1f}s")
+
+print("ALL_DONE")
+PY
+
+echo ""
+echo "==> Wan 2.2 full set landed in ~/ComfyUI/models/. Restart ComfyUI to see them in node dropdowns."
+`,
+
+	"wan": `#!/bin/bash
+set -euo pipefail
+echo "==> GH200 + Wan 2.2 full setup — meta-package"
+echo ""
+echo "Dependencies (pytorch-gh200, comfyui-wan-stack, wan2.2-full) install first."
+echo "This step just verifies the stack and writes the no-LoRA max-quality workflow."
+echo ""
+
+VENV="$HOME/ComfyUI/venv"
+
+# Sanity check
+"$VENV/bin/python" - <<'PY'
+import torch
+print(f"torch          {torch.__version__}  cuda={torch.version.cuda}")
+try:
+    from importlib.metadata import version as _v
+    print(f"sage attention {_v('sageattention')}")
+except Exception:
+    import sageattention as _s  # noqa: F401
+    print("sage attention installed")
+print(f"device         {torch.cuda.get_device_name(0)}")
+PY
+
+# Drop the canonical no-LoRA max-quality workflow into user workflows
+WF_DIR="$HOME/ComfyUI/user/default/workflows"
+mkdir -p "$WF_DIR"
+WF_FILE="$WF_DIR/Wan2.2_14B_T2V_NoLoRA_MaxQuality.json"
+if [ -f "$WF_FILE" ] && [ "$(wc -c <"$WF_FILE")" -gt 1000 ]; then
+    echo "==> workflow already present at $WF_FILE"
+else
+    echo "==> Note: full workflow JSON ships in anime/cli/embedded/workflows/."
+    echo "    Copy it manually if not auto-installed:"
+    echo "    cp \$ANIME_REPO/cli/embedded/workflows/Wan2.2_14B_T2V_NoLoRA_MaxQuality.json $WF_FILE"
+fi
+
+echo ""
+echo "==> All set. Start ComfyUI with sage attention engaged:"
+echo "    screen -dmS comfyui bash -c 'cd ~/ComfyUI && ./venv/bin/python main.py --listen --use-sage-attention'"
+echo ""
+echo "==> Then load the Wan 2.2 14B T2V NoLoRA MaxQuality workflow from the Workflow menu."
+`,
+
+	"comfort": `#!/bin/bash
+set -euo pipefail
+echo "==> Installing Comfort — Wan T2V Atelier UI"
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: node not found. Install 'nodejs' first."
+    exit 1
+fi
+if ! command -v npm >/dev/null 2>&1; then
+    echo "ERROR: npm not found. Install 'nodejs' first."
+    exit 1
+fi
+
+REPO="$HOME/Comfort"
+UI="$REPO/comfort-ui"
+
+# Clone or update the Comfort repo
+if [ -d "$REPO/.git" ]; then
+    echo "==> $REPO already cloned, pulling latest"
+    git -C "$REPO" pull --ff-only || echo "WARN: pull failed (uncommitted changes?), continuing with current tree"
+else
+    echo "==> Cloning github.com/quivent/comfort to $REPO"
+    git clone --depth 1 https://github.com/quivent/comfort.git "$REPO"
+fi
+
+if [ ! -d "$UI" ]; then
+    echo "ERROR: $UI missing — repo layout changed?"
+    exit 1
+fi
+
+cd "$UI"
+
+# Install + build the UI. Prefer ci (lockfile-respecting) when a lock is present.
+if [ -f package-lock.json ]; then
+    echo "==> npm ci"
+    npm ci --no-audit --no-fund
+else
+    echo "==> npm install"
+    npm install --no-audit --no-fund
+fi
+
+echo "==> npm run build"
+npm run build
+
+if [ ! -d dist ]; then
+    echo "ERROR: build did not produce dist/ — check build output above"
+    exit 1
+fi
+
+# Drop a tiny launch hint at ~/.anime/comfort-path so the Go side can find it
+mkdir -p "$HOME/.anime"
+echo "$UI" > "$HOME/.anime/comfort-path"
+
+echo ""
+echo "==> Comfort installed at $UI"
+echo "==> dist/ ready ($(du -sh dist | cut -f1))"
+echo ""
+echo "    Launch the studio: anime wan studio"
+echo "    Dev mode:          (cd $UI && npm run dev)"
 `,
 }
 

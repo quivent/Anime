@@ -130,8 +130,8 @@ func GetPackages() map[string]*Package {
 		"comfyui": {
 			ID:           "comfyui",
 			Name:         "ComfyUI",
-			Description:  "ComfyUI with manager and custom nodes",
-			Dependencies: []string{"core", "python", "pytorch", "nvidia", "comfy-cli"},
+			Description:  "ComfyUI in isolated venv at ~/ComfyUI/venv with host-aware torch + ComfyUI-Manager",
+			Dependencies: []string{"core", "python", "nvidia"},
 			EstimatedTime: 15 * time.Minute,
 			Category:     "Application",
 			Size:         "~5GB",
@@ -535,6 +535,55 @@ func GetPackages() map[string]*Package {
 			EstimatedTime: 5 * time.Minute,
 			Category:     "ComfyUI Node",
 			Size:         "~100MB",
+		},
+
+		// =========================================================================
+		// GH200 + Wan 2.2 full stack — captures the complete tuned setup
+		// =========================================================================
+		"wantorch": {
+			ID:            "wantorch",
+			Name:          "PyTorch cu130 (GH200/ARM64)",
+			Description:   "PyTorch nightly cu130 + sage attention + hf_transfer; unlocks comfy_kitchen.cuda backend on GH200/H200",
+			Dependencies:  []string{"core", "python", "comfyui"},
+			EstimatedTime: 5 * time.Minute,
+			Category:      "ML Framework",
+			Size:          "~3.5GB",
+		},
+		"wannodes": {
+			ID:            "wannodes",
+			Name:          "ComfyUI Wan custom-node stack (Kijai)",
+			Description:   "kijai/ComfyUI-WanVideoWrapper + KJNodes + ComfyUI-Manager — Wan-specific nodes with TeaCache, sage support, dual-expert helpers",
+			Dependencies:  []string{"comfyui"},
+			EstimatedTime: 3 * time.Minute,
+			Category:      "ComfyUI Node",
+			Size:          "~200MB",
+		},
+		"wanmodels": {
+			ID:            "wanmodels",
+			Name:          "Wan 2.2 — full model set",
+			Description:   "Wan 2.2 T2V+I2V dual-expert 14B fp8, TI2V-5B fp16, lightx2v 4-step LoRAs, umt5_xxl encoder, wan_2.1 + wan2.2 VAEs",
+			Dependencies:  []string{"comfyui"},
+			EstimatedTime: 8 * time.Minute,
+			Category:      "Video Generation",
+			Size:          "~85GB",
+		},
+		"comfort": {
+			ID:            "comfort",
+			Name:          "Comfort — Wan T2V Atelier UI",
+			Description:   "Polished single-page web studio for Wan 2.2 T2V (clones quivent/comfort, npm ci + build). Launch with: anime wan studio",
+			Dependencies:  []string{"nodejs"},
+			EstimatedTime: 4 * time.Minute,
+			Category:      "Application",
+			Size:          "~400MB",
+		},
+		"wan": {
+			ID:            "wan",
+			Name:          "GH200 + Wan 2.2 — full setup (meta)",
+			Description:   "Complete tuned GH200 video-gen stack: cu130 torch, sage attn, Kijai Wan nodes, full Wan 2.2 model set, Comfort studio UI, no-LoRA max-quality workflow JSON",
+			Dependencies:  []string{"comfyui", "wantorch", "wannodes", "wanmodels", "comfort"},
+			EstimatedTime: 22 * time.Minute,
+			Category:      "Bundle",
+			Size:          "~91GB",
 		},
 
 		// Individual LLM Models (via Ollama)

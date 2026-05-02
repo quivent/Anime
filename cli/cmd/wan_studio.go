@@ -53,14 +53,23 @@ Flags:
   --public          Bind 0.0.0.0 (reachable from outside the host)
   --check           Print environment status and exit (no install, no serve)
   --skip-install    Don't run any installer phase; fail if anything is missing
-  --skip-models     Skip the Wan 2.2 model download (~85GB)
+  --skip-models     Skip the Wan 2.2 model download
   --yes             Don't prompt for the heavy download phase
 
+Install level (controls which Wan 2.2 weights get downloaded):
+  --minimal         5B TI2V only           ~20GB / ~5 min  (fits 12GB+ VRAM)
+  --standard        14B T2V dual + LoRAs   ~35GB / ~10 min (fits 24GB+ VRAM)
+  --full            everything (default for ≥48GB VRAM)
+                                           ~85GB / ~22 min (fits 48GB+ VRAM)
+  (default: auto-pick from detected VRAM)
+
 Examples:
-  anime wan studio              # zero to studio (prompts before the 85GB pull)
-  anime wan studio --yes        # unattended bootstrap
-  anime wan studio --check      # show what's installed / missing
-  anime wan studio --dev        # live-reload from the comfort-ui source
+  anime wan studio                       # auto-pick level from VRAM, prompt before pull
+  anime wan studio --yes                 # unattended, level auto-picked
+  anime wan studio --minimal --yes       # smallest install, fastest setup
+  anime wan studio --standard --yes      # 14B fast preset path
+  anime wan studio --check               # show what's installed / missing
+  anime wan studio --dev                 # live-reload from the comfort-ui source
 
 The studio talks to whatever ComfyUI is reachable at --comfy. The default
 local flow installs to: ~/ComfyUI, ~/Comfort, ~/.anime/wan-pipeline.db.`,
@@ -127,11 +136,31 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 			bootstrap.skipModels = true
 		case a == "--yes", a == "-y":
 			bootstrap.yes = true
+		case a == "--minimal":
+			bootstrap.installLevel = "minimal"
+		case a == "--standard":
+			bootstrap.installLevel = "standard"
+		case a == "--full":
+			bootstrap.installLevel = "full"
+		case a == "--level":
+			if v, ok := take(); ok {
+				bootstrap.installLevel = v
+			}
+		case strings.HasPrefix(a, "--level="):
+			bootstrap.installLevel = strings.TrimPrefix(a, "--level=")
 		case a == "-h", a == "--help":
 			return cmd.Help()
 		default:
 			return fmt.Errorf("unknown flag: %s", a)
 		}
+	}
+	// Validate install level early so we don't get a confusing error 5
+	// minutes into a download.
+	switch bootstrap.installLevel {
+	case "", "minimal", "standard", "full":
+		// ok ("" → recommendedLevel will fill in)
+	default:
+		return fmt.Errorf("invalid --level=%s (expected: minimal, standard, full)", bootstrap.installLevel)
 	}
 
 	// Phase 0: get the host to a state where the studio can actually run.

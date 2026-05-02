@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/joshkornreich/anime/internal/config"
@@ -87,29 +88,140 @@ func runGhLogin(cmd *cobra.Command, args []string) error {
 		return runGhOnServer(server, []string{"auth", "login"}, true)
 	}
 
-	// Local login
-	fmt.Println(theme.InfoStyle.Render("Authenticating with GitHub..."))
-	fmt.Println()
+	// Local fluid login: install gh if missing → web auth → ensure SSH
+	// key → upload key → verify. After this, `git clone git@github.com:...`
+	// just works for any repo the account has access to.
+	step := func(n int, label string) {
+		fmt.Println(theme.HighlightStyle.Render(fmt.Sprintf("[%d/5] %s", n, label)))
+	}
 
-	// Check if gh is installed
+	// 1. Install gh CLI if missing (apt on Linux, brew on macOS).
+	step(1, "Ensure gh CLI is installed")
 	if _, err := exec.LookPath("gh"); err != nil {
-		return showGhInstallInstructions()
+		fmt.Println(theme.DimTextStyle.Render("  gh not on PATH — installing..."))
+		if err := installGhCLI(); err != nil {
+			fmt.Println(theme.ErrorStyle.Render("  ✗ auto-install failed: " + err.Error()))
+			return showGhInstallInstructions()
+		}
 	}
-
-	ghCmd := exec.Command("gh", "auth", "login")
-	ghCmd.Stdin = os.Stdin
-	ghCmd.Stdout = os.Stdout
-	ghCmd.Stderr = os.Stderr
-
-	if err := ghCmd.Run(); err != nil {
-		return fmt.Errorf("gh auth login failed: %w", err)
-	}
-
-	fmt.Println()
-	fmt.Println(theme.SuccessStyle.Render("✓ GitHub authentication complete"))
+	fmt.Println(theme.SuccessStyle.Render("  ✓ gh installed"))
 	fmt.Println()
 
+	// 2. Web auth flow (works on headless cloud boxes — gh prints the URL +
+	//    one-time code; user pastes them into their laptop browser).
+	step(2, "Authenticate with GitHub (web flow)")
+	if exec.Command("gh", "auth", "status").Run() == nil {
+		who, _ := exec.Command("gh", "api", "user", "--jq", ".login").Output()
+		fmt.Println(theme.SuccessStyle.Render("  ✓ already authenticated as " + strings.TrimSpace(string(who))))
+	} else {
+		fmt.Println(theme.DimTextStyle.Render("  Opening device-code flow — copy the code into the URL gh prints."))
+		fmt.Println()
+		login := exec.Command("gh", "auth", "login",
+			"--hostname", "github.com",
+			"--git-protocol", "ssh",
+			"--web",
+			"--scopes", "admin:public_key,repo,read:org")
+		login.Stdin, login.Stdout, login.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := login.Run(); err != nil {
+			return fmt.Errorf("gh auth login failed: %w", err)
+		}
+	}
+	fmt.Println()
+
+	// 3. Make sure an SSH key exists at ~/.ssh/id_ed25519 (generate if not).
+	step(3, "Ensure SSH key exists")
+	home, _ := os.UserHomeDir()
+	keyPath := filepath.Join(home, ".ssh", "id_ed25519")
+	pubPath := keyPath + ".pub"
+	if _, err := os.Stat(pubPath); err != nil {
+		if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+			return fmt.Errorf("create ~/.ssh: %w", err)
+		}
+		hostname, _ := os.Hostname()
+		fmt.Println(theme.DimTextStyle.Render("  Generating new ed25519 key at " + keyPath + " ..."))
+		gen := exec.Command("ssh-keygen", "-t", "ed25519",
+			"-f", keyPath,
+			"-N", "", // empty passphrase so headless usage works
+			"-C", "anime-cli@"+hostname)
+		gen.Stdout, gen.Stderr = os.Stdout, os.Stderr
+		if err := gen.Run(); err != nil {
+			return fmt.Errorf("ssh-keygen failed: %w", err)
+		}
+	}
+	fmt.Println(theme.SuccessStyle.Render("  ✓ key at " + pubPath))
+	fmt.Println()
+
+	// 4. Upload the public key to GitHub so SSH clones work everywhere.
+	//    `gh ssh-key add` fails if the same key already exists; treat that
+	//    as success because it means the work's done.
+	step(4, "Upload public key to GitHub")
+	hostnameOut, _ := os.Hostname()
+	keyTitle := "anime-cli (" + hostnameOut + ")"
+	addCmd := exec.Command("gh", "ssh-key", "add", pubPath, "--title", keyTitle)
+	addOut, addErr := addCmd.CombinedOutput()
+	switch {
+	case addErr == nil:
+		fmt.Println(theme.SuccessStyle.Render("  ✓ key uploaded as: " + keyTitle))
+	case strings.Contains(string(addOut), "key is already in use") ||
+		strings.Contains(string(addOut), "already added"):
+		fmt.Println(theme.SuccessStyle.Render("  ✓ key already on github.com (skipping)"))
+	default:
+		fmt.Println(theme.WarningStyle.Render("  ⚠  could not upload key: " + strings.TrimSpace(string(addOut))))
+		fmt.Println(theme.DimTextStyle.Render("     This is non-fatal — the gh CLI still works for clones via HTTPS."))
+	}
+	fmt.Println()
+
+	// 5. Verify SSH access.
+	step(5, "Verify SSH access to github.com")
+	sshTest := exec.Command("ssh", "-T", "-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
+		"git@github.com")
+	out, _ := sshTest.CombinedOutput()
+	if strings.Contains(string(out), "successfully authenticated") {
+		fmt.Println(theme.SuccessStyle.Render("  ✓ " + strings.TrimSpace(string(out))))
+	} else {
+		fmt.Println(theme.WarningStyle.Render("  ⚠  ssh -T git@github.com did not authenticate yet"))
+		fmt.Println(theme.DimTextStyle.Render("     (key propagation can take a few seconds — try again or use HTTPS via gh)"))
+	}
+	fmt.Println()
+
+	fmt.Println(theme.SuccessStyle.Render("✓ GitHub login complete"))
+	fmt.Println(theme.DimTextStyle.Render("  You can now run: anime wan studio --yes"))
+	fmt.Println()
 	return nil
+}
+
+// installGhCLI installs the GitHub CLI from the official APT repo on Ubuntu/
+// Debian, or via Homebrew on macOS. Idempotent — bails immediately if `gh`
+// is already on PATH.
+func installGhCLI() error {
+	if _, err := exec.LookPath("gh"); err == nil {
+		return nil
+	}
+	// macOS: Homebrew is the canonical path.
+	if _, err := exec.LookPath("brew"); err == nil {
+		fmt.Println(theme.DimTextStyle.Render("  Detected Homebrew — running: brew install gh"))
+		c := exec.Command("brew", "install", "gh")
+		c.Stdout, c.Stderr = os.Stdout, os.Stderr
+		return c.Run()
+	}
+	// Linux: APT via the official keyring.
+	if _, err := exec.LookPath("apt-get"); err != nil {
+		return fmt.Errorf("no supported package manager (need brew or apt-get)")
+	}
+	script := `set -e
+SUDO=""
+[ "$(id -u)" -ne 0 ] && SUDO=sudo
+$SUDO mkdir -p /etc/apt/keyrings
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | $SUDO dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg status=none
+$SUDO chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | $SUDO tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+$SUDO DEBIAN_FRONTEND=noninteractive apt-get update -y
+$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y gh
+`
+	c := exec.Command("bash", "-c", script)
+	c.Stdout, c.Stderr = os.Stdout, os.Stderr
+	return c.Run()
 }
 
 func runGhStatus(cmd *cobra.Command, args []string) error {

@@ -2022,7 +2022,16 @@ echo "==> Custom-node stack installed. Restart ComfyUI to load."
 
 	"wanmodels": `#!/bin/bash
 set -euo pipefail
-echo "==> Downloading Wan 2.2 full model set (T2V+I2V dual-expert, TI2V-5B, LoRAs, encoders, VAEs)"
+
+# WAN_INSTALL_LEVEL controls how much we pull. Set by anime wan studio
+# --minimal | --standard | --full (default: full). Higher levels are supersets.
+LEVEL="${WAN_INSTALL_LEVEL:-full}"
+case "$LEVEL" in
+    minimal)  echo "==> Downloading Wan 2.2 minimal set: 5B TI2V + encoder + VAE  (~20GB, fits 12GB VRAM)" ;;
+    standard) echo "==> Downloading Wan 2.2 standard set: 14B T2V dual-expert + 4-step LoRAs + encoder + VAE  (~35GB, fits 24GB VRAM)" ;;
+    full)     echo "==> Downloading Wan 2.2 full set: T2V+I2V dual-expert + 5B + LoRAs + encoders + VAEs  (~85GB, fits 48GB+ VRAM)" ;;
+    *)        echo "ERROR: unknown WAN_INSTALL_LEVEL=$LEVEL (expected: minimal|standard|full)"; exit 1 ;;
+esac
 
 VENV="$HOME/ComfyUI/venv"
 MODELS="$HOME/ComfyUI/models"
@@ -2037,34 +2046,47 @@ mkdir -p "$MODELS/diffusion_models" "$MODELS/text_encoders" "$MODELS/vae" "$MODE
 "$VENV/bin/pip" show hf_transfer >/dev/null 2>&1 || "$VENV/bin/pip" install -q hf_transfer
 
 export HF_HUB_ENABLE_HF_TRANSFER=1
+# Pass HF_TOKEN through if we have one. The Comfy-Org Wan repos are
+# currently public, but having auth available is safer (rate limits,
+# future gating, mirror flakiness).
+export HF_TOKEN="${HF_TOKEN:-}"
 
-# Each (repo, file_in_repo, dest_subdir) — flatten to dest_subdir/<basename>
+# Each (repo, file_in_repo, dest_subdir, levels) — flatten to dest_subdir/<basename>.
+# 'levels' is a comma-separated list of which install levels include this file.
 "$VENV/bin/python" - <<'PY'
-import os, shutil, time
+import os, shutil, sys, time
 from pathlib import Path
 from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError, HfHubHTTPError
 
+LEVEL = os.environ.get("WAN_INSTALL_LEVEL", "full")
 ROOT = Path(os.path.expanduser("~/ComfyUI/models"))
+TOKEN = os.environ.get("HF_TOKEN") or None
 
+# (repo, file_in_repo, dest_subdir, set_of_levels_that_need_it)
 ITEMS = [
-    # Wan 2.2 dual-expert T2V (high + low noise) fp8
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models"),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models"),
-    # Wan 2.2 dual-expert I2V (high + low noise) fp8
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models"),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models"),
-    # Wan 2.2 TI2V 5B (small/fast)
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "diffusion_models"),
-    # 4-step lightx2v LoRAs (one per expert)
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "loras"),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",  "loras"),
-    # Text encoder + VAEs
-    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "text_encoders"),
-    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/vae/wan_2.1_vae.safetensors", "vae"),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan2.2_vae.safetensors", "vae"),
+    # Wan 2.2 dual-expert T2V (standard + full)
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models", {"standard", "full"}),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models", {"standard", "full"}),
+    # Wan 2.2 dual-expert I2V (full only — saves ~30GB on standard)
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models", {"full"}),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models", {"full"}),
+    # Wan 2.2 TI2V 5B (minimal + full — small/fast model for low-VRAM hosts)
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "diffusion_models", {"minimal", "full"}),
+    # 4-step lightx2v LoRAs — required for 14B "fast" preset (standard + full)
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "loras", {"standard", "full"}),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",  "loras", {"standard", "full"}),
+    # Text encoder — every level needs it
+    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "text_encoders", {"minimal", "standard", "full"}),
+    # VAEs: 14B uses wan_2.1; 5B uses wan2.2.
+    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/vae/wan_2.1_vae.safetensors", "vae", {"standard", "full"}),
+    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan2.2_vae.safetensors", "vae", {"minimal", "full"}),
 ]
 
-for repo, fname, sub in ITEMS:
+selected = [(r, f, s) for (r, f, s, levels) in ITEMS if LEVEL in levels]
+print(f"==> level={LEVEL}  pulling {len(selected)} files (skips already-on-disk)\n", flush=True)
+
+for repo, fname, sub in selected:
     dest_dir = ROOT / sub
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / Path(fname).name
@@ -2073,7 +2095,20 @@ for repo, fname, sub in ITEMS:
         continue
     print(f"PULL  {target.name}", flush=True)
     t0 = time.time()
-    p = hf_hub_download(repo_id=repo, filename=fname, local_dir=str(dest_dir))
+    try:
+        p = hf_hub_download(repo_id=repo, filename=fname, local_dir=str(dest_dir), token=TOKEN)
+    except GatedRepoError:
+        print(f"ERROR: {repo} is gated. Run: huggingface-cli login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
+        sys.exit(2)
+    except RepositoryNotFoundError:
+        print(f"ERROR: {repo} not found (was it renamed?)", file=sys.stderr)
+        sys.exit(2)
+    except HfHubHTTPError as e:
+        if "401" in str(e) or "403" in str(e):
+            print(f"ERROR: HF auth required for {repo}/{fname}. Run: huggingface-cli login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
+        else:
+            print(f"ERROR: HF download failed for {repo}/{fname}: {e}", file=sys.stderr)
+        sys.exit(2)
     src = Path(p)
     if src != target:
         shutil.move(str(src), str(target))
@@ -2088,7 +2123,7 @@ print("ALL_DONE")
 PY
 
 echo ""
-echo "==> Wan 2.2 full set landed in ~/ComfyUI/models/. Restart ComfyUI to see them in node dropdowns."
+echo "==> Wan 2.2 $LEVEL set landed in ~/ComfyUI/models/. Restart ComfyUI to see them in node dropdowns."
 `,
 
 	"wan": `#!/bin/bash
@@ -2159,14 +2194,87 @@ fi
 
 REPO="$HOME/Comfort"
 UI="$REPO/comfort-ui"
+GH_REPO="quivent/comfort"
+
+# ─── clone the Comfort repo ───────────────────────────────────────
+# The repo is currently PRIVATE under quivent/, so a bare HTTPS clone
+# fails (and on a TTY git prompts for username/password forever — the
+# "Password authentication is not supported" cul-de-sac). We try
+# multiple credential paths in order and never let git prompt.
+clone_comfort() {
+    local target="$1"
+    # GIT_TERMINAL_PROMPT=0 makes git fail fast instead of asking for
+    # credentials interactively; if our auto-detection is wrong we want
+    # a clean error, not a hang.
+    export GIT_TERMINAL_PROMPT=0
+
+    # 1. SSH key with github.com access (most common dev-box setup).
+    #    Probe with -T to confirm the key authenticates, then clone.
+    if ssh -T -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new git@github.com 2>&1 | grep -q "successfully authenticated"; then
+        echo "==> trying SSH (your ~/.ssh key authenticates against github.com)"
+        if GIT_SSH_COMMAND="ssh -o BatchMode=yes" git clone --depth 1 "git@github.com:${GH_REPO}.git" "$target" 2>&1; then
+            return 0
+        fi
+        echo "    SSH clone failed (key may not have access to ${GH_REPO})"
+    fi
+
+    # 2. gh CLI is logged in (also common — Lambda images often have it).
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        local user="$(gh api user --jq .login 2>/dev/null || echo authenticated)"
+        echo "==> trying gh CLI (logged in as $user)"
+        if gh repo clone "$GH_REPO" "$target" -- --depth 1 2>&1; then
+            [ -d "$target/.git" ] && return 0
+        fi
+    fi
+
+    # 3. HTTPS with a personal access token from env (CI-friendly).
+    local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    if [ -n "$tok" ]; then
+        echo "==> trying HTTPS with GH_TOKEN/GITHUB_TOKEN"
+        if git clone --depth 1 "https://x-access-token:${tok}@github.com/${GH_REPO}.git" "$target" 2>&1; then
+            return 0
+        fi
+    fi
+
+    # 4. Anonymous HTTPS — only succeeds if the repo becomes public.
+    echo "==> trying anonymous HTTPS (works only if ${GH_REPO} is public)"
+    if git clone --depth 1 "https://github.com/${GH_REPO}.git" "$target" 2>&1; then
+        return 0
+    fi
+
+    cat >&2 <<HELP
+
+ERROR: could not clone github.com/${GH_REPO} via any of:
+       SSH key, gh CLI, GH_TOKEN env, anonymous HTTPS.
+
+       quivent/comfort is private. Easiest fix is one command:
+
+           anime gh login
+
+       That walks you through gh auth (web flow), generates an SSH
+       key if you don't have one, uploads it to GitHub, and verifies
+       access. Then re-run:
+
+           anime wan studio --yes
+
+       Alternatives if you'd rather not use anime gh login:
+         • Run gh auth login yourself, then add SSH key:
+             gh auth login --git-protocol ssh --web
+             gh ssh-key add ~/.ssh/id_ed25519.pub --title "\$(hostname)"
+         • Export a PAT with repo scope:
+             export GH_TOKEN=ghp_...
+
+HELP
+    return 1
+}
 
 # Clone or update the Comfort repo
 if [ -d "$REPO/.git" ]; then
     echo "==> $REPO already cloned, pulling latest"
-    git -C "$REPO" pull --ff-only || echo "WARN: pull failed (uncommitted changes?), continuing with current tree"
+    GIT_TERMINAL_PROMPT=0 git -C "$REPO" pull --ff-only 2>&1 || echo "WARN: pull failed, continuing with current tree"
 else
-    echo "==> Cloning github.com/quivent/comfort to $REPO"
-    git clone --depth 1 https://github.com/quivent/comfort.git "$REPO"
+    echo "==> Cloning github.com/${GH_REPO} to $REPO"
+    clone_comfort "$REPO" || exit 1
 fi
 
 if [ ! -d "$UI" ]; then

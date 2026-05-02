@@ -19,10 +19,68 @@ import (
 
 // setupOpts configures bootstrap behaviour for `anime wan studio`.
 type setupOpts struct {
-	checkOnly   bool // print status, install nothing
-	skipInstall bool // launch what's there, never install
-	yes         bool // skip large-download confirmation prompts
-	skipModels  bool // never run wanmodels (it's the ~80GB phase)
+	checkOnly    bool   // print status, install nothing
+	skipInstall  bool   // launch what's there, never install
+	yes          bool   // skip large-download confirmation prompts
+	skipModels   bool   // never run wanmodels (it's the ~80GB phase)
+	installLevel string // minimal | standard | full — controls wanmodels download size
+}
+
+// recommendedLevel maps detected VRAM to the smallest install level that
+// still gives the user a working preset for their box. Used to auto-select
+// when the user doesn't pass --minimal / --standard / --full.
+//
+//	>=48GB → full     (everything: T2V dual + I2V dual + 5B + LoRAs ≈ 85GB)
+//	>=24GB → standard (T2V dual 14B + 4-step LoRAs ≈ 35GB; covers
+//	                   t2v-14b-dual-fast preset on 4090/L40S)
+//	 <24GB → minimal  (5B TI2V only ≈ 20GB; covers ti2v-5b preset on 3090)
+func recommendedLevel(vramGB int) string {
+	switch {
+	case vramGB >= 48:
+		return "full"
+	case vramGB >= 24:
+		return "standard"
+	default:
+		return "minimal"
+	}
+}
+
+// modelsRequiredForLevel returns the (relativePath, label) pairs that the
+// wanmodels phase check must verify for a given install level. Each level
+// is a strict superset of the smaller ones: "full" has everything,
+// "standard" has the 14B fast pipeline, "minimal" has just the 5B path.
+func modelsRequiredForLevel(level string) []struct{ rel, label string } {
+	mk := func(pairs ...[2]string) []struct{ rel, label string } {
+		out := make([]struct{ rel, label string }, len(pairs))
+		for i, p := range pairs {
+			out[i] = struct{ rel, label string }{p[0], p[1]}
+		}
+		return out
+	}
+	switch level {
+	case "minimal":
+		return mk(
+			[2]string{"models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "5B TI2V"},
+			[2]string{"models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "umt5_xxl encoder"},
+			[2]string{"models/vae/wan2.2_vae.safetensors", "wan 2.2 VAE"},
+		)
+	case "standard":
+		return mk(
+			[2]string{"models/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "14B T2V high-noise"},
+			[2]string{"models/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors", "14B T2V low-noise"},
+			[2]string{"models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "4-step high-noise LoRA"},
+			[2]string{"models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors", "4-step low-noise LoRA"},
+			[2]string{"models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "umt5_xxl encoder"},
+			[2]string{"models/vae/wan_2.1_vae.safetensors", "wan 2.1 VAE"},
+		)
+	default: // "full"
+		return mk(
+			[2]string{"models/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "14B T2V high-noise"},
+			[2]string{"models/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors", "14B T2V low-noise"},
+			[2]string{"models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "umt5_xxl encoder"},
+			[2]string{"models/vae/wan_2.1_vae.safetensors", "wan 2.1 VAE"},
+		)
+	}
 }
 
 // phase is one bootstrap step.
@@ -36,7 +94,7 @@ type phase struct {
 	custom    func(*setupOpts) error  // override for non-installer phases (e.g. start ComfyUI)
 }
 
-func wanStudioPhases() []phase {
+func wanStudioPhases(level string) []phase {
 	home, _ := os.UserHomeDir()
 	join := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 
@@ -45,6 +103,19 @@ func wanStudioPhases() []phase {
 			return true, p
 		}
 		return false, "missing: " + p
+	}
+
+	// Size + name vary per install level so the user sees what they're
+	// actually about to download (and what's already on disk).
+	modelsName := "Wan 2.2 model set (full · ~85GB)"
+	modelsHeavy := "downloads ~85GB of Wan 2.2 weights from HuggingFace"
+	switch level {
+	case "minimal":
+		modelsName = "Wan 2.2 model set (minimal · ~20GB)"
+		modelsHeavy = "downloads ~20GB (5B TI2V + encoder + VAE)"
+	case "standard":
+		modelsName = "Wan 2.2 model set (standard · ~35GB)"
+		modelsHeavy = "downloads ~35GB (14B T2V dual + 4-step LoRAs + encoder + VAE)"
 	}
 
 	return []phase{
@@ -106,19 +177,14 @@ except ImportError as e:
 		},
 		{
 			id:   "wanmodels",
-			name: "Wan 2.2 model set (~85GB)",
-			// A single-file check is a lie: if the download dies after the
-			// first file lands, re-running the studio thinks the phase is
-			// satisfied and the next render fails with "node not found" or
-			// "missing VAE". Verify the four files the default workflow
-			// actually loads (high noise + low noise + text encoder + VAE).
+			name: modelsName,
+			// Required files vary by install level — check exactly the set
+			// the user asked for. A single-file check is a lie because if
+			// the download dies after the first file lands, re-running the
+			// studio would think the phase is satisfied and the next render
+			// would fail with "missing VAE".
 			check: func() (bool, string) {
-				required := []struct{ rel, label string }{
-					{filepath.Join("models", "diffusion_models", "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors"), "high-noise 14B"},
-					{filepath.Join("models", "diffusion_models", "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors"), "low-noise 14B"},
-					{filepath.Join("models", "text_encoders", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"), "umt5_xxl encoder"},
-					{filepath.Join("models", "vae", "wan_2.1_vae.safetensors"), "wan 2.1 VAE"},
-				}
+				required := modelsRequiredForLevel(level)
 				var missing []string
 				for _, f := range required {
 					if !exists(join("ComfyUI", f.rel)) {
@@ -128,11 +194,11 @@ except ImportError as e:
 				if len(missing) > 0 {
 					return false, "missing: " + strings.Join(missing, ", ")
 				}
-				return true, "high+low 14B + encoder + VAE on disk"
+				return true, fmt.Sprintf("%d files for level=%s on disk", len(required), level)
 			},
 			skipMsg:   "all required model files present",
 			heavyGate: true,
-			heavyNote: "downloads ~85GB of Wan 2.2 weights from HuggingFace",
+			heavyNote: modelsHeavy,
 		},
 		{
 			id:   "comfort",
@@ -160,14 +226,23 @@ except ImportError as e:
 // ensureComfyStudioReady walks each bootstrap phase. Returns nil only when every
 // phase is satisfied at the end (so the caller can proceed to serve the studio).
 func ensureComfyStudioReady(opts *setupOpts) error {
-	phases := wanStudioPhases()
+	// If the user didn't pick a level explicitly, auto-pick from VRAM. This
+	// means a fresh `anime wan studio --yes` on a 24GB box pulls 35GB
+	// instead of 85GB by default.
+	if opts.installLevel == "" {
+		opts.installLevel = recommendedLevel(gpu.GetTotalVRAM())
+	}
+	// Propagate to the wanmodels install script (it reads WAN_INSTALL_LEVEL).
+	os.Setenv("WAN_INSTALL_LEVEL", opts.installLevel)
+
+	phases := wanStudioPhases(opts.installLevel)
 	w := bufio.NewWriter(os.Stdout)
 	defer w.Flush()
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, theme.GlowStyle.Render("🌀 Wan studio · environment check"))
 	fmt.Fprintln(w)
-	printHostSummary(w)
+	printHostSummary(w, opts.installLevel)
 	fmt.Fprintln(w)
 
 	for _, ph := range phases {
@@ -331,8 +406,8 @@ func recommendedPreset(vramGB int) (preset, why string) {
 
 // printHostSummary prints a one-block GPU/VRAM/driver/disk preamble before the
 // phase checks. It's the first thing the user sees on `--check`, so they
-// immediately know what their box is and which preset will fit.
-func printHostSummary(w *bufio.Writer) {
+// immediately know what their box is and which preset/install level fits.
+func printHostSummary(w *bufio.Writer, level string) {
 	g := gpu.GetSystemInfo()
 	row := func(label, val, hint string) {
 		fmt.Fprintf(w, "  %s %s  %s\n",
@@ -384,6 +459,27 @@ func printHostSummary(w *bufio.Writer) {
 		row("Preset", theme.WarningStyle.Render("(none fits this VRAM)"), why)
 	} else {
 		row("Preset", theme.SuccessStyle.Render(preset), why)
+	}
+
+	// Selected install level (set by --minimal/--standard/--full or auto).
+	levelHint := ""
+	switch level {
+	case "minimal":
+		levelHint = "5B model only · ~20GB · ~5min"
+	case "standard":
+		levelHint = "14B T2V dual + 4-step LoRAs · ~35GB · ~10min"
+	case "full":
+		levelHint = "everything (T2V+I2V dual + 5B + LoRAs) · ~85GB · ~22min"
+	}
+	row("Install", theme.SuccessStyle.Render(level), levelHint)
+
+	// HF auth status — important because future Wan repos may go gated.
+	if os.Getenv("HF_TOKEN") != "" {
+		row("HF auth", theme.SuccessStyle.Render("HF_TOKEN set"), "model downloads will use this token")
+	} else if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".cache", "huggingface", "token")); err == nil {
+		row("HF auth", theme.SuccessStyle.Render("huggingface-cli login cached"), "")
+	} else {
+		row("HF auth", theme.DimTextStyle.Render("anonymous"), "ok for public repos · run: huggingface-cli login")
 	}
 }
 

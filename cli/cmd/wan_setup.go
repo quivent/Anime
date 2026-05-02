@@ -34,7 +34,15 @@ type phase struct {
 }
 
 func wanStudioPhases() []phase {
-	home, _ := os.UserHomeDir()
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		// Every phase needs home. Return a single failing phase so the error
+		// is surfaced clearly instead of silently checking empty paths.
+		return []phase{{
+			name:  "home directory",
+			check: func() (bool, string) { return false, "cannot determine home directory: " + homeErr.Error() },
+		}}
+	}
 	join := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 
 	fileExists := func(p string) (bool, string) {
@@ -135,9 +143,17 @@ func wanStudioPhases() []phase {
 	}
 }
 
+// setupResult carries information back to the caller about what bootstrap did,
+// so the caller can clean up if a later step fails (e.g., kill ComfyUI we
+// started if the web server can't bind its port).
+type setupResult struct {
+	comfyStartedByUs bool // true if this bootstrap launched the ComfyUI screen session
+}
+
 // ensureComfyStudioReady walks each bootstrap phase. Returns nil only when every
 // phase is satisfied at the end (so the caller can proceed to serve the studio).
-func ensureComfyStudioReady(opts *setupOpts) error {
+func ensureComfyStudioReady(opts *setupOpts) (*setupResult, error) {
+	result := &setupResult{}
 	phases := wanStudioPhases()
 	w := bufio.NewWriter(os.Stdout)
 	defer w.Flush()
@@ -160,7 +176,7 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 			continue
 		}
 		if opts.skipInstall {
-			return fmt.Errorf("phase %q not satisfied and --skip-install was given", ph.name)
+			return result, fmt.Errorf("phase %q not satisfied and --skip-install was given", ph.name)
 		}
 
 		if ph.id == "wanmodels" && opts.skipModels {
@@ -177,7 +193,7 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 			fmt.Scanln(&ans)
 			if !strings.EqualFold(strings.TrimSpace(ans), "y") &&
 				!strings.EqualFold(strings.TrimSpace(ans), "yes") {
-				return fmt.Errorf("aborted at phase %q (re-run with --yes to skip the prompt)", ph.name)
+				return result, fmt.Errorf("aborted at phase %q (re-run with --yes to skip the prompt)", ph.name)
 			}
 		}
 
@@ -186,6 +202,10 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 		fmt.Fprintln(w)
 		w.Flush()
 
+		// Track whether WE are starting ComfyUI so the caller can kill it
+		// if a later step (e.g., web server bind) fails.
+		comfyWasRunning := ph.name == "ComfyUI server" && comfyServerReachable()
+
 		var err error
 		if ph.custom != nil {
 			err = ph.custom(opts)
@@ -193,13 +213,17 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 			err = runInstallScript(ph.id)
 		}
 		if err != nil {
-			return fmt.Errorf("phase %q failed: %w", ph.name, err)
+			return result, fmt.Errorf("phase %q failed: %w", ph.name, err)
+		}
+
+		if ph.name == "ComfyUI server" && !comfyWasRunning {
+			result.comfyStartedByUs = true
 		}
 
 		// Re-check after install — fail loudly if it didn't work, since the
 		// next phase might silently depend on this one.
 		if ok, detail := ph.check(); !ok {
-			return fmt.Errorf("phase %q completed but check still fails: %s", ph.name, detail)
+			return result, fmt.Errorf("phase %q completed but check still fails: %s", ph.name, detail)
 		}
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "  %s %s  %s\n", theme.SymbolSuccess,
@@ -212,7 +236,7 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, theme.DimTextStyle.Render("  (--check-only: not installing)"))
 	}
-	return nil
+	return result, nil
 }
 
 // runInstallScript fetches the bash script for a package id and runs it locally,
@@ -265,7 +289,10 @@ func ensureComfyServer(opts *setupOpts) error {
 // tailComfyLog returns the last `n` lines of ~/.anime/comfyui.log with each
 // line indented, so we can dump it directly inside an error string.
 func tailComfyLog(n int) string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "    (cannot determine home directory: " + err.Error() + ")"
+	}
 	logFile := filepath.Join(home, ".anime", "comfyui.log")
 	data, err := os.ReadFile(logFile)
 	if err != nil {

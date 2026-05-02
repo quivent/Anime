@@ -100,32 +100,39 @@ func extractWanScript() (string, error) {
 }
 
 // findPython picks the best Python: prefer ComfyUI venv, then python3, then python.
-func findPython() string {
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, "ComfyUI", "venv", "bin", "python"),
-		"python3",
-		"python",
+// Returns the path and an error if no Python interpreter can be found at all.
+func findPython() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Can't resolve home -- skip the venv candidate, fall through to PATH.
+		home = ""
 	}
+	var candidates []string
+	if home != "" {
+		candidates = append(candidates, filepath.Join(home, "ComfyUI", "venv", "bin", "python"))
+	}
+	candidates = append(candidates, "python3", "python")
 	for _, p := range candidates {
 		if filepath.IsAbs(p) {
 			if _, err := os.Stat(p); err == nil {
-				return p
+				return p, nil
 			}
 		} else if path, err := exec.LookPath(p); err == nil {
-			return path
+			return path, nil
 		}
 	}
-	return "python3"
+	return "", fmt.Errorf("no Python interpreter found on PATH or at ~/ComfyUI/venv/bin/python.\n  Install Python 3 or run: anime install wan")
 }
 
 func runWanPython(args []string) error {
 	scriptPath, err := extractWanScript()
 	if err != nil {
-		fmt.Println(theme.ErrorStyle.Render("✗ failed to extract wan.py: " + err.Error()))
-		return err
+		return fmt.Errorf("failed to extract wan.py: %w", err)
 	}
-	py := findPython()
+	py, err := findPython()
+	if err != nil {
+		return fmt.Errorf("cannot run wan pipeline: %w", err)
+	}
 	full := append([]string{scriptPath}, args...)
 	c := exec.Command(py, full...)
 	c.Stdin = os.Stdin
@@ -138,7 +145,7 @@ func runWanPython(args []string) error {
 				os.Exit(status.ExitStatus())
 			}
 		}
-		return err
+		return fmt.Errorf("wan.py exited with error: %w", err)
 	}
 	return nil
 }
@@ -149,9 +156,12 @@ func runWanPython(args []string) error {
 func runWanCapture(args ...string) (string, error) {
 	scriptPath, err := extractWanScript()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to extract wan.py: %w", err)
 	}
-	py := findPython()
+	py, err := findPython()
+	if err != nil {
+		return "", fmt.Errorf("cannot run wan pipeline: %w", err)
+	}
 	full := append([]string{scriptPath}, args...)
 	c := exec.Command(py, full...)
 	c.Env = os.Environ()

@@ -91,7 +91,9 @@ func startComfyUIServer() error {
 	// but not the parent dir, so a fresh box that hits `anime comfyui start`
 	// before any other CLI command would otherwise fail the log pipe.
 	animeDir := filepath.Join(home, ".anime")
-	_ = os.MkdirAll(animeDir, 0o755)
+	if err := os.MkdirAll(animeDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create log directory %s: %w", animeDir, err)
+	}
 	logPath := filepath.Join(animeDir, "comfyui.log")
 	launch := fmt.Sprintf("cd ~/ComfyUI && exec %s main.py --listen%s 2>&1 | tee -a %s", pyCmd, sageFlag, logPath)
 	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", launch)
@@ -99,17 +101,34 @@ func startComfyUIServer() error {
 		return fmt.Errorf("failed to start ComfyUI: %w", err)
 	}
 
-	// Wait a moment and check if it started
-	fmt.Print(theme.DimTextStyle.Render("  Waiting for startup"))
-	for i := 0; i < 5; i++ {
+	// Wait for the server to actually become reachable before claiming success.
+	// ComfyUI takes 5-15s on a warm box, 60-90s on first boot with model imports.
+	fmt.Print(theme.DimTextStyle.Render("  Waiting for ComfyUI to become reachable"))
+	reachable := false
+	for i := 0; i < 30; i++ {
 		fmt.Print(".")
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get("http://127.0.0.1:8188/system_stats")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				reachable = true
+				break
+			}
+		}
 	}
 	fmt.Println()
 	fmt.Println()
 
 	publicIP := getPublicIPForComfyUI()
-	fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ ComfyUI started at http://%s:8188", publicIP)))
+	if reachable {
+		fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ ComfyUI started and reachable at http://%s:8188", publicIP)))
+	} else {
+		fmt.Println(theme.WarningStyle.Render(fmt.Sprintf("⚠ ComfyUI screen session launched but not yet reachable at http://%s:8188", publicIP)))
+		fmt.Println(theme.DimTextStyle.Render("  First boot can take 60-90s for model imports."))
+		fmt.Println(theme.DimTextStyle.Render("  Check progress: anime comfyui logs"))
+	}
 	fmt.Println()
 	fmt.Println(theme.DimTextStyle.Render("View logs:    anime comfyui logs"))
 	fmt.Println(theme.DimTextStyle.Render("Check status: anime comfyui status"))

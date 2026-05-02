@@ -199,6 +199,7 @@ func cleanLogs() (int, error) {
 		filepath.Join(homeDir, "workflow-*.log"),
 		filepath.Join(homeDir, "animation-*.log"),
 		filepath.Join(homeDir, "comfyui.log"),
+		filepath.Join(homeDir, ".anime", "comfyui.log"),
 		filepath.Join(homeDir, "ollama.log"),
 		filepath.Join(homeDir, "jupyter.log"),
 		"/tmp/comfyui.log",

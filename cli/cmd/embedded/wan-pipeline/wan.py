@@ -15,7 +15,7 @@ Commands:
 
 DB lives at ~/.anime/wan-pipeline.db
 """
-import argparse, json, os, random, sqlite3, sys, time, urllib.parse, urllib.request, uuid
+import argparse, json, os, random, signal, sqlite3, sys, time, urllib.error, urllib.parse, urllib.request, uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -26,7 +26,9 @@ G='\033[38;5;42m'; C='\033[38;5;51m'; Y='\033[38;5;220m'; P='\033[38;5;213m'; X=
 DB_PATH = Path(os.environ.get("WAN_DB", str(Path.home() / ".anime/wan-pipeline.db")))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 COMFY_API = os.environ.get("COMFY_API", "http://127.0.0.1:8188")
-COMFY_VIEW_BASE = os.environ.get("COMFY_VIEW_BASE", "https://comfy.mineral.capital")
+# Default view base = same origin as the API. Override with COMFY_VIEW_BASE
+# only when ComfyUI is fronted by a separate public host.
+COMFY_VIEW_BASE = os.environ.get("COMFY_VIEW_BASE", COMFY_API)
 
 # ── presets baked in (today's tuned config) ──
 PRESETS = {
@@ -66,7 +68,7 @@ PRESETS = {
         "description": "Wan 2.2 5B TI2V (fast iteration, 832x480, 20 steps, ~12s)",
     },
 }
-DEFAULT_PRESET = "t2v-14b-dual-maxq"
+DEFAULT_PRESET = "t2v-14b-dual-fast"
 # Standard SFW negative — strips NSFW content too, plus quality degraders.
 # Keep as the default for unmarked renders.
 DEFAULT_NEGATIVE_SFW = (
@@ -199,9 +201,17 @@ def build_workflow(preset_name: str, prompt: str, negative: str, seed: int, name
 def submit_render(graph: dict) -> str:
     payload = json.dumps({"prompt": graph, "client_id": str(uuid.uuid4())}).encode()
     req = urllib.request.Request(f"{COMFY_API}/prompt", data=payload, headers={"Content-Type": "application/json"})
-    r = json.load(urllib.request.urlopen(req, timeout=15))
+    try:
+        r = json.load(urllib.request.urlopen(req, timeout=15))
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"ComfyUI not reachable at {COMFY_API} ({e.reason}). "
+            f"Start it with: anime comfyui start"
+        ) from None
     if r.get("node_errors"):
-        raise RuntimeError(f"node errors: {r['node_errors']}")
+        # Surface the first node error in human-readable form, not a Python repr.
+        first = next(iter(r["node_errors"].items()))
+        raise RuntimeError(f"workflow rejected by ComfyUI (node {first[0]}): {first[1]}")
     return r["prompt_id"]
 
 def wait_for(prompt_id: str, timeout: int = 1800) -> dict:
@@ -209,15 +219,25 @@ def wait_for(prompt_id: str, timeout: int = 1800) -> dict:
     last = None
     while True:
         elapsed = time.time() - start
-        h = json.load(urllib.request.urlopen(f"{COMFY_API}/history/{prompt_id}"))
+        try:
+            h = json.load(urllib.request.urlopen(f"{COMFY_API}/history/{prompt_id}", timeout=10))
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"ComfyUI history unreachable at {COMFY_API} ({e.reason})") from None
         if prompt_id in h:
-            return h[prompt_id]
+            entry = h[prompt_id]
+            status = (entry.get("status") or {}).get("status_str", "")
+            if status == "error":
+                # ComfyUI failed during execution — pull the first message for the user.
+                msgs = (entry.get("status") or {}).get("messages", [])
+                detail = next((m[1] for m in msgs if m and m[0] == "execution_error"), msgs)
+                raise RuntimeError(f"render failed in ComfyUI: {detail}")
+            return entry
         msg = f"  {C}…{R} rendering {elapsed:.0f}s"
         if msg != last:
             print(msg, flush=True); last = msg
         if elapsed > timeout:
             raise TimeoutError(f"render exceeded {timeout}s")
-        time.sleep(15)
+        time.sleep(5)
 
 def extract_outputs(history: dict):
     out = []
@@ -266,6 +286,22 @@ def cmd_render(args):
     print(f"{P}│{R} {B}prompt{R}  {args.prompt[:80]}{'...' if len(args.prompt)>80 else ''}")
     print(f"{P}╰─ submitting...{R}\n")
 
+    # Ctrl+C while this row is in flight should mark it 'cancelled', not leave
+    # 'pending' forever. We register the handler narrowly so it can't outlive
+    # the render and confuse later commands.
+    def _on_sigint(signum, frame):
+        try:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE renders SET status='cancelled', notes=COALESCE(notes,'')||' [SIGINT]' WHERE id=? AND status='pending'",
+                    (rid,),
+                )
+        except Exception:
+            pass
+        print(f"\n  {Y}✗ cancelled (id={rid}){R}\n")
+        sys.exit(130)
+    prev_sigint = signal.signal(signal.SIGINT, _on_sigint)
+
     t0 = time.time()
     try:
         pid = submit_render(graph)
@@ -290,6 +326,8 @@ def cmd_render(args):
             conn.execute("UPDATE renders SET status='failed', notes=? WHERE id=?", (str(e), rid))
         print(f"\n  {X}✗ failed:{R} {e}\n")
         sys.exit(2)
+    finally:
+        signal.signal(signal.SIGINT, prev_sigint)
 
 def cmd_history(args):
     with db() as conn:
@@ -367,14 +405,30 @@ def cmd_rate(args):
     print(f"{G}rated #{args.id}: {'★'*args.rating + '·'*(5-args.rating)}{R}")
 
 def cmd_models(args):
-    models_dir = Path.home() / "ComfyUI/models/diffusion_models"
-    if not models_dir.exists():
-        print(f"{Y}no models dir{R}"); return
-    files = sorted(models_dir.glob("wan*.safetensors"))
-    print(f"\n{B}Wan models:{R}")
-    for f in files:
-        sz = f.stat().st_size / (1024**3)
-        print(f"  {f.name:<60}  {sz:>5.1f}GB")
+    root = Path.home() / "ComfyUI/models"
+    if not root.exists():
+        print(f"{Y}no ~/ComfyUI/models dir — run: anime install wanmodels{R}"); return
+    sections = [
+        ("diffusion_models", "wan*.safetensors"),
+        ("text_encoders",    "*umt5*.safetensors"),
+        ("vae",              "*wan*.safetensors"),
+        ("loras",            "wan*.safetensors"),
+    ]
+    print(f"\n{B}Wan models in {root}{R}")
+    any_found = False
+    for sub, pattern in sections:
+        d = root / sub
+        files = sorted(d.glob(pattern)) if d.exists() else []
+        if not files:
+            print(f"  {D}{sub}/{R}  {Y}(none){R}")
+            continue
+        any_found = True
+        print(f"  {B}{sub}/{R}")
+        for f in files:
+            sz = f.stat().st_size / (1024**3)
+            print(f"    {f.name:<60}  {sz:>5.1f}GB")
+    if not any_found:
+        print(f"  {Y}no Wan models found — run: anime install wanmodels{R}")
     print()
 
 def cmd_presets(args):

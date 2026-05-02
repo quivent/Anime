@@ -349,7 +349,7 @@ func (m *wanTUIModel) View() string {
 			"",
 			m.input.View(),
 			"",
-			wanDimStyle.Render("default preset: t2v-14b-dual-maxq · " + hintsPrompt),
+			wanDimStyle.Render("default preset: t2v-14b-dual-fast · " + hintsPrompt),
 		}, "\n"))
 		return body
 

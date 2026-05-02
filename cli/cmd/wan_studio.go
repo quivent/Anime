@@ -162,12 +162,24 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
-	if port == 0 {
-		port = pickFreePort(5180)
-	}
 	bindHost := "127.0.0.1"
 	if public {
 		bindHost = "0.0.0.0"
+		// Studio + ComfyUI have NO authentication. Binding 0.0.0.0 on a
+		// cloud GPU box is a real security risk — anyone who finds the
+		// host:port can submit prompts, upload files, and read history.
+		// Print a loud warning so the user can't miss it.
+		fmt.Println(theme.WarningStyle.Render("⚠  --public binds 0.0.0.0 with NO AUTH"))
+		fmt.Println(theme.DimTextStyle.Render("   Anyone who reaches host:port can submit/cancel renders."))
+		fmt.Println(theme.DimTextStyle.Render("   Prefer: ssh -L 5180:127.0.0.1:5180 <host>  and drop --public."))
+		fmt.Println()
+		// Auto-open is meaningless on a headless cloud box (the browser
+		// would launch on the H100, not the user's laptop). Disable it so
+		// the goroutine doesn't try to xdg-open into the void.
+		open = false
+	}
+	if port == 0 {
+		port = pickFreePort(5180, bindHost)
 	}
 	addr := fmt.Sprintf("%s:%d", bindHost, port)
 
@@ -186,7 +198,6 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 		if ip != "" && ip != "127.0.0.1" {
 			pubURL := fmt.Sprintf("http://%s:%d", ip, port)
 			fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "public")), theme.SuccessStyle.Render(pubURL))
-			openURL = pubURL
 		}
 		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "binding")),
 			theme.WarningStyle.Render("0.0.0.0 — reachable from outside the host"))
@@ -332,10 +343,13 @@ func resolveComfortUIDir(distOverride string) (string, error) {
 	return filepath.Dir(dist), nil
 }
 
-// pickFreePort returns the first available port at or after start.
-func pickFreePort(start int) int {
+// pickFreePort returns the first available port at or after start, probing
+// on the same host the server will actually bind to. A port can be free on
+// 127.0.0.1 yet busy on 0.0.0.0 (e.g., another service bound to a specific
+// interface), so the probe must match the bind.
+func pickFreePort(start int, host string) int {
 	for p := start; p < start+200; p++ {
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, p))
 		if err == nil {
 			_ = ln.Close()
 			return p

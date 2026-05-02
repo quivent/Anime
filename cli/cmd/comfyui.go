@@ -65,7 +65,36 @@ func runComfyUICommand(cmd *cobra.Command, args []string) error {
 func startComfyUIServer() error {
 	fmt.Println(theme.InfoStyle.Render("🚀 Starting ComfyUI in background..."))
 
-	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", "cd ~/ComfyUI && python3 main.py --listen")
+	// Pick the venv python (where torch cu130 + sageattention live) when it
+	// exists; fall back to system python3 only if the venv is missing — that
+	// case will probably crash on `import torch`, but at least we don't
+	// silently mask the user's broken install behind a system python that
+	// happens to have a different (wrong) torch.
+	home, _ := os.UserHomeDir()
+	venvPy := filepath.Join(home, "ComfyUI", "venv", "bin", "python")
+	pyCmd := "python3"
+	sageFlag := ""
+	if _, err := os.Stat(venvPy); err == nil {
+		pyCmd = "./venv/bin/python"
+		// Only enable --use-sage-attention if the package is actually present
+		// in the venv. The studio bootstrap installs it via the wantorch
+		// phase, but a user running `anime comfyui start` directly (without
+		// going through wan studio) may have a venv with plain torch only —
+		// passing the flag in that case makes ComfyUI refuse to start.
+		// Glob covers python3.10/3.11/3.12 site-packages dirs.
+		sageGlob := filepath.Join(home, "ComfyUI", "venv", "lib", "python*", "site-packages", "sageattention")
+		if matches, _ := filepath.Glob(sageGlob); len(matches) > 0 {
+			sageFlag = " --use-sage-attention"
+		}
+	}
+	// Ensure ~/.anime exists before tee writes into it. tee creates the file
+	// but not the parent dir, so a fresh box that hits `anime comfyui start`
+	// before any other CLI command would otherwise fail the log pipe.
+	animeDir := filepath.Join(home, ".anime")
+	_ = os.MkdirAll(animeDir, 0o755)
+	logPath := filepath.Join(animeDir, "comfyui.log")
+	launch := fmt.Sprintf("cd ~/ComfyUI && exec %s main.py --listen%s 2>&1 | tee -a %s", pyCmd, sageFlag, logPath)
+	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", launch)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to start ComfyUI: %w", err)
 	}
@@ -286,16 +315,19 @@ func logsComfyUIServer() error {
 	fmt.Println(theme.InfoStyle.Render("📋 ComfyUI logs (Ctrl+C to exit)"))
 	fmt.Println()
 
-	cmd := exec.Command("screen", "-r", "comfyui")
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	home, _ := os.UserHomeDir()
+	logFile := filepath.Join(home, ".anime", "comfyui.log")
+	if _, err := os.Stat(logFile); err == nil {
+		cmd := exec.Command("tail", "-n", "200", "-F", logFile)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
 
-	fmt.Println(theme.DimTextStyle.Render("To view logs, run:"))
-	fmt.Println(theme.HighlightStyle.Render("  screen -r comfyui"))
-	fmt.Println()
-	fmt.Println(theme.DimTextStyle.Render("(Press Ctrl+A then D to detach)"))
-
+	fmt.Println(theme.WarningStyle.Render("No log file at " + logFile))
+	fmt.Println(theme.DimTextStyle.Render("ComfyUI may not have been started by this CLI yet."))
+	fmt.Println(theme.DimTextStyle.Render("Attach to the running screen session instead:"))
+	fmt.Println(theme.HighlightStyle.Render("  screen -r comfyui   (Ctrl+A D to detach)"))
 	return nil
 }
 
@@ -326,8 +358,9 @@ func getPublicIPForComfyUI() string {
 		return hostname
 	}
 
-	// Fallback: try to get public IP from external service
-	cmd = exec.Command("curl", "-s", "ifconfig.me")
+	// Fallback: try to get public IP from external service. Hard-cap the curl
+	// at 3s so a flaky network can't stall studio bootstrap.
+	cmd = exec.Command("curl", "-s", "--max-time", "3", "ifconfig.me")
 	if output, err := cmd.Output(); err == nil {
 		ip := strings.TrimSpace(string(output))
 		if ip != "" {

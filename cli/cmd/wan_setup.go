@@ -85,12 +85,30 @@ func wanStudioPhases() []phase {
 		{
 			id:   "wanmodels",
 			name: "Wan 2.2 model set (~85GB)",
+			// A single-file check is a lie: if the download dies after the
+			// first file lands, re-running the studio thinks the phase is
+			// satisfied and the next render fails with "node not found" or
+			// "missing VAE". Verify the four files the default workflow
+			// actually loads (high noise + low noise + text encoder + VAE).
 			check: func() (bool, string) {
-				p := join("ComfyUI", "models", "diffusion_models",
-					"wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors")
-				return fileExists(p)
+				required := []struct{ rel, label string }{
+					{filepath.Join("models", "diffusion_models", "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors"), "high-noise 14B"},
+					{filepath.Join("models", "diffusion_models", "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors"), "low-noise 14B"},
+					{filepath.Join("models", "text_encoders", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"), "umt5_xxl encoder"},
+					{filepath.Join("models", "vae", "wan_2.1_vae.safetensors"), "wan 2.1 VAE"},
+				}
+				var missing []string
+				for _, f := range required {
+					if !exists(join("ComfyUI", f.rel)) {
+						missing = append(missing, f.label)
+					}
+				}
+				if len(missing) > 0 {
+					return false, "missing: " + strings.Join(missing, ", ")
+				}
+				return true, "high+low 14B + encoder + VAE on disk"
 			},
-			skipMsg:   "high-noise 14B already on disk",
+			skipMsg:   "all required model files present",
 			heavyGate: true,
 			heavyNote: "downloads ~85GB of Wan 2.2 weights from HuggingFace",
 		},
@@ -212,7 +230,9 @@ func runInstallScript(id string) error {
 }
 
 // ensureComfyServer starts ComfyUI in a screen session if it isn't already
-// reachable, then waits up to ~25s for the API to come up.
+// reachable, then waits for the HTTP API to come up. First-boot import of
+// WanVideoWrapper + KJNodes + sageattention can take 60-90s on a cold venv,
+// so we give it 150s and dump the tail of the log on timeout to surface why.
 func ensureComfyServer(opts *setupOpts) error {
 	if comfyServerReachable() {
 		return nil
@@ -220,13 +240,45 @@ func ensureComfyServer(opts *setupOpts) error {
 	if err := startComfyUIServer(); err != nil {
 		return err
 	}
-	for i := 0; i < 25; i++ {
+	const waitSeconds = 150
+	start := time.Now()
+	lastTick := time.Now()
+	for time.Since(start) < waitSeconds*time.Second {
 		time.Sleep(1 * time.Second)
 		if comfyServerReachable() {
 			return nil
 		}
+		// Light, dot-only progress every 5s so the user knows we're waiting,
+		// without flooding stdout.
+		if time.Since(lastTick) > 5*time.Second {
+			fmt.Print(".")
+			lastTick = time.Now()
+		}
 	}
-	return fmt.Errorf("ComfyUI did not become reachable on :8188 within 25s — check: anime comfyui logs")
+	fmt.Println()
+	return fmt.Errorf("ComfyUI did not become reachable on :8188 within %ds.\n%s\n%s",
+		waitSeconds,
+		"  Last 30 lines of the log:",
+		tailComfyLog(30))
+}
+
+// tailComfyLog returns the last `n` lines of ~/.anime/comfyui.log with each
+// line indented, so we can dump it directly inside an error string.
+func tailComfyLog(n int) string {
+	home, _ := os.UserHomeDir()
+	logFile := filepath.Join(home, ".anime", "comfyui.log")
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		return "    (no log at " + logFile + " yet — attach to the live session: screen -r comfyui)"
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i, l := range lines {
+		lines[i] = "    " + l
+	}
+	return strings.Join(lines, "\n")
 }
 
 func comfyServerReachable() bool {

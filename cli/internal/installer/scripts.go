@@ -629,6 +629,28 @@ if [ -f "$COMFYUI_DIR/main.py" ] && [ -x "$VENV/bin/python" ]; then
     exit 0
 fi
 
+# ─── apt deps the rest of this script depends on ──────────────────
+# A fresh Lambda / GH200 / H100 instance may be missing git, python3-venv,
+# build-essential, or screen — apt-install them up front so cloning the
+# repo, creating the venv, building wheels, and (later) running ComfyUI in
+# a screen session all just work. We intentionally keep this list small.
+need_apt=()
+command -v git           >/dev/null 2>&1 || need_apt+=(git)
+command -v screen        >/dev/null 2>&1 || need_apt+=(screen)
+python3 -c 'import venv' >/dev/null 2>&1 || need_apt+=(python3-venv)
+dpkg -s build-essential  >/dev/null 2>&1 || need_apt+=(build-essential)
+if [ "${#need_apt[@]}" -gt 0 ]; then
+    echo "==> apt-installing: ${need_apt[*]}"
+    if [ "$(id -u)" -eq 0 ]; then
+        DEBIAN_FRONTEND=noninteractive apt-get update -y
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_apt[@]}"
+    else
+        sudo -n true 2>/dev/null || { echo "ERROR: need sudo to apt-install: ${need_apt[*]}"; exit 1; }
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_apt[@]}"
+    fi
+fi
+
 # ─── pick the right torch wheel index for this host ───
 ARCH=$(uname -m)
 TORCH_INDEX="https://download.pytorch.org/whl/cu128"
@@ -1845,9 +1867,10 @@ fi
 ARCH=$(uname -m)
 echo "==> arch=$ARCH"
 
-if [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "arm64" ]; then
-    echo "WARNING: pytorch-gh200 is tuned for ARM64 GH200/H200. On x86, prefer the standard 'pytorch' package."
-fi
+# cu130 nightly publishes wheels for both linux_x86_64 (H100) and
+# linux_aarch64 (GH200/H200), so we install it on either. The studio's
+# wantorch check requires torch.version.cuda == "13.0" exactly; that
+# version is what matches the sageattention + Wan 2.2 stack we ship.
 
 # Quick: are we already on cu130?
 CUR=$("$VENV/bin/python" -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo none)
@@ -2048,13 +2071,24 @@ echo "==> Then load the Wan 2.2 14B T2V NoLoRA MaxQuality workflow from the Work
 set -euo pipefail
 echo "==> Installing Comfort — Wan T2V Atelier UI"
 
-if ! command -v node >/dev/null 2>&1; then
-    echo "ERROR: node not found. Install 'nodejs' first."
-    exit 1
-fi
-if ! command -v npm >/dev/null 2>&1; then
-    echo "ERROR: npm not found. Install 'nodejs' first."
-    exit 1
+# ─── ensure node + npm ────────────────────────────────────────────
+# Lambda Stack / GH200 / fresh Ubuntu images do not ship a Node
+# runtime. Rather than fail loud and force the user to discover the
+# 'nodejs' package, we install Node 20 LTS via NodeSource here. The
+# studio bootstrap is meant to be a single command end-to-end.
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo "==> node/npm missing — installing Node 20 LTS via NodeSource"
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+    else
+        sudo -n true 2>/dev/null || { echo "ERROR: need sudo to install nodejs"; exit 1; }
+        SUDO="sudo"
+    fi
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -y
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
+    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash -
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs
+    echo "==> node $(node --version) / npm $(npm --version) installed"
 fi
 
 REPO="$HOME/Comfort"

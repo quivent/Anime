@@ -481,6 +481,21 @@ func printHostSummary(w *bufio.Writer, level string) {
 	} else {
 		row("HF auth", theme.DimTextStyle.Render("anonymous"), "ok for public repos · run: huggingface-cli login")
 	}
+
+	// Tuning preview — show the env + flags we'll pass to ComfyUI when it
+	// starts. Computing this here is cheap (just inspects gpu info + venv
+	// glob) and helps users diagnose perf surprises before they hit them.
+	tuning := AutoTuneComfyUI(g, detectSageInstalled())
+	flagSummary := "(default)"
+	if len(tuning.Flags) > 0 {
+		flagSummary = strings.Join(tuning.Flags, " ")
+	}
+	row("Tuning", theme.SuccessStyle.Render(flagSummary), "comfyui flags · WAN_COMFY_FLAGS to override")
+	for _, n := range tuning.Notes {
+		fmt.Fprintf(w, "  %s %s\n",
+			theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "")),
+			theme.DimTextStyle.Render("· "+n))
+	}
 }
 
 func comfyServerReachable() bool {

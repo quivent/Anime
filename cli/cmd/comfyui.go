@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joshkornreich/anime/internal/gpu"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -79,27 +80,51 @@ func startComfyUIServer() error {
 	home, _ := os.UserHomeDir()
 	venvPy := filepath.Join(home, "ComfyUI", "venv", "bin", "python")
 	pyCmd := "python3"
-	sageFlag := ""
+	sageInstalled := false
 	if _, err := os.Stat(venvPy); err == nil {
 		pyCmd = "./venv/bin/python"
-		// Only enable --use-sage-attention if the package is actually present
-		// in the venv. The studio bootstrap installs it via the wantorch
-		// phase, but a user running `anime comfyui start` directly (without
-		// going through wan studio) may have a venv with plain torch only —
-		// passing the flag in that case makes ComfyUI refuse to start.
-		// Glob covers python3.10/3.11/3.12 site-packages dirs.
-		sageGlob := filepath.Join(home, "ComfyUI", "venv", "lib", "python*", "site-packages", "sageattention")
-		if matches, _ := filepath.Glob(sageGlob); len(matches) > 0 {
-			sageFlag = " --use-sage-attention"
-		}
+		sageInstalled = detectSageInstalled()
 	}
+	// AutoTune adds the right env + flags for this host (sage backend if
+	// installed, --reserve-vram on big iron, --lowvram on tight boxes,
+	// PYTORCH_CUDA_ALLOC_CONF / TF32 / lazy CUDA module loading).
+	tuning := AutoTuneComfyUI(gpu.GetSystemInfo(), sageInstalled)
+
 	// Ensure ~/.anime exists before tee writes into it. tee creates the file
 	// but not the parent dir, so a fresh box that hits `anime comfyui start`
 	// before any other CLI command would otherwise fail the log pipe.
 	animeDir := filepath.Join(home, ".anime")
 	_ = os.MkdirAll(animeDir, 0o755)
 	logPath := filepath.Join(animeDir, "comfyui.log")
-	launch := fmt.Sprintf("cd ~/ComfyUI && exec %s main.py --listen%s 2>&1 | tee -a %s", pyCmd, sageFlag, logPath)
+
+	// Build a tiny launch script: env vars exported, then exec the python.
+	// We export inside the screen-launched bash so the env actually applies
+	// to ComfyUI rather than just our orchestrator.
+	var sb strings.Builder
+	sb.WriteString("cd ~/ComfyUI && ")
+	for _, kv := range tuning.EnvLines() {
+		sb.WriteString("export ")
+		sb.WriteString(kv)
+		sb.WriteString(" && ")
+	}
+	sb.WriteString("exec ")
+	sb.WriteString(pyCmd)
+	sb.WriteString(" main.py --listen")
+	for _, f := range tuning.Flags {
+		sb.WriteString(" ")
+		sb.WriteString(f)
+	}
+	sb.WriteString(" 2>&1 | tee -a ")
+	sb.WriteString(logPath)
+	launch := sb.String()
+
+	// Show the user what we just decided. The studio's --check view dumps
+	// the same info — this is the inline "I'm starting it now" version.
+	fmt.Println(theme.DimTextStyle.Render("  Tuning:"))
+	for _, n := range tuning.Notes {
+		fmt.Println(theme.DimTextStyle.Render("    · " + n))
+	}
+
 	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", launch)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to start render engine: %w", err)

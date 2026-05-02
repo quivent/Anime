@@ -651,23 +651,31 @@ if [ "${#need_apt[@]}" -gt 0 ]; then
     fi
 fi
 
-# ─── pick the right torch wheel index for this host ───
+# ─── pick torch wheel index from driver-supported CUDA (matches wantorch) ───
+# Same logic as the wantorch phase: install the newest pytorch.org index
+# that fits within the driver's max-CUDA. Avoids "install cu128 then have
+# wantorch immediately swap to cu130" wasted-bandwidth path on H100/GH200.
 ARCH=$(uname -m)
+CUDA_DRV=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_DRV=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ' || true)
+fi
+DRV_MAJ="${CUDA_DRV%%.*}"
+DRV_MIN=$(echo "${CUDA_DRV#*.}" | cut -d. -f1)
+[ -z "$DRV_MAJ" ] && DRV_MAJ=12
+[ -z "$DRV_MIN" ] && DRV_MIN=8
 TORCH_INDEX="https://download.pytorch.org/whl/cu128"
 PIP_PRE=""
 TORCH_FLAVOR="cu128 stable"
-CUDA_DRV=""
-if command -v nvidia-smi >/dev/null 2>&1; then
-    CUDA_DRV=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 || true)
-fi
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    if [ "${CUDA_DRV%%.*}" = "13" ] || [ -n "${FORCE_CU130:-}" ]; then
-        TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"
-        PIP_PRE="--pre"
-        TORCH_FLAVOR="cu130 nightly (ARM64+CUDA13)"
-    fi
-fi
-echo "==> torch flavor: $TORCH_FLAVOR  (driver=$CUDA_DRV, arch=$ARCH)"
+case "$DRV_MAJ" in
+    13) TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"; PIP_PRE="--pre"; TORCH_FLAVOR="cu130 nightly" ;;
+    12) if [ "$DRV_MIN" -ge 8 ]; then TORCH_FLAVOR="cu128 stable";
+        elif [ "$DRV_MIN" -ge 4 ]; then TORCH_INDEX="https://download.pytorch.org/whl/cu124"; TORCH_FLAVOR="cu124 stable";
+        else TORCH_INDEX="https://download.pytorch.org/whl/cu121"; TORCH_FLAVOR="cu121 stable"; fi ;;
+    11) TORCH_INDEX="https://download.pytorch.org/whl/cu118"; TORCH_FLAVOR="cu118 stable" ;;
+esac
+[ -n "${FORCE_CU130:-}" ] && { TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"; PIP_PRE="--pre"; TORCH_FLAVOR="cu130 nightly (forced)"; }
+echo "==> torch flavor: $TORCH_FLAVOR  (driver_cuda=${CUDA_DRV:-unknown}, arch=$ARCH)"
 
 # ─── clone ComfyUI if missing ───
 if [ ! -f "$COMFYUI_DIR/main.py" ]; then
@@ -1856,7 +1864,7 @@ echo "==> InstantID installed successfully"
 
 	"wantorch": `#!/bin/bash
 set -euo pipefail
-echo "==> Installing PyTorch cu130 nightly + sage attention into ComfyUI venv"
+echo "==> Installing PyTorch + sage attention into ComfyUI venv (driver-aware)"
 
 VENV="$HOME/ComfyUI/venv"
 if [ ! -x "$VENV/bin/python" ]; then
@@ -1865,23 +1873,83 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 
 ARCH=$(uname -m)
-echo "==> arch=$ARCH"
 
-# cu130 nightly publishes wheels for both linux_x86_64 (H100) and
-# linux_aarch64 (GH200/H200), so we install it on either. The studio's
-# wantorch check requires torch.version.cuda == "13.0" exactly; that
-# version is what matches the sageattention + Wan 2.2 stack we ship.
-
-# Quick: are we already on cu130?
-CUR=$("$VENV/bin/python" -c "import torch; print(torch.version.cuda)" 2>/dev/null || echo none)
-if [ "$CUR" = "13.0" ]; then
-    echo "==> torch already cu130 ($CUR), skipping torch swap"
-else
-    echo "==> Installing torch nightly cu130 (drops in ~3GB of wheels)"
-    "$VENV/bin/pip" install --pre --upgrade --force-reinstall \
-        torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/nightly/cu130
+# ─── pick torch wheel index from driver-supported CUDA ──────────────
+# We do NOT pin a single CUDA version. Wan 2.2 + sageattention work on
+# any modern PyTorch (>=2.4) with CUDA support; the only constraint is
+# that the wheel must match what the host's NVIDIA driver supports.
+# nvidia-smi reports the maximum CUDA the driver can run; we pick the
+# newest pytorch.org index that fits within it.
+DRIVER_CUDA=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+    DRIVER_CUDA=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ' || true)
 fi
+DRIVER_MAJOR="${DRIVER_CUDA%%.*}"
+DRIVER_MINOR=$(echo "${DRIVER_CUDA#*.}" | cut -d. -f1)
+[ -z "$DRIVER_MAJOR" ] && DRIVER_MAJOR=12
+[ -z "$DRIVER_MINOR" ] && DRIVER_MINOR=8
+
+TORCH_INDEX=""
+PIP_PRE=""
+TORCH_LABEL=""
+case "$DRIVER_MAJOR" in
+    13)
+        TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"
+        PIP_PRE="--pre"
+        TORCH_LABEL="cu130 nightly (driver supports CUDA 13.x)"
+        ;;
+    12)
+        if [ "$DRIVER_MINOR" -ge 8 ]; then
+            TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+            TORCH_LABEL="cu128 stable (driver supports CUDA 12.8+)"
+        elif [ "$DRIVER_MINOR" -ge 4 ]; then
+            TORCH_INDEX="https://download.pytorch.org/whl/cu124"
+            TORCH_LABEL="cu124 stable (driver supports CUDA 12.4-12.7)"
+        else
+            TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+            TORCH_LABEL="cu121 stable (driver supports CUDA 12.1-12.3)"
+        fi
+        ;;
+    11)
+        TORCH_INDEX="https://download.pytorch.org/whl/cu118"
+        TORCH_LABEL="cu118 stable (driver supports CUDA 11.x)"
+        ;;
+    *)
+        TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+        TORCH_LABEL="cu128 stable (no driver detected; safe default)"
+        ;;
+esac
+echo "==> arch=$ARCH  driver_cuda=${DRIVER_CUDA:-unknown}  → $TORCH_LABEL"
+
+# Optional override: anyone wanting a specific index can set in env.
+if [ -n "${WAN_TORCH_INDEX:-}" ]; then
+    TORCH_INDEX="$WAN_TORCH_INDEX"
+    PIP_PRE="${WAN_TORCH_PRE:-}"
+    TORCH_LABEL="user-pinned via WAN_TORCH_INDEX=$TORCH_INDEX"
+    echo "==> override: $TORCH_LABEL"
+fi
+
+# ─── skip swap if torch + sage already work ─────────────────────────
+WORKING=$("$VENV/bin/python" - <<'PY' 2>/dev/null || true
+try:
+    import torch, sageattention  # noqa: F401
+    if torch.cuda.is_available():
+        print(f"ok cu{torch.version.cuda}")
+except Exception:
+    pass
+PY
+)
+if [ -n "$WORKING" ] && [ -z "${WAN_TORCH_FORCE:-}" ]; then
+    echo "==> $WORKING — skipping torch swap (set WAN_TORCH_FORCE=1 to override)"
+    "$VENV/bin/pip" show hf_transfer >/dev/null 2>&1 || "$VENV/bin/pip" install -q hf_transfer
+    "$VENV/bin/python" -c "import torch; print(f'torch={torch.__version__}  cuda={torch.version.cuda}  device={torch.cuda.get_device_name(0)}')"
+    exit 0
+fi
+
+echo "==> Installing torch from $TORCH_INDEX (drops in ~3GB of wheels)"
+"$VENV/bin/pip" install $PIP_PRE --upgrade --force-reinstall \
+    torch torchvision torchaudio \
+    --index-url "$TORCH_INDEX"
 
 echo "==> Installing hf_transfer (fast HF downloads) and sageattention"
 "$VENV/bin/pip" install -q hf_transfer sageattention
@@ -1900,10 +1968,8 @@ except Exception:
 PY
 
 echo ""
-echo "==> Done. Restart ComfyUI with --use-sage-attention to engage:"
+echo "==> Done. Start ComfyUI with sage attention engaged:"
 echo "    cd ~/ComfyUI && ./venv/bin/python main.py --listen --use-sage-attention"
-echo ""
-echo "    On GH200, comfy_kitchen.cuda backend will now ENABLE (was disabled on cu128)."
 `,
 
 	"wannodes": `#!/bin/bash

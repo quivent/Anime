@@ -37,10 +37,12 @@ func init() {
 		Use:   "studio",
 		Short: "Open the Comfort Wan T2V Atelier (web UI) and proxy to ComfyUI",
 		Long: `Launch the Comfort Wan studio. By default this is the single
-command that gets a fresh box (GH200 / 1×H100 / 4×H100 / 8×H100) to a running
-web studio: it auto-installs ComfyUI, cu130 torch + sage attention, the Kijai
-custom-node stack, the Wan 2.2 model set (~85GB), and the Comfort UI; starts
-ComfyUI; then serves the SPA and proxies /api + /ws to it.
+command that gets a fresh CUDA box to a running web studio: it auto-installs
+ComfyUI, picks the right PyTorch wheel for the host's driver (cu118 → cu130),
+adds sageattention, the Kijai custom-node stack, the Wan 2.2 model set
+(~85GB), and the Comfort UI; starts ComfyUI; then serves the SPA and proxies
+/api + /ws to it. Works on any CUDA GPU with ≥16GB VRAM (5B preset) or
+≥24GB (14B preset). Tested on RTX 4090, A100, L40S, H100, GH200/H200.
 
 Flags:
   --port <int>      Bind port (default: pick a free one starting at 5180)

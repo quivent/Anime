@@ -11,7 +11,18 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/joshkornreich/anime/internal/gpu"
 )
+
+// Wan presets known to the TUI. Order matters: the 'p' key cycles through
+// them in this order, smallest VRAM first. Kept in sync with PRESETS in
+// embedded/wan-pipeline/wan.py — if you add a preset there, add it here too.
+var wanTUIPresets = []string{
+	"ti2v-5b",            // ≥12GB VRAM
+	"t2v-14b-dual-fast",  // ≥24GB VRAM (default)
+	"t2v-14b-dual-maxq",  // ≥48GB VRAM
+}
 
 // ─── styling ───
 var (
@@ -105,17 +116,31 @@ type wanTUIModel struct {
 	selected   *wanRender
 	pendingMsg string
 	flash      string // transient status line shown above hints, cleared on next nav
+	preset     string // active preset for the next render (cycled with 'p' / tab)
+	gpuLabel   string // cached host blurb for the status bar (e.g. "GH200 · 95GB")
 }
 
 const (
-	hintsList    = "↑/↓ select · enter detail · n new prompt · v vary · r resume · 1-5 rate · / filter · q quit"
+	hintsList    = "↑/↓ select · enter detail · n new · p preset · v vary · r resume · 1-5 rate · / filter · q quit"
 	hintsDetail  = "v vary · r resume · esc back · q quit"
-	hintsPrompt  = "enter to submit · esc to cancel"
+	hintsPrompt  = "enter submit · tab cycle preset · esc cancel"
 	hintsPending = "(detached — ctrl+c to leave; the render keeps going in ComfyUI)"
 )
 
-// chrome is the lines around the list (title + status/flash + hints + spacing).
-const listChrome = 5
+// cyclePreset returns the next preset in wanTUIPresets after `current`. Used
+// by the 'p' key (list/detail) and 'tab' key (prompt) to step through.
+func cyclePreset(current string) string {
+	for i, p := range wanTUIPresets {
+		if p == current {
+			return wanTUIPresets[(i+1)%len(wanTUIPresets)]
+		}
+	}
+	return wanTUIPresets[0]
+}
+
+// chrome is the lines around the list (title + status bar + hints + spacing).
+// Bumped from 5 → 6 when the GPU/preset status bar was added.
+const listChrome = 6
 
 func newWanTUIModel() (*wanTUIModel, error) {
 	items, _ := loadRenders()
@@ -136,7 +161,37 @@ func newWanTUIModel() (*wanTUIModel, error) {
 	sp.Spinner = spinner.Dot
 	sp.Style = wanAccentStyle
 
-	return &wanTUIModel{scr: scrList, list: l, input: ti, spinner: sp}, nil
+	// Auto-pick the right preset for this host so a user pressing 'n' →
+	// enter without thinking gets a render that fits their VRAM.
+	g := gpu.GetSystemInfo()
+	preset, _ := recommendedPreset(g.TotalVRAM)
+	if preset == "" {
+		preset = "t2v-14b-dual-fast" // pipeline default
+	}
+	gpuLabel := "no GPU"
+	if g.Available && len(g.GPUs) > 0 {
+		// "GH200 · 95GB" / "RTX 4090 · 24GB" / "1xH100 · 80GB"
+		name := g.GPUs[0].Name
+		// Trim "NVIDIA " prefix and 480GB-style memory suffix to keep the
+		// status bar tight.
+		name = strings.TrimPrefix(name, "NVIDIA ")
+		if i := strings.Index(name, " 480GB"); i >= 0 {
+			name = name[:i]
+		}
+		gpuLabel = fmt.Sprintf("%s · %dGB", name, g.TotalVRAM)
+		if g.Count > 1 {
+			gpuLabel = fmt.Sprintf("%dx %s · %dGB", g.Count, name, g.TotalVRAM)
+		}
+	}
+
+	return &wanTUIModel{
+		scr:      scrList,
+		list:     l,
+		input:    ti,
+		spinner:  sp,
+		preset:   preset,
+		gpuLabel: gpuLabel,
+	}, nil
 }
 
 func (m *wanTUIModel) Init() tea.Cmd { return m.spinner.Tick }
@@ -200,6 +255,9 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.flash = wanGoodStyle.Render(fmt.Sprintf("rated #%d %s%s", it.ID, strings.Repeat("★", atoiSafe(n)), strings.Repeat("·", 5-atoiSafe(n))))
 					cmds = append(cmds, refreshList())
 				}
+			case "p":
+				m.preset = cyclePreset(m.preset)
+				m.flash = wanAccentStyle.Render("preset → ") + m.preset
 			case "ctrl+r":
 				cmds = append(cmds, refreshList())
 			}
@@ -230,6 +288,9 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.scr = scrList
 				m.input.Blur()
+			case "tab":
+				// In-input preset cycling so the user can pick before submitting.
+				m.preset = cyclePreset(m.preset)
 			case "enter":
 				prompt := strings.TrimSpace(m.input.Value())
 				if prompt == "" {
@@ -237,10 +298,10 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.Blur()
 					break
 				}
-				m.pendingMsg = fmt.Sprintf("rendering: %.60s…", prompt)
+				m.pendingMsg = fmt.Sprintf("rendering [%s]: %.60s…", m.preset, prompt)
 				m.scr = scrPending
 				m.input.Blur()
-				cmds = append(cmds, doWanCmd("render", prompt))
+				cmds = append(cmds, doWanCmd("render", prompt, "--preset", m.preset))
 			default:
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
@@ -293,10 +354,16 @@ func (m *wanTUIModel) View() string {
 	switch m.scr {
 	case scrList:
 		body := m.list.View()
-		// flash takes precedence over hints; otherwise just show hints
-		bottom := wanDimStyle.Render(hintsList)
+		// flash > status bar > hints. Status bar shows GPU + active preset
+		// so the user always knows which box they're on and what 'n' will
+		// render with.
+		statusBar := wanDimStyle.Render("│ ") +
+			wanAccentStyle.Render("gpu ") + wanDimStyle.Render(m.gpuLabel) +
+			wanDimStyle.Render("  │  ") +
+			wanAccentStyle.Render("preset ") + wanGoodStyle.Render(m.preset)
+		bottom := statusBar + "\n" + wanDimStyle.Render(hintsList)
 		if m.flash != "" {
-			bottom = m.flash + "\n" + wanDimStyle.Render(hintsList)
+			bottom = m.flash + "\n" + statusBar + "\n" + wanDimStyle.Render(hintsList)
 		}
 		return body + "\n" + bottom
 
@@ -349,7 +416,9 @@ func (m *wanTUIModel) View() string {
 			"",
 			m.input.View(),
 			"",
-			wanDimStyle.Render("default preset: t2v-14b-dual-fast · " + hintsPrompt),
+			wanAccentStyle.Render("preset ") + wanGoodStyle.Render(m.preset) +
+				wanDimStyle.Render("   │   gpu ") + wanDimStyle.Render(m.gpuLabel),
+			wanDimStyle.Render(hintsPrompt),
 		}, "\n"))
 		return body
 

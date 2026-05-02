@@ -538,12 +538,13 @@ func GetPackages() map[string]*Package {
 		},
 
 		// =========================================================================
-		// GH200 + Wan 2.2 full stack — captures the complete tuned setup
+		// Wan 2.2 full stack — driver-aware, runs on any CUDA GPU (RTX 30xx+,
+		// A100/A40, L40S, RTX 4090/5090, H100, GH200/H200, etc.)
 		// =========================================================================
 		"wantorch": {
 			ID:            "wantorch",
-			Name:          "PyTorch cu130 (GH200/ARM64)",
-			Description:   "PyTorch nightly cu130 + sage attention + hf_transfer; unlocks comfy_kitchen.cuda backend on GH200/H200",
+			Name:          "PyTorch + sage attention (driver-aware)",
+			Description:   "PyTorch built against the host's CUDA (cu118/cu121/cu124/cu128/cu130) + sageattention + hf_transfer. Wheel is auto-selected from nvidia-smi.",
 			Dependencies:  []string{"core", "python", "comfyui"},
 			EstimatedTime: 5 * time.Minute,
 			Category:      "ML Framework",
@@ -578,8 +579,8 @@ func GetPackages() map[string]*Package {
 		},
 		"wan": {
 			ID:            "wan",
-			Name:          "GH200 + Wan 2.2 — full setup (meta)",
-			Description:   "Complete tuned GH200 video-gen stack: cu130 torch, sage attn, Kijai Wan nodes, full Wan 2.2 model set, Comfort studio UI, no-LoRA max-quality workflow JSON",
+			Name:          "Wan 2.2 — full setup (meta)",
+			Description:   "Complete Wan 2.2 video-gen stack: driver-aware torch, sage attn, Kijai Wan nodes, full Wan 2.2 model set (~85GB), Comfort studio UI. Runs on any CUDA GPU with ≥16GB VRAM (5B preset) or ≥24GB (14B preset).",
 			Dependencies:  []string{"comfyui", "wantorch", "wannodes", "wanmodels", "comfort"},
 			EstimatedTime: 22 * time.Minute,
 			Category:      "Bundle",

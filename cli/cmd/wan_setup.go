@@ -7,9 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/joshkornreich/anime/internal/gpu"
 	"github.com/joshkornreich/anime/internal/installer"
 	"github.com/joshkornreich/anime/internal/theme"
 )
@@ -55,24 +58,43 @@ func wanStudioPhases() []phase {
 		},
 		{
 			id:   "wantorch",
-			name: "PyTorch cu130 + sage attention",
+			name: "PyTorch + sage attention",
+			// Accept any CUDA torch that imports cleanly with sageattention
+			// available and torch.cuda.is_available() == True. The wantorch
+			// install script picks the wheel index from the host's driver
+			// (cu130 / cu128 / cu124 / cu121 / cu118), so we pin behavior on
+			// "is it actually working" rather than a specific cu version.
 			check: func() (bool, string) {
 				py := join("ComfyUI", "venv", "bin", "python")
 				if !exists(py) {
 					return false, "ComfyUI venv not built yet"
 				}
-				out, err := exec.Command(py, "-c",
-					"import torch, sageattention; print(torch.version.cuda)").CombinedOutput()
-				if err != nil {
-					return false, "torch/sageattention not importable"
+				// Probe in Python; print a single OK/FAIL line so the wrapper
+				// can show it inline without smearing a traceback.
+				probe := `try:
+    import torch, sageattention
+    if not torch.cuda.is_available():
+        print("FAIL: torch.cuda.is_available() == False")
+    else:
+        print("OK " + torch.version.cuda)
+except ImportError as e:
+    print("FAIL: " + str(e))`
+				out, _ := exec.Command(py, "-c", probe).CombinedOutput()
+				line := strings.TrimSpace(string(out))
+				// Take just the last non-empty line in case Python printed
+				// any warnings before our marker.
+				if lines := strings.Split(line, "\n"); len(lines) > 0 {
+					line = strings.TrimSpace(lines[len(lines)-1])
 				}
-				cuda := strings.TrimSpace(string(out))
-				if cuda != "13.0" {
-					return false, "torch cuda=" + cuda + " (want 13.0)"
+				if strings.HasPrefix(line, "OK ") {
+					return true, "torch cu" + strings.TrimPrefix(line, "OK ") + " + sageattention"
 				}
-				return true, "torch cu" + cuda + " + sageattention"
+				if strings.HasPrefix(line, "FAIL:") {
+					return false, strings.TrimSpace(strings.TrimPrefix(line, "FAIL:"))
+				}
+				return false, "torch/sageattention probe produced no output"
 			},
-			skipMsg: "torch cu13.0 + sageattention present",
+			skipMsg: "working torch + sageattention",
 		},
 		{
 			id:   "wannodes",
@@ -144,6 +166,8 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, theme.GlowStyle.Render("🌀 Wan studio · environment check"))
+	fmt.Fprintln(w)
+	printHostSummary(w)
 	fmt.Fprintln(w)
 
 	for _, ph := range phases {
@@ -279,6 +303,87 @@ func tailComfyLog(n int) string {
 		lines[i] = "    " + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+// recommendedPreset returns the Wan preset that best fits the host's VRAM:
+//
+//	>=48GB → t2v-14b-dual-maxq (4090 dual / H100 / GH200 — full quality)
+//	>=24GB → t2v-14b-dual-fast (4090 / A100 40 / L40S — 4-step LoRA)
+//	>=12GB → ti2v-5b           (3090 / 4080 / A40 24 — 5B model)
+//	 <12GB → "" (unsupported)
+//
+// Used by the studio --check output so users know which preset to pick.
+func recommendedPreset(vramGB int) (preset, why string) {
+	switch {
+	case vramGB >= 48:
+		return "t2v-14b-dual-maxq", "≥48GB VRAM → full quality 14B at 1280x720"
+	case vramGB >= 24:
+		return "t2v-14b-dual-fast", "≥24GB VRAM → 14B + 4-step LoRA at 832x480 (default)"
+	case vramGB >= 12:
+		return "ti2v-5b", "≥12GB VRAM → 5B TI2V at 832x480"
+	case vramGB > 0:
+		return "", fmt.Sprintf("only %dGB VRAM detected — Wan 2.2 needs ≥12GB", vramGB)
+	default:
+		return "t2v-14b-dual-fast", "no GPU detected on this host (default preset assumes ≥24GB on the render box)"
+	}
+}
+
+// printHostSummary prints a one-block GPU/VRAM/driver/disk preamble before the
+// phase checks. It's the first thing the user sees on `--check`, so they
+// immediately know what their box is and which preset will fit.
+func printHostSummary(w *bufio.Writer) {
+	g := gpu.GetSystemInfo()
+	row := func(label, val, hint string) {
+		fmt.Fprintf(w, "  %s %s  %s\n",
+			theme.HighlightStyle.Render(fmt.Sprintf("%-12s", label)),
+			val,
+			theme.DimTextStyle.Render(hint))
+	}
+
+	if !g.Available {
+		row("GPU", theme.WarningStyle.Render("none detected"),
+			"nvidia-smi not found — install nvidia drivers (anime install nvidia)")
+	} else {
+		gpuLine := fmt.Sprintf("%dx %s", g.Count, g.GPUs[0].Name)
+		if g.Count == 1 {
+			gpuLine = g.GPUs[0].Name
+		}
+		row("GPU", theme.SuccessStyle.Render(gpuLine), "")
+		row("VRAM", theme.PrimaryTextStyle.Render(fmt.Sprintf("%d GB", g.TotalVRAM)),
+			fmt.Sprintf("%d MiB total across %d GPU(s)", g.GPUs[0].VRAMMiB*g.Count, g.Count))
+		drvLine := g.DriverVersion
+		if g.CUDAVersion != "" {
+			drvLine += "  (CUDA " + g.CUDAVersion + ")"
+		}
+		row("Driver", theme.PrimaryTextStyle.Render(drvLine),
+			"determines which torch wheel index wantorch picks")
+	}
+
+	row("Arch", runtime.GOARCH, runtime.GOOS+" — wheels match this architecture")
+
+	// Free disk on $HOME (where ~/ComfyUI/models lives).
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		var stat syscall.Statfs_t
+		if err := syscall.Statfs(home, &stat); err == nil {
+			freeGB := int(stat.Bavail) * int(stat.Bsize) / (1 << 30)
+			diskHint := home
+			diskStyle := theme.PrimaryTextStyle
+			if freeGB < 100 {
+				diskStyle = theme.WarningStyle
+				diskHint = home + "  (Wan 2.2 model set is ~85GB)"
+			}
+			row("Free disk", diskStyle.Render(fmt.Sprintf("%d GB", freeGB)), diskHint)
+		}
+	}
+
+	// Recommended preset based on detected VRAM.
+	preset, why := recommendedPreset(g.TotalVRAM)
+	if preset == "" {
+		row("Preset", theme.WarningStyle.Render("(none fits this VRAM)"), why)
+	} else {
+		row("Preset", theme.SuccessStyle.Render(preset), why)
+	}
 }
 
 func comfyServerReachable() bool {

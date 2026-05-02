@@ -40,8 +40,9 @@ Subcommands:
   anime wan studio                Open the Comfort web studio (browser UI)
 
 Setup:
-  anime install wan               Full GH200 stack: cu130 torch, sage attn,
-                                  Wan 2.2 14B+5B model set, Comfort studio.
+  anime install wan               Full Wan 2.2 stack (driver-aware torch +
+                                  sage attn, 14B+5B model set, Comfort UI).
+                                  Runs on any CUDA GPU with ≥16GB VRAM.
   anime install comfort           Just the studio UI (clones quivent/comfort).`,
 }
 

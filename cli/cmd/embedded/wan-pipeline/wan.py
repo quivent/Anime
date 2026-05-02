@@ -205,39 +205,74 @@ def submit_render(graph: dict) -> str:
         r = json.load(urllib.request.urlopen(req, timeout=15))
     except urllib.error.URLError as e:
         raise RuntimeError(
-            f"ComfyUI not reachable at {COMFY_API} ({e.reason}). "
-            f"Start it with: anime comfyui start"
+            f"ComfyUI not reachable at {COMFY_API} ({e.reason}).\n"
+            f"  Start it:     anime comfyui start\n"
+            f"  Check status: curl {COMFY_API}/system_stats\n"
+            f"  Custom URL:   COMFY_API=http://host:port anime wan render ..."
         ) from None
     if r.get("node_errors"):
-        # Surface the first node error in human-readable form, not a Python repr.
-        first = next(iter(r["node_errors"].items()))
-        raise RuntimeError(f"workflow rejected by ComfyUI (node {first[0]}): {first[1]}")
+        first_key, first_val = next(iter(r["node_errors"].items()))
+        # Try to extract the actual error string from ComfyUI's nested format
+        if isinstance(first_val, dict):
+            errs = first_val.get("errors", [])
+            msg = errs[0].get("message", str(first_val)) if errs else str(first_val)
+        else:
+            msg = str(first_val)
+        raise RuntimeError(
+            f"ComfyUI rejected the workflow (node: {first_key}).\n"
+            f"  Error:  {msg}\n"
+            f"  This usually means a model file is missing or misnamed.\n"
+            f"  Check:  anime wan models\n"
+            f"  Fix:    anime install wanmodels"
+        )
     return r["prompt_id"]
+
+_SPINNER = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
 
 def wait_for(prompt_id: str, timeout: int = 1800) -> dict:
     start = time.time()
-    last = None
+    tick = 0
+    # Track progress by polling the ComfyUI queue for position/running state
     while True:
         elapsed = time.time() - start
         try:
             h = json.load(urllib.request.urlopen(f"{COMFY_API}/history/{prompt_id}", timeout=10))
         except urllib.error.URLError as e:
-            raise RuntimeError(f"ComfyUI history unreachable at {COMFY_API} ({e.reason})") from None
+            raise RuntimeError(
+                f"ComfyUI unreachable at {COMFY_API} ({e.reason}).\n"
+                f"  Start it:  anime comfyui start\n"
+                f"  Check it:  curl {COMFY_API}/system_stats"
+            ) from None
         if prompt_id in h:
             entry = h[prompt_id]
             status = (entry.get("status") or {}).get("status_str", "")
             if status == "error":
-                # ComfyUI failed during execution — pull the first message for the user.
                 msgs = (entry.get("status") or {}).get("messages", [])
                 detail = next((m[1] for m in msgs if m and m[0] == "execution_error"), msgs)
                 raise RuntimeError(f"render failed in ComfyUI: {detail}")
+            # Clear the spinner line
+            print(f"\r{' '*60}\r", end="", flush=True)
             return entry
-        msg = f"  {C}…{R} rendering {elapsed:.0f}s"
-        if msg != last:
-            print(msg, flush=True); last = msg
+
+        # In-place spinner with elapsed time
+        spin = _SPINNER[tick % len(_SPINNER)]
+        mins, secs = divmod(int(elapsed), 60)
+        if mins > 0:
+            elapsed_str = f"{mins}m {secs:02d}s"
+        else:
+            elapsed_str = f"{secs}s"
+        print(f"\r  {P}{spin}{R} Rendering... {D}(elapsed: {elapsed_str}){R}  ", end="", flush=True)
+        tick += 1
+
         if elapsed > timeout:
-            raise TimeoutError(f"render exceeded {timeout}s")
-        time.sleep(5)
+            print()
+            raise TimeoutError(
+                f"Render exceeded {timeout}s timeout.\n"
+                f"  The render may still be running in ComfyUI.\n"
+                f"  Check:  {COMFY_API}/queue\n"
+                f"  Increase timeout:  --timeout {timeout*2}"
+            )
+        time.sleep(2)
 
 def extract_outputs(history: dict):
     out = []
@@ -257,10 +292,30 @@ def extract_outputs(history: dict):
 # ──────────────────────────────────────────────────────────────────
 # Commands
 # ──────────────────────────────────────────────────────────────────
+def _estimate_render_time(preset_name: str) -> str:
+    """Return a human-friendly time estimate for a preset."""
+    p = PRESETS[preset_name]
+    steps = p.get("steps", 20)
+    res = p.get("width", 832) * p.get("height", 480)
+    # Rough heuristic: maxq (1280x720, 50 steps) ~ 5min; fast (832x480, 8 steps) ~ 30s
+    if steps >= 40 and res >= 900000:
+        return "~5 minutes on H100"
+    elif steps <= 10:
+        return "~30 seconds on H100"
+    else:
+        return "~1-2 minutes on H100"
+
+
 def cmd_render(args):
     preset = args.preset
     if preset not in PRESETS:
-        print(f"{X}unknown preset:{R} {preset}\n  available: {', '.join(PRESETS)}"); sys.exit(1)
+        print(f"\n  {X}Unknown preset:{R} {preset}")
+        print(f"  {D}Available presets:{R}")
+        for k in PRESETS:
+            marker = f"{G}*{R}" if k == DEFAULT_PRESET else " "
+            print(f"    {marker} {k}")
+        print(f"\n  {D}Use: anime wan render \"prompt\" --preset <name>{R}\n")
+        sys.exit(1)
     seed = args.seed if args.seed is not None else random.randint(1, 2**63-1)
     name = args.name or f"render_{int(time.time())}"
     # --negative wins; otherwise pick SFW or explicit baseline.
@@ -270,6 +325,24 @@ def cmd_render(args):
         negative = DEFAULT_NEGATIVE_EXPLICIT
     else:
         negative = DEFAULT_NEGATIVE_SFW
+
+    # Confirmation for expensive presets (maxq = 50 steps at full resolution)
+    p_info = PRESETS[preset]
+    is_expensive = p_info.get("steps", 0) >= 40
+    if is_expensive and not getattr(args, "yes", False) and sys.stdin.isatty():
+        est = _estimate_render_time(preset)
+        dims = f"{p_info['width']}x{p_info['height']}, {p_info['steps']} steps"
+        print(f"\n  {Y}This is a high-quality render ({dims}).{R}")
+        print(f"  {D}Estimated time: {est}{R}")
+        try:
+            resp = input(f"  Continue? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n  {D}Cancelled.{R}\n")
+            sys.exit(0)
+        if resp and resp not in ("y", "yes", ""):
+            print(f"  {D}Cancelled.{R}\n")
+            sys.exit(0)
+
     graph = build_workflow(preset, args.prompt, negative, seed, name)
 
     with db() as conn:
@@ -280,11 +353,15 @@ def cmd_render(args):
               json.dumps(PRESETS[preset]), seed, args.parent))
         rid = cur.lastrowid
 
-    print(f"\n{B}{P}╭─ wan-pipeline render {rid}{R}")
-    print(f"{P}│{R} {B}preset{R}  {preset}")
-    print(f"{P}│{R} {B}seed{R}    {seed}")
-    print(f"{P}│{R} {B}prompt{R}  {args.prompt[:80]}{'...' if len(args.prompt)>80 else ''}")
-    print(f"{P}╰─ submitting...{R}\n")
+    p = PRESETS[preset]
+    dims = f"{p['width']}x{p['height']}"
+    est = _estimate_render_time(preset)
+    print(f"\n{B}{P}╭─ render #{rid}{R}")
+    print(f"{P}│{R}  {B}preset{R}   {preset} {D}({dims}, {p['steps']} steps){R}")
+    print(f"{P}│{R}  {B}seed{R}     {seed}")
+    print(f"{P}│{R}  {B}prompt{R}   {args.prompt[:80]}{'...' if len(args.prompt)>80 else ''}")
+    print(f"{P}│{R}  {B}est{R}      {est}")
+    print(f"{P}╰─{R}\n")
 
     # Ctrl+C while this row is in flight should mark it 'cancelled', not leave
     # 'pending' forever. We register the handler narrowly so it can't outlive
@@ -305,26 +382,38 @@ def cmd_render(args):
     t0 = time.time()
     try:
         pid = submit_render(graph)
-        print(f"  {C}prompt_id{R} {pid}")
         result = wait_for(pid, timeout=args.timeout)
         elapsed = time.time() - t0
         outs = extract_outputs(result)
         if not outs:
-            raise RuntimeError("no outputs from render")
+            raise RuntimeError(
+                "Render completed but produced no output files.\n"
+                "  This can happen if the SaveVideo node is misconfigured.\n"
+                "  Check ComfyUI logs for details."
+            )
         primary = outs[0]
         size = Path(primary["local"]).stat().st_size if Path(primary["local"]).exists() else 0
         with db() as conn:
             conn.execute("""
                 UPDATE renders SET status='done', output_path=?, output_url=?, file_size=?, render_seconds=? WHERE id=?
             """, (primary["local"], primary["url"], size, elapsed, rid))
-        print(f"\n  {G}✓ done in {elapsed:.0f}s ({elapsed/60:.1f} min)  ·  {size/1024/1024:.1f}MB{R}")
-        print(f"  {B}url:{R}   {primary['url']}")
-        print(f"  {B}local:{R} {primary['local']}")
-        print(f"  {B}id:{R}    {rid}\n")
+
+        # Success card
+        secs = int(elapsed)
+        if secs >= 60:
+            dur = f"{secs//60}m {secs%60}s"
+        else:
+            dur = f"{secs}s"
+        sz_mb = size / 1024 / 1024
+        print(f"\n  {G}Done{R}  {dur}  {D}·{R}  {sz_mb:.1f} MB")
+        print(f"  {B}url{R}    {primary['url']}")
+        print(f"  {B}local{R}  {primary['local']}")
+        print(f"  {B}id{R}     {rid}")
+        print(f"\n  {D}Next:  anime wan show {rid}    anime wan vary {rid}    anime wan rate {rid} 5{R}\n")
     except Exception as e:
         with db() as conn:
             conn.execute("UPDATE renders SET status='failed', notes=? WHERE id=?", (str(e), rid))
-        print(f"\n  {X}✗ failed:{R} {e}\n")
+        print(f"\n  {X}Failed:{R} {e}\n")
         sys.exit(2)
     finally:
         signal.signal(signal.SIGINT, prev_sigint)
@@ -341,122 +430,264 @@ def cmd_history(args):
         print(json.dumps(out))
         return
     if not rows:
-        print(f"{D}(no renders yet — try: wan render \"a dragon\"){R}"); return
-    print(f"\n{B}  id{R}  {B}date              status   preset                seed              t       size    ★  prompt{R}")
-    print(f"{D}  ─── ────────────────  ──────── ────────────────────  ────────────────  ──────  ──────  ─  ──────────────────────{R}")
+        print(f"\n  {D}No renders yet.{R}")
+        print(f"  {D}Get started:{R}  anime wan render \"a dragon breathing fire\"\n")
+        return
+
+    # Clean, aligned table
+    print()
+    print(f"  {C}{B}{'ID':>4}  {'Date':<12}  {'Status':<9}  {'Time':>5}  {'Size':>6}  {'Rating':<5}  Prompt{R}")
+    print(f"  {D}{'─'*4}  {'─'*12}  {'─'*9}  {'─'*5}  {'─'*6}  {'─'*5}  {'─'*30}{R}")
     for r in rows:
         st = r["status"] or "?"
-        st_c = G if st=="done" else (Y if st=="pending" else X)
-        rating = ("★"*r["rating"] + "·"*(5-r["rating"])) if r["rating"] else "·····"
-        sz = f"{(r['file_size'] or 0)/1024/1024:.1f}M" if r["file_size"] else "—"
-        t = f"{r['render_seconds']:.0f}s" if r["render_seconds"] else "—"
-        prompt_short = (r["prompt"] or "")[:60]
-        print(f"  {r['id']:>3}  {r['created_at'][:16]}  {st_c}{st:<8}{R} {(r['preset'] or '?'):<20}  {r['seed']:>16}  {t:>6}  {sz:>6}  {rating}  {prompt_short}")
+        st_c = G if st == "done" else (Y if st == "pending" else X)
+        rating_val = r["rating"]
+        if rating_val:
+            rating = f"{Y}{'★'*rating_val}{D}{'·'*(5-rating_val)}{R}"
+        else:
+            rating = f"{D}·····{R}"
+        sz = f"{(r['file_size'] or 0)/1024/1024:.1f}M" if r["file_size"] else f"{D}  —{R} "
+        if r["render_seconds"]:
+            secs = int(r["render_seconds"])
+            t = f"{secs//60}m{secs%60:02d}" if secs >= 60 else f"{secs}s"
+        else:
+            t = f"{D} —{R} "
+        prompt_short = (r["prompt"] or "")[:40]
+        date_short = (r["created_at"] or "")[:10]  # just YYYY-MM-DD
+        print(f"  {B}{r['id']:>4}{R}  {date_short:<12}  {st_c}{st:<9}{R}  {t:>5}  {sz:>6}  {rating}  {prompt_short}")
+    total = len(rows)
+    print(f"\n  {D}Showing {total} render{'s' if total != 1 else ''}.{R}", end="")
+    if total == args.n:
+        print(f"  {D}More: anime wan history -n {args.n * 2}{R}")
+    else:
+        print()
     print()
 
 def cmd_show(args):
     with db() as conn:
         r = conn.execute("SELECT * FROM renders WHERE id=?", (args.id,)).fetchone()
     if not r:
-        print(f"{X}not found:{R} {args.id}"); sys.exit(1)
-    print(f"\n{B}{P}render #{r['id']}{R}  ({r['status']})  {r['created_at']}")
-    print(f"  {B}preset{R}      {r['preset']}")
-    print(f"  {B}seed{R}        {r['seed']}")
-    print(f"  {B}prompt{R}      {r['prompt']}")
-    if r['negative']: print(f"  {B}negative{R}    {r['negative'][:120]}")
-    if r['parent_id']: print(f"  {B}parent{R}      #{r['parent_id']}")
-    if r['render_seconds']: print(f"  {B}duration{R}    {r['render_seconds']:.0f}s ({r['render_seconds']/60:.1f}min)")
-    if r['file_size']: print(f"  {B}size{R}        {r['file_size']/1024/1024:.1f}MB")
-    if r['rating']: print(f"  {B}rating{R}      {'★'*r['rating'] + '·'*(5-r['rating'])}")
-    if r['output_url']: print(f"  {B}url{R}         {r['output_url']}")
-    if r['output_path']: print(f"  {B}local{R}       {r['output_path']}")
-    if r['notes']: print(f"  {B}notes{R}       {r['notes']}")
+        print(f"\n  {X}Render #{args.id} not found.{R}")
+        print(f"  {D}List renders: anime wan history{R}\n")
+        sys.exit(1)
+
+    st = r['status'] or "?"
+    st_c = G if st == "done" else (Y if st == "pending" else X)
     p = json.loads(r['params_json'])
-    print(f"  {B}params{R}      {p['width']}x{p['height']}  ·  {p['length']}f@{p['fps']}fps  ·  {p['steps']} steps  ·  cfg {p['cfg']}  ·  shift {p['shift']}")
+
+    # Card layout with box-drawing characters
+    print()
+    print(f"  {P}╭─────────────────────────────────────────────────────────────╮{R}")
+    print(f"  {P}│{R}  {B}Render #{r['id']}{R}   {st_c}{st}{R}   {D}{r['created_at']}{R}")
+    print(f"  {P}├─────────────────────────────────────────────────────────────┤{R}")
+    print(f"  {P}│{R}")
+    print(f"  {P}│{R}  {C}prompt{R}     {r['prompt']}")
+    if r['negative']:
+        neg_short = r['negative'][:80] + ('...' if len(r['negative']) > 80 else '')
+        print(f"  {P}│{R}  {D}negative{R}   {D}{neg_short}{R}")
+    print(f"  {P}│{R}")
+    print(f"  {P}│{R}  {C}preset{R}     {r['preset']}")
+    print(f"  {P}│{R}  {C}seed{R}       {r['seed']}")
+    print(f"  {P}│{R}  {C}params{R}     {p['width']}x{p['height']}  {D}·{R}  {p['length']}f @ {p['fps']}fps  {D}·{R}  {p['steps']} steps  {D}·{R}  cfg {p['cfg']}")
+    if r['parent_id']:
+        print(f"  {P}│{R}  {C}parent{R}     #{r['parent_id']}")
+    if r['render_seconds']:
+        secs = int(r['render_seconds'])
+        if secs >= 60:
+            dur = f"{secs//60}m {secs%60}s"
+        else:
+            dur = f"{secs}s"
+        print(f"  {P}│{R}  {C}duration{R}   {dur}")
+    if r['file_size']:
+        print(f"  {P}│{R}  {C}size{R}       {r['file_size']/1024/1024:.1f} MB")
+    if r['rating']:
+        stars = f"{Y}{'★'*r['rating']}{D}{'·'*(5-r['rating'])}{R}"
+        print(f"  {P}│{R}  {C}rating{R}     {stars}")
+    print(f"  {P}│{R}")
+    if r['output_url']:
+        print(f"  {P}│{R}  {G}url{R}        {r['output_url']}")
+    if r['output_path']:
+        print(f"  {P}│{R}  {D}local{R}      {r['output_path']}")
+    if r['notes']:
+        print(f"  {P}│{R}  {D}notes{R}      {r['notes']}")
+    print(f"  {P}│{R}")
+    print(f"  {P}╰─────────────────────────────────────────────────────────────╯{R}")
+
+    # Contextual next actions
+    if st == "done":
+        print(f"  {D}Next:  anime wan vary {r['id']}    anime wan rate {r['id']} 5{R}")
+    elif st == "failed":
+        print(f"  {D}Next:  anime wan resume {r['id']}  (retry with same seed){R}")
     print()
 
 def cmd_resume(args):
     """Re-render with the same seed (deterministic reproduce)."""
     with db() as conn:
         r = conn.execute("SELECT * FROM renders WHERE id=?", (args.id,)).fetchone()
-    if not r: print(f"{X}not found:{R} {args.id}"); sys.exit(1)
+    if not r:
+        print(f"\n  {X}Render #{args.id} not found.{R}")
+        print(f"  {D}List renders: anime wan history{R}\n")
+        sys.exit(1)
     sub = argparse.Namespace(prompt=r['prompt'], negative=r['negative'], preset=r['preset'],
-                             seed=r['seed'], name=f"resume_{r['id']}", parent=r['id'], timeout=args.timeout)
-    print(f"{C}resuming render #{r['id']} with seed {r['seed']}{R}")
+                             seed=r['seed'], name=f"resume_{r['id']}", parent=r['id'],
+                             timeout=args.timeout, yes=True)
+    print(f"\n  {C}Resuming render #{r['id']}{R} {D}(same seed: {r['seed']}){R}")
     cmd_render(sub)
 
 def cmd_vary(args):
     """Same prompt + preset, fresh seeds."""
     with db() as conn:
         r = conn.execute("SELECT * FROM renders WHERE id=?", (args.id,)).fetchone()
-    if not r: print(f"{X}not found:{R} {args.id}"); sys.exit(1)
+    if not r:
+        print(f"\n  {X}Render #{args.id} not found.{R}")
+        print(f"  {D}List renders: anime wan history{R}\n")
+        sys.exit(1)
+    est = _estimate_render_time(r['preset']) if r['preset'] in PRESETS else "unknown"
+    print(f"\n  {P}Generating {args.n} variation{'s' if args.n != 1 else ''} of render #{r['id']}{R}")
+    print(f"  {D}prompt: {r['prompt'][:60]}{'...' if len(r['prompt'])>60 else ''}{R}")
+    print(f"  {D}est per render: {est}{R}")
     for i in range(args.n):
         new_seed = random.randint(1, 2**63-1)
         sub = argparse.Namespace(prompt=r['prompt'], negative=r['negative'], preset=r['preset'],
-                                 seed=new_seed, name=f"vary_{r['id']}_{i+1}", parent=r['id'], timeout=args.timeout)
-        print(f"\n{P}variation {i+1}/{args.n}{R}  (parent #{r['id']})")
+                                 seed=new_seed, name=f"vary_{r['id']}_{i+1}", parent=r['id'],
+                                 timeout=args.timeout, yes=True)
+        print(f"\n  {P}[{i+1}/{args.n}]{R} variation  {D}(seed: {new_seed}){R}")
         cmd_render(sub)
 
 def cmd_rate(args):
     with db() as conn:
-        if not conn.execute("SELECT 1 FROM renders WHERE id=?", (args.id,)).fetchone():
-            print(f"{X}not found:{R} {args.id}"); sys.exit(1)
+        row = conn.execute("SELECT id, prompt FROM renders WHERE id=?", (args.id,)).fetchone()
+        if not row:
+            print(f"\n  {X}Render #{args.id} not found.{R}")
+            print(f"  {D}List renders: anime wan history{R}\n")
+            sys.exit(1)
         conn.execute("UPDATE renders SET rating=?, notes=COALESCE(?, notes) WHERE id=?", (args.rating, args.note, args.id))
-    print(f"{G}rated #{args.id}: {'★'*args.rating + '·'*(5-args.rating)}{R}")
+    stars = f"{Y}{'★'*args.rating}{D}{'·'*(5-args.rating)}{R}"
+    prompt_short = (row['prompt'] or "")[:50]
+    print(f"\n  {G}Rated #{args.id}{R}  {stars}")
+    print(f"  {D}{prompt_short}{R}\n")
 
 def cmd_models(args):
     root = Path.home() / "ComfyUI/models"
     if not root.exists():
-        print(f"{Y}no ~/ComfyUI/models dir — run: anime install wanmodels{R}"); return
+        print(f"\n  {Y}ComfyUI models directory not found.{R}")
+        print(f"  {D}Expected: ~/ComfyUI/models{R}")
+        print(f"  {D}Install:  anime install wan{R}\n")
+        return
     sections = [
-        ("diffusion_models", "wan*.safetensors"),
-        ("text_encoders",    "*umt5*.safetensors"),
-        ("vae",              "*wan*.safetensors"),
-        ("loras",            "wan*.safetensors"),
+        ("diffusion_models", "wan*.safetensors", "Diffusion models (the brains)"),
+        ("text_encoders",    "*umt5*.safetensors", "Text encoders (prompt understanding)"),
+        ("vae",              "*wan*.safetensors", "VAE (latent decoder)"),
+        ("loras",            "wan*.safetensors", "LoRA adapters (speed/style)"),
     ]
-    print(f"\n{B}Wan models in {root}{R}")
+    print(f"\n  {B}Wan models{R}  {D}{root}{R}\n")
     any_found = False
-    for sub, pattern in sections:
+    total_gb = 0.0
+    for sub, pattern, label in sections:
         d = root / sub
         files = sorted(d.glob(pattern)) if d.exists() else []
         if not files:
-            print(f"  {D}{sub}/{R}  {Y}(none){R}")
+            print(f"  {D}  {label:<40}  (none){R}")
             continue
         any_found = True
-        print(f"  {B}{sub}/{R}")
+        print(f"  {C}{label}{R}")
         for f in files:
             sz = f.stat().st_size / (1024**3)
-            print(f"    {f.name:<60}  {sz:>5.1f}GB")
+            total_gb += sz
+            print(f"    {f.name:<55}  {G}{sz:>5.1f} GB{R}")
+        print()
     if not any_found:
-        print(f"  {Y}no Wan models found — run: anime install wanmodels{R}")
+        print(f"  {Y}No Wan models found.{R}")
+        print(f"  {D}Install: anime install wanmodels{R}")
+    else:
+        print(f"  {D}Total: {total_gb:.1f} GB{R}")
     print()
 
 def cmd_presets(args):
-    print(f"\n{B}available presets:{R}")
+    print(f"\n  {B}Render presets{R}\n")
     for k, v in PRESETS.items():
-        marker = G+"●"+R if k==DEFAULT_PRESET else " "
-        print(f"  {marker} {B}{k:<22}{R} {D}{v['description']}{R}")
-    print()
+        if k == DEFAULT_PRESET:
+            marker = f"{G}*{R}"
+            name_style = f"{B}{G}{k}{R}"
+        else:
+            marker = " "
+            name_style = f"{B}{k}{R}"
+        dims = f"{v['width']}x{v['height']}"
+        est = _estimate_render_time(k)
+        print(f"  {marker} {name_style}")
+        print(f"      {D}{v['description']}{R}")
+        print(f"      {D}{dims}  ·  {v['steps']} steps  ·  {est}{R}")
+        print()
+    print(f"  {D}{G}*{R} {D}= default.  Override: anime wan render \"prompt\" --preset <name>{R}\n")
 
 def cmd_stats(args):
     with db() as conn:
         n   = conn.execute("SELECT COUNT(*) FROM renders").fetchone()[0]
         nd  = conn.execute("SELECT COUNT(*) FROM renders WHERE status='done'").fetchone()[0]
         nf  = conn.execute("SELECT COUNT(*) FROM renders WHERE status='failed'").fetchone()[0]
+        np_ = conn.execute("SELECT COUNT(*) FROM renders WHERE status='pending'").fetchone()[0]
+        nc  = conn.execute("SELECT COUNT(*) FROM renders WHERE status='cancelled'").fetchone()[0]
         tt  = conn.execute("SELECT SUM(render_seconds) FROM renders WHERE status='done'").fetchone()[0] or 0
         ts  = conn.execute("SELECT SUM(file_size) FROM renders WHERE status='done'").fetchone()[0] or 0
+        avg_t = conn.execute("SELECT AVG(render_seconds) FROM renders WHERE status='done'").fetchone()[0] or 0
         rated = conn.execute("SELECT AVG(rating) FROM renders WHERE rating IS NOT NULL").fetchone()[0]
-        top = conn.execute("SELECT id, substr(prompt,1,60) as p, rating FROM renders WHERE rating>=4 ORDER BY rating DESC, id DESC LIMIT 5").fetchall()
-    print(f"\n{B}{P}wan-pipeline stats{R}  ({DB_PATH})")
-    print(f"  total renders:    {n}  ({G}{nd} done{R}, {X}{nf} failed{R})")
-    print(f"  GPU time used:    {tt/60:.1f} min   ({tt/3600:.2f} GPU-hours)")
-    print(f"  disk used:        {ts/1024/1024/1024:.1f} GB")
-    if rated: print(f"  avg rating:       {'★'*int(rated+0.5)}{D} ({rated:.2f}){R}")
-    if top:
-        print(f"  {B}top-rated:{R}")
-        for r in top:
-            print(f"    #{r['id']}  {'★'*r['rating']}  {r['p']}")
+        nr  = conn.execute("SELECT COUNT(*) FROM renders WHERE rating IS NOT NULL").fetchone()[0]
+        top = conn.execute("SELECT id, substr(prompt,1,50) as p, rating FROM renders WHERE rating>=4 ORDER BY rating DESC, id DESC LIMIT 5").fetchall()
+        recent = conn.execute("SELECT id, substr(prompt,1,50) as p, status, render_seconds FROM renders ORDER BY id DESC LIMIT 3").fetchall()
+
+    if n == 0:
+        print(f"\n  {D}No renders yet.{R}")
+        print(f"  {D}Get started:{R}  anime wan render \"a dragon breathing fire\"\n")
+        return
+
+    # Dashboard layout
     print()
+    print(f"  {P}╭─────────────────────────────────────────────────────────╮{R}")
+    print(f"  {P}│{R}  {B}wan-pipeline dashboard{R}                                  {P}│{R}")
+    print(f"  {P}├─────────────────────────────────────────────────────────┤{R}")
+    print(f"  {P}│{R}                                                         {P}│{R}")
+    # Renders
+    success_rate = f"{nd/n*100:.0f}%" if n > 0 else "—"
+    print(f"  {P}│{R}  {C}Renders{R}         {B}{n}{R} total                               {P}│{R}")
+    print(f"  {P}│{R}                  {G}{nd} done{R}  {X}{nf} failed{R}  {Y}{np_} pending{R}  {D}{nc} cancelled{R}")
+    print(f"  {P}│{R}                  {D}success rate: {success_rate}{R}")
+    print(f"  {P}│{R}                                                         {P}│{R}")
+    # Time
+    gpu_hrs = tt / 3600
+    avg_secs = int(avg_t)
+    avg_str = f"{avg_secs//60}m {avg_secs%60}s" if avg_secs >= 60 else f"{avg_secs}s"
+    print(f"  {P}│{R}  {C}GPU time{R}        {B}{gpu_hrs:.1f}{R} hours ({tt/60:.0f} min total)        {P}│{R}")
+    print(f"  {P}│{R}                  {D}avg per render: {avg_str}{R}")
+    print(f"  {P}│{R}                                                         {P}│{R}")
+    # Storage
+    gb = ts / 1024 / 1024 / 1024
+    print(f"  {P}│{R}  {C}Storage{R}         {B}{gb:.1f}{R} GB                                {P}│{R}")
+    print(f"  {P}│{R}                                                         {P}│{R}")
+    # Rating
+    if rated:
+        stars = f"{Y}{'★'*int(rated+0.5)}{D}{'·'*(5-int(rated+0.5))}{R}"
+        print(f"  {P}│{R}  {C}Rating{R}          {stars} {D}({rated:.1f} avg, {nr} rated){R}")
+    else:
+        print(f"  {P}│{R}  {C}Rating{R}          {D}no ratings yet — try: anime wan rate <id> 5{R}")
+    print(f"  {P}│{R}                                                         {P}│{R}")
+    print(f"  {P}╰─────────────────────────────────────────────────────────╯{R}")
+
+    if top:
+        print(f"\n  {B}Top rated{R}")
+        for r in top:
+            print(f"    {Y}{'★'*r['rating']}{R}  #{r['id']:<4}  {r['p']}")
+
+    if recent:
+        print(f"\n  {B}Recent{R}")
+        for r in recent:
+            st = r["status"] or "?"
+            st_c = G if st == "done" else (Y if st == "pending" else X)
+            t_str = ""
+            if r["render_seconds"]:
+                s = int(r["render_seconds"])
+                t_str = f"  {D}{s//60}m{s%60:02d}s{R}" if s >= 60 else f"  {D}{s}s{R}"
+            print(f"    #{r['id']:<4}  {st_c}{st:<9}{R}{t_str}  {r['p']}")
+    print(f"\n  {D}db: {DB_PATH}{R}\n")
 
 def cmd_tui(args):
     """Tiny inline TUI — no Bubble Tea, just curses."""
@@ -466,11 +697,13 @@ def cmd_tui(args):
         stdscr.clear()
         stdscr.addstr(0, 2, "wan-pipeline TUI", curses.A_BOLD)
         stdscr.addstr(2, 2, "(r) render  (h) history  (s) stats  (p) presets  (q) quit", curses.A_DIM)
-        stdscr.addstr(4, 2, "Run `wan render \"prompt\"` for now — full TUI coming.")
-        stdscr.addstr(6, 2, "Press any key.")
+        stdscr.addstr(4, 2, "Run `anime wan render \"prompt\"` from the CLI for now.")
+        stdscr.addstr(5, 2, "Or: `anime wan studio` for the full web UI.")
+        stdscr.addstr(7, 2, "Press any key to exit.")
         stdscr.getch()
     curses.wrapper(draw)
-    print(f"{D}(rich TUI is the next iteration — current commands cover all features){R}")
+    print(f"\n  {D}The native TUI uses the Go Bubble Tea interface.{R}")
+    print(f"  {D}Run: anime wan tui  (from the compiled CLI){R}\n")
 
 # ──────────────────────────────────────────────────────────────────
 # CLI parser
@@ -488,12 +721,14 @@ def main():
     pr.add_argument("--name", default=None)
     pr.add_argument("--parent", type=int, default=None)
     pr.add_argument("--timeout", type=int, default=1800)
+    pr.add_argument("--yes", "-y", action="store_true",
+                    help="Skip confirmation prompts (for scripting)")
     pr.set_defaults(fn=cmd_render)
 
-    ph = sp.add_parser("history"); ph.add_argument("-n", type=int, default=20); ph.add_argument("--json", action="store_true"); ph.set_defaults(fn=cmd_history)
+    ph = sp.add_parser("history"); ph.add_argument("-n", type=int, default=10); ph.add_argument("--json", action="store_true"); ph.set_defaults(fn=cmd_history)
     pw = sp.add_parser("show");    pw.add_argument("id", type=int);             pw.set_defaults(fn=cmd_show)
     ps = sp.add_parser("resume");  ps.add_argument("id", type=int); ps.add_argument("--timeout", type=int, default=1800); ps.set_defaults(fn=cmd_resume)
-    pv = sp.add_parser("vary");    pv.add_argument("id", type=int); pv.add_argument("-n", type=int, default=4); pv.add_argument("--timeout", type=int, default=1800); pv.set_defaults(fn=cmd_vary)
+    pv = sp.add_parser("vary");    pv.add_argument("id", type=int); pv.add_argument("-n", type=int, default=3); pv.add_argument("--timeout", type=int, default=1800); pv.set_defaults(fn=cmd_vary)
     pt = sp.add_parser("rate");    pt.add_argument("id", type=int); pt.add_argument("rating", type=int, choices=[1,2,3,4,5]); pt.add_argument("--note", default=None); pt.set_defaults(fn=cmd_rate)
     sp.add_parser("models")  .set_defaults(fn=cmd_models)
     sp.add_parser("presets") .set_defaults(fn=cmd_presets)

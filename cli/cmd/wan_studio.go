@@ -48,6 +48,7 @@ Flags:
   --dist <path>     Override Comfort dist directory (default: auto-detect)
   --no-open         Do not auto-open the browser
   --dev             Run "npm run dev" instead of serving dist (live reload)
+  --public          Bind 0.0.0.0 (reachable from outside the host)
   --check           Print environment status and exit (no install, no serve)
   --skip-install    Don't run any installer phase; fail if anything is missing
   --skip-models     Skip the Wan 2.2 model download (~85GB)
@@ -75,6 +76,7 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 	distOverride := ""
 	open := true
 	dev := false
+	public := false
 	bootstrap := setupOpts{}
 
 	for i := 0; i < len(args); i++ {
@@ -113,6 +115,8 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 			open = false
 		case a == "--dev":
 			dev = true
+		case a == "--public":
+			public = true
 		case a == "--check", a == "--check-only":
 			bootstrap.checkOnly = true
 		case a == "--skip-install":
@@ -161,17 +165,32 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 	if port == 0 {
 		port = pickFreePort(5180)
 	}
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	bindHost := "127.0.0.1"
+	if public {
+		bindHost = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%d", bindHost, port)
 
 	srv, err := buildStudioServer(addr, dist, upstream)
 	if err != nil {
 		return err
 	}
 
-	publicURL := fmt.Sprintf("http://%s", addr)
+	localURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	openURL := localURL
 	fmt.Println(theme.GlowStyle.Render("🎬 Wan T2V Atelier"))
 	fmt.Println()
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "studio")), theme.SuccessStyle.Render(publicURL))
+	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "local")), theme.SuccessStyle.Render(localURL))
+	if public {
+		ip := getPublicIPForComfyUI()
+		if ip != "" && ip != "127.0.0.1" {
+			pubURL := fmt.Sprintf("http://%s:%d", ip, port)
+			fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "public")), theme.SuccessStyle.Render(pubURL))
+			openURL = pubURL
+		}
+		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "binding")),
+			theme.WarningStyle.Render("0.0.0.0 — reachable from outside the host"))
+	}
 	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "comfyui")), theme.PrimaryTextStyle.Render(upstream.String()))
 	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "dist")), theme.DimTextStyle.Render(dist))
 	fmt.Println()
@@ -179,7 +198,7 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	if open {
-		go openBrowser(publicURL) // package-shared helper from start.go
+		go openBrowser(openURL) // package-shared helper from start.go
 	}
 
 	stop := make(chan os.Signal, 1)

@@ -10,9 +10,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/joshkornreich/anime/internal/claude"
+	"github.com/joshkornreich/anime/internal/gh"
+	"github.com/joshkornreich/anime/internal/hf"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -55,6 +59,207 @@ The embedded files are tracked in a manifest and can be listed with:
 
 func init() {
 	rootCmd.AddCommand(embedCmd)
+	embedCmd.AddCommand(embedTokenCmd)
+	embedTokenCmd.AddCommand(embedTokenListCmd, embedTokenSetCmd, embedTokenClearCmd)
+}
+
+// ─── anime embed token ─────────────────────────────────────────────
+//
+// Bake API tokens (HuggingFace, GitHub, Claude) into the binary by
+// rewriting the corresponding `internal/<pkg>/token.go` source file. The
+// next `go build` picks them up via the `EmbeddedToken` constant.
+//
+// Locating the source tree:
+//   1. The `BuildDir` ldflag set by `make build` / `make install` (most
+//      reliable — points at the original source path).
+//   2. Walk up from the current working directory looking for a go.mod
+//      with `module github.com/joshkornreich/anime` (handy when the user
+//      is `cd`'d inside the repo).
+// If neither works we error out with explicit guidance.
+//
+// Security: this rewrites Go source files. The token then lives in plain
+// text in the binary — anyone with the binary can extract it. Suitable
+// for self-distribution to your own boxes; not for public release.
+
+var embedTokenCmd = &cobra.Command{
+	Use:   "token",
+	Short: "Embed API tokens (hf | gh | claude) into the anime binary",
+	Long: `Bake API tokens into the anime binary so a fresh box just works
+without per-host login. Three slots: hf (HuggingFace), gh (GitHub),
+claude (Anthropic OAuth). The values are written into Go source
+files and picked up on the next ` + "`go build`" + `.
+
+Subcommands:
+  anime embed token list                  # show what's embedded (truncated)
+  anime embed token set <type> <value>    # set hf | gh | claude
+  anime embed token clear <type>          # blank out a slot
+
+Examples:
+  anime embed token set hf hf_xxxx...
+  anime embed token set gh ghp_xxxx...
+  anime embed token set claude sk-ant-oat01-xxxx...
+  anime embed token list
+
+WARNING: tokens land in plain text in the compiled binary. Only do this
+for binaries you control end-to-end. NEVER for a public release.`,
+	Run: func(cmd *cobra.Command, args []string) { _ = cmd.Help() },
+}
+
+var embedTokenListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "Show currently embedded tokens (truncated)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println()
+		fmt.Println(theme.RenderBanner("EMBEDDED TOKENS"))
+		fmt.Println()
+		row := func(name, val string) {
+			label := theme.HighlightStyle.Render(fmt.Sprintf("  %-8s", name))
+			if val == "" {
+				fmt.Printf("%s  %s\n", label, theme.DimTextStyle.Render("(none — using runtime/env auth only)"))
+				return
+			}
+			fmt.Printf("%s  %s\n", label, theme.SuccessStyle.Render(maskEmbeddedToken(val)))
+		}
+		row("hf", hf.GetToken())
+		row("gh", gh.GetToken())
+		row("claude", claude.GetAccessToken())
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  Set with: anime embed token set <type> <value>"))
+		fmt.Println(theme.DimTextStyle.Render("  Tokens take effect after rebuild: make build (or go build)"))
+		fmt.Println()
+		return nil
+	},
+}
+
+var embedTokenSetCmd = &cobra.Command{
+	Use:   "set <hf|gh|claude> <value>",
+	Short: "Embed a token by rewriting its source file",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return setEmbeddedToken(args[0], args[1])
+	},
+}
+
+var embedTokenClearCmd = &cobra.Command{
+	Use:   "clear <hf|gh|claude>",
+	Short: "Blank out an embedded token (revert to runtime auth)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return setEmbeddedToken(args[0], "")
+	},
+}
+
+// maskEmbeddedToken redacts the middle of a token for safe display.
+func maskEmbeddedToken(t string) string {
+	if len(t) <= 12 {
+		return strings.Repeat("·", len(t))
+	}
+	return t[:8] + strings.Repeat("·", 16) + t[len(t)-4:]
+}
+
+// findSourceTree returns the path to the anime cli/ directory containing
+// internal/hf/, internal/gh/, etc. Tries BuildDir ldflag first, then walks
+// up from cwd. Returns a clear error if neither finds the tree.
+func findSourceTree() (string, error) {
+	candidates := []string{}
+	if BuildDir != "" {
+		candidates = append(candidates, BuildDir)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		// Walk up looking for go.mod with our module name.
+		for d := cwd; d != "/" && d != ""; d = filepath.Dir(d) {
+			data, err := os.ReadFile(filepath.Join(d, "go.mod"))
+			if err == nil && strings.Contains(string(data), "github.com/joshkornreich/anime") {
+				candidates = append(candidates, d)
+				break
+			}
+		}
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(filepath.Join(c, "internal", "hf", "token.go")); err == nil {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"could not locate the anime source tree.\n" +
+			"  BuildDir ldflag was: %q (set via the Makefile)\n" +
+			"  Tried: %v\n" +
+			"  Fix: cd into the anime cli/ directory and re-run, or build via: make build",
+		BuildDir, candidates,
+	)
+}
+
+// setEmbeddedToken rewrites the appropriate token source file.
+//
+//	hf      → internal/hf/token.go        : const EmbeddedToken = "..."
+//	gh      → internal/gh/token.go        : const EmbeddedToken = "..."
+//	claude  → internal/claude/auth.go     : AccessToken: "..."
+//
+// We do regex-replace rather than AST rewrite because the surface is tiny
+// (3 files, one literal each) and a regex is easier to audit + reverse.
+func setEmbeddedToken(kind, value string) error {
+	root, err := findSourceTree()
+	if err != nil {
+		return err
+	}
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	value = strings.TrimSpace(value)
+
+	var path string
+	var pattern *regexp.Regexp
+	var replacement string
+	var label string
+
+	switch kind {
+	case "hf":
+		path = filepath.Join(root, "internal", "hf", "token.go")
+		pattern = regexp.MustCompile(`const EmbeddedToken = "[^"]*"`)
+		replacement = fmt.Sprintf(`const EmbeddedToken = %q`, value)
+		label = "HuggingFace"
+	case "gh", "github":
+		path = filepath.Join(root, "internal", "gh", "token.go")
+		pattern = regexp.MustCompile(`const EmbeddedToken = "[^"]*"`)
+		replacement = fmt.Sprintf(`const EmbeddedToken = %q`, value)
+		label = "GitHub"
+	case "claude", "anthropic":
+		path = filepath.Join(root, "internal", "claude", "auth.go")
+		pattern = regexp.MustCompile(`AccessToken:\s*"[^"]*"`)
+		replacement = fmt.Sprintf(`AccessToken:      %q`, value)
+		label = "Claude OAuth access token"
+	default:
+		return fmt.Errorf("unknown token type %q (want: hf, gh, claude)", kind)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	if !pattern.Match(data) {
+		return fmt.Errorf("could not find the %s token literal in %s — has the file shape changed?", label, path)
+	}
+	updated := pattern.ReplaceAll(data, []byte(replacement))
+	if string(updated) == string(data) {
+		fmt.Println(theme.DimTextStyle.Render(fmt.Sprintf("  %s token already matches; no changes written.", label)))
+		return nil
+	}
+	if err := os.WriteFile(path, updated, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	fmt.Println()
+	if value == "" {
+		fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ Cleared %s token in %s", label, path)))
+	} else {
+		fmt.Printf("%s %s %s\n",
+			theme.SuccessStyle.Render("✓ Embedded"),
+			theme.HighlightStyle.Render(label),
+			theme.DimTextStyle.Render("→ "+maskEmbeddedToken(value)+"  ("+path+")"))
+	}
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("Rebuild for the change to take effect:"))
+	fmt.Println(theme.HighlightStyle.Render("    make build       # or"))
+	fmt.Println(theme.HighlightStyle.Render("    go build         # from cli/"))
+	fmt.Println()
+	return nil
 }
 
 func runEmbed(cmd *cobra.Command, args []string) error {

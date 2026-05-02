@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/errors"
+	"github.com/joshkornreich/anime/internal/gh"
 	"github.com/joshkornreich/anime/internal/hf"
 	"github.com/joshkornreich/anime/internal/installer"
 	"github.com/joshkornreich/anime/internal/logger"
@@ -476,9 +477,18 @@ func init() {
 	// Initialize logger and color profile on startup, in that order.
 	cobra.OnInitialize(initLogger, initColor)
 
-	// Always set HF_TOKEN from embedded value if not already set
+	// Always set HF_TOKEN from embedded value if not already set so the
+	// model-download paths just work on a fresh box. Empty embedded value
+	// is harmless; downstream code treats empty as "no token".
 	if os.Getenv("HF_TOKEN") == "" {
 		os.Setenv("HF_TOKEN", hf.GetToken())
+	}
+	// Same pattern for GH_TOKEN — when set, the comfort installer's HTTPS
+	// fallback uses it without needing the user to log in via gh CLI. The
+	// embedded value is empty by default; populate via:
+	//     anime embed token gh ghp_...
+	if os.Getenv("GH_TOKEN") == "" && gh.GetToken() != "" {
+		os.Setenv("GH_TOKEN", gh.GetToken())
 	}
 
 	// Configure error handling

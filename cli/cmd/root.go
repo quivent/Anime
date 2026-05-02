@@ -9,11 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/errors"
 	"github.com/joshkornreich/anime/internal/hf"
 	"github.com/joshkornreich/anime/internal/installer"
 	"github.com/joshkornreich/anime/internal/logger"
 	"github.com/joshkornreich/anime/internal/theme"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -32,6 +34,9 @@ var (
 	logLevel string
 	logFile  string
 	debug    bool
+
+	// Color flag — drives lipgloss color profile selection in initColor.
+	colorMode string
 
 	// Global SSH security flags
 	SSHInsecure               bool
@@ -468,8 +473,8 @@ func isOllamaAvailable() bool {
 }
 
 func init() {
-	// Initialize logger on startup
-	cobra.OnInitialize(initLogger)
+	// Initialize logger and color profile on startup, in that order.
+	cobra.OnInitialize(initLogger, initColor)
 
 	// Always set HF_TOKEN from embedded value if not already set
 	if os.Getenv("HF_TOKEN") == "" {
@@ -495,6 +500,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Log file path (default: stderr)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging (shorthand for --log-level=debug)")
 
+	// Color control: by default we auto-detect (TTY → colors, pipe → no
+	// colors). --color=always force-enables; --color=never strips. Also
+	// respects the standard env vars NO_COLOR / FORCE_COLOR / CLICOLOR_FORCE.
+	rootCmd.PersistentFlags().StringVar(&colorMode, "color", "auto", "Color output (auto|always|never). Also: FORCE_COLOR=1 / NO_COLOR")
+
 	// Add SSH security flags
 	rootCmd.PersistentFlags().BoolVar(&SSHInsecure, "insecure", false, "Disable SSH host key verification (INSECURE - not recommended)")
 	rootCmd.PersistentFlags().BoolVar(&SSHStrictHostKeyChecking, "strict-host-key-checking", true, "Enable strict SSH host key checking (default: true)")
@@ -505,6 +515,98 @@ func init() {
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(statusCmd)
 	// Note: addCmd, genCmd, installNewCmd, modulesCmd, removeCmd, and sequenceCmd are registered in their respective files
+}
+
+// initColor decides the lipgloss color profile based on (in priority order):
+//
+//  1. --color=always|never (explicit user choice)
+//  2. NO_COLOR env (any value → strip)
+//  3. FORCE_COLOR / CLICOLOR_FORCE env (any value → force)
+//  4. Auto: lipgloss/termenv default — colors when stdout is a TTY, none otherwise
+//
+// The default lipgloss behavior (auto) is what most users expect, but it's
+// easy to land in a non-TTY situation accidentally (screen, tmux without
+// xterm-256color, captured output) and lose colors entirely. Setting
+// FORCE_COLOR=1 or `--color=always` rescues those cases.
+func initColor() {
+	mode := strings.ToLower(strings.TrimSpace(colorMode))
+	if mode == "" {
+		mode = "auto"
+	}
+	// Subcommands with DisableFlagParsing=true (e.g., anime wan render) skip
+	// ALL flag parsing including persistent flags, so the cobra-bound
+	// `colorMode` stays at "auto" no matter what the user typed. Fall back
+	// to scanning os.Args directly so --color works there too.
+	if mode == "auto" {
+		for i, a := range os.Args {
+			switch {
+			case strings.HasPrefix(a, "--color="):
+				mode = strings.ToLower(strings.TrimPrefix(a, "--color="))
+			case a == "--color" && i+1 < len(os.Args):
+				mode = strings.ToLower(os.Args[i+1])
+			}
+		}
+	}
+	if mode == "auto" {
+		if os.Getenv("NO_COLOR") != "" {
+			mode = "never"
+		} else if os.Getenv("FORCE_COLOR") != "" || os.Getenv("CLICOLOR_FORCE") != "" {
+			mode = "always"
+		}
+	}
+	switch mode {
+	case "always", "force", "1", "true", "yes":
+		lipgloss.SetColorProfile(termenv.TrueColor)
+		// Propagate to child processes (wan.py, npm, screen-launched ComfyUI)
+		// that have their own color logic. Set both env vars so anything
+		// following either convention picks it up.
+		if os.Getenv("FORCE_COLOR") == "" {
+			os.Setenv("FORCE_COLOR", "1")
+		}
+		os.Unsetenv("NO_COLOR") // an explicit FORCE wins over a stale NO_COLOR
+	case "never", "off", "0", "false", "no":
+		lipgloss.SetColorProfile(termenv.Ascii)
+		if os.Getenv("NO_COLOR") == "" {
+			os.Setenv("NO_COLOR", "1")
+		}
+		os.Unsetenv("FORCE_COLOR")
+	}
+	// "auto" with no overriding env: leave the lipgloss default + child env alone.
+}
+
+// stripRootFlags removes flags that belong to rootCmd from `args` so they
+// don't leak into downstream argparse-based tools (most notably wan.py via
+// the DisableFlagParsing=true subcommands). Applied effects (like --color)
+// have already been picked up by initColor's os.Args scan, so it's safe to
+// drop them here.
+func stripRootFlags(args []string) []string {
+	known := map[string]bool{
+		"--color": true, "--debug": true,
+		"--log-level": true, "--log-file": true,
+		"--insecure": true, "--strict-host-key-checking": true, "--non-interactive": true,
+	}
+	// Bool flags don't consume the next arg as a value.
+	bools := map[string]bool{
+		"--debug": true, "--insecure": true,
+		"--strict-host-key-checking": true, "--non-interactive": true,
+	}
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if eq := strings.IndexByte(a, '='); eq > 0 {
+			if known[a[:eq]] {
+				continue
+			}
+		}
+		if known[a] {
+			if !bools[a] && i+1 < len(args) {
+				i++ // consume value
+			}
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // initLogger initializes the global logger based on flags

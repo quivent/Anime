@@ -15,7 +15,11 @@ import (
 
 var comfyuiCmd = &cobra.Command{
 	Use:   "comfyui <start|stop|status|logs>",
-	Short: "Manage ComfyUI server",
+	Short: "Manage the ComfyUI render engine (used by anime wan studio)",
+	Long: `Manage the ComfyUI render engine — the Python service on :8188 that
+actually executes Wan 2.2 workflows. The Comfort web studio (anime wan studio)
+talks to this engine over /api and /ws; you usually don't run anime comfyui
+directly unless you're debugging.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) != 1 {
 			fmt.Println()
@@ -25,14 +29,16 @@ var comfyuiCmd = &cobra.Command{
 			fmt.Println(theme.HighlightStyle.Render("  anime comfyui <action>"))
 			fmt.Println()
 			fmt.Println(theme.InfoStyle.Render("Available Actions:"))
-			fmt.Println(theme.DimTextStyle.Render("  start   - Start ComfyUI server in background"))
-			fmt.Println(theme.DimTextStyle.Render("  stop    - Stop ComfyUI server"))
-			fmt.Println(theme.DimTextStyle.Render("  status  - Show server status and health"))
-			fmt.Println(theme.DimTextStyle.Render("  logs    - View server logs"))
+			fmt.Println(theme.DimTextStyle.Render("  start   - Start render engine in background"))
+			fmt.Println(theme.DimTextStyle.Render("  stop    - Stop render engine"))
+			fmt.Println(theme.DimTextStyle.Render("  status  - Show engine status and health"))
+			fmt.Println(theme.DimTextStyle.Render("  logs    - View engine logs"))
 			fmt.Println()
 			fmt.Println(theme.InfoStyle.Render("Examples:"))
 			fmt.Println(theme.HighlightStyle.Render("  anime comfyui start"))
 			fmt.Println(theme.HighlightStyle.Render("  anime comfyui status"))
+			fmt.Println()
+			fmt.Println(theme.DimTextStyle.Render("Most users want: anime wan studio  (the Comfort web UI)"))
 			fmt.Println()
 			return fmt.Errorf("comfyui requires an action (start|stop|status|logs)")
 		}
@@ -63,7 +69,7 @@ func runComfyUICommand(cmd *cobra.Command, args []string) error {
 }
 
 func startComfyUIServer() error {
-	fmt.Println(theme.InfoStyle.Render("🚀 Starting ComfyUI in background..."))
+	fmt.Println(theme.InfoStyle.Render("🚀 Starting render engine (ComfyUI) in background..."))
 
 	// Pick the venv python (where torch cu130 + sageattention live) when it
 	// exists; fall back to system python3 only if the venv is missing — that
@@ -96,7 +102,7 @@ func startComfyUIServer() error {
 	launch := fmt.Sprintf("cd ~/ComfyUI && exec %s main.py --listen%s 2>&1 | tee -a %s", pyCmd, sageFlag, logPath)
 	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", launch)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start ComfyUI: %w", err)
+		return fmt.Errorf("failed to start render engine: %w", err)
 	}
 
 	// Wait a moment and check if it started
@@ -109,31 +115,31 @@ func startComfyUIServer() error {
 	fmt.Println()
 
 	publicIP := getPublicIPForComfyUI()
-	fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ ComfyUI started at http://%s:8188", publicIP)))
+	fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ Render engine reachable at http://%s:8188", publicIP)))
 	fmt.Println()
 	fmt.Println(theme.DimTextStyle.Render("View logs:    anime comfyui logs"))
 	fmt.Println(theme.DimTextStyle.Render("Check status: anime comfyui status"))
-	fmt.Println(theme.DimTextStyle.Render("Stop server:  anime comfyui stop"))
+	fmt.Println(theme.DimTextStyle.Render("Stop engine:  anime comfyui stop"))
 	fmt.Println()
 
 	return nil
 }
 
 func stopComfyUIServer() error {
-	fmt.Println(theme.InfoStyle.Render("🛑 Stopping ComfyUI..."))
+	fmt.Println(theme.InfoStyle.Render("🛑 Stopping render engine..."))
 
 	cmd := exec.Command("screen", "-S", "comfyui", "-X", "quit")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to stop ComfyUI: %w", err)
+		return fmt.Errorf("failed to stop render engine: %w", err)
 	}
 
-	fmt.Println(theme.SuccessStyle.Render("✓ ComfyUI stopped"))
+	fmt.Println(theme.SuccessStyle.Render("✓ Render engine stopped"))
 	return nil
 }
 
 func statusComfyUIServer() error {
 	fmt.Println()
-	fmt.Println(theme.RenderBanner("🎨 COMFYUI STATUS"))
+	fmt.Println(theme.RenderBanner("🎨 RENDER ENGINE STATUS"))
 	fmt.Println()
 
 	// 1. Check if ComfyUI directory exists
@@ -312,7 +318,7 @@ func statusComfyUIServer() error {
 }
 
 func logsComfyUIServer() error {
-	fmt.Println(theme.InfoStyle.Render("📋 ComfyUI logs (Ctrl+C to exit)"))
+	fmt.Println(theme.InfoStyle.Render("📋 Render engine logs (Ctrl+C to exit)"))
 	fmt.Println()
 
 	home, _ := os.UserHomeDir()

@@ -158,8 +158,8 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --comfy URL %q: %w", comfyURL, err)
 	}
 	if !checkComfyReachable(upstream) {
-		fmt.Println(theme.WarningStyle.Render("⚠  ComfyUI not reachable at " + upstream.String()))
-		fmt.Println(theme.DimTextStyle.Render("   The studio will load, but renders will fail until ComfyUI starts."))
+		fmt.Println(theme.WarningStyle.Render("⚠  Render engine (ComfyUI) not reachable at " + upstream.String()))
+		fmt.Println(theme.DimTextStyle.Render("   The Comfort UI will load, but renders will fail until the engine starts."))
 		fmt.Println(theme.DimTextStyle.Render("   Start it: anime comfyui start"))
 		fmt.Println()
 	}
@@ -192,9 +192,9 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 
 	localURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	openURL := localURL
-	fmt.Println(theme.GlowStyle.Render("🎬 Wan T2V Atelier"))
+	fmt.Println(theme.GlowStyle.Render("🎬 Comfort · Wan T2V Atelier"))
 	fmt.Println()
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "local")), theme.SuccessStyle.Render(localURL))
+	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "studio")), theme.SuccessStyle.Render(localURL))
 	if public {
 		ip := getPublicIPForComfyUI()
 		if ip != "" && ip != "127.0.0.1" {
@@ -204,10 +204,10 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "binding")),
 			theme.WarningStyle.Render("0.0.0.0 — reachable from outside the host"))
 	}
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "comfyui")), theme.PrimaryTextStyle.Render(upstream.String()))
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "dist")), theme.DimTextStyle.Render(dist))
+	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "engine")), theme.PrimaryTextStyle.Render(upstream.String()+"  (ComfyUI)"))
+	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "ui dist")), theme.DimTextStyle.Render(dist))
 	fmt.Println()
-	fmt.Println(theme.DimTextStyle.Render("  Ctrl+C to stop the server."))
+	fmt.Println(theme.DimTextStyle.Render("  Ctrl+C to stop the studio."))
 	fmt.Println()
 
 	if open {
@@ -242,9 +242,9 @@ func runStudioDev(distOverride string, openBrowserFlag bool, comfyURL string) er
 	if _, err := exec.LookPath("npm"); err != nil {
 		return fmt.Errorf("npm not on PATH (run: anime install nodejs)")
 	}
-	fmt.Println(theme.GlowStyle.Render("🎬 Wan T2V Atelier — dev mode"))
+	fmt.Println(theme.GlowStyle.Render("🎬 Comfort · Wan T2V Atelier — dev mode"))
 	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "ui dir")), theme.DimTextStyle.Render(uiDir))
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "comfyui")), theme.PrimaryTextStyle.Render(comfyURL))
+	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "engine")), theme.PrimaryTextStyle.Render(comfyURL+"  (ComfyUI)"))
 	fmt.Println(theme.DimTextStyle.Render("  Ctrl+C to stop."))
 	fmt.Println()
 
@@ -263,7 +263,7 @@ func buildStudioServer(addr, dist string, upstream *url.URL) (*http.Server, erro
 
 	apiProxy := httputil.NewSingleHostReverseProxy(upstream)
 	apiProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, "ComfyUI unreachable: "+err.Error(), http.StatusBadGateway)
+		http.Error(w, "render engine unreachable: "+err.Error(), http.StatusBadGateway)
 	}
 	// Forward /api/* and /ws (and bare /view, which ComfyUI serves at root).
 	for _, prefix := range []string{"/api/", "/ws", "/view", "/prompt", "/queue", "/history", "/upload/", "/object_info", "/system_stats", "/interrupt"} {

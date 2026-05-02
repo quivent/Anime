@@ -50,11 +50,11 @@ func wanStudioPhases() []phase {
 	return []phase{
 		{
 			id:   "comfyui",
-			name: "ComfyUI",
+			name: "Render engine (ComfyUI)",
 			check: func() (bool, string) {
 				return fileExists(join("ComfyUI", "main.py"))
 			},
-			skipMsg: "already installed",
+			skipMsg: "installed",
 		},
 		{
 			id:   "wantorch",
@@ -98,11 +98,11 @@ except ImportError as e:
 		},
 		{
 			id:   "wannodes",
-			name: "Kijai Wan custom-node stack",
+			name: "Wan custom-node stack",
 			check: func() (bool, string) {
 				return fileExists(join("ComfyUI", "custom_nodes", "ComfyUI-WanVideoWrapper", ".git"))
 			},
-			skipMsg: "WanVideoWrapper present",
+			skipMsg: "Kijai WanVideoWrapper present",
 		},
 		{
 			id:   "wanmodels",
@@ -136,7 +136,7 @@ except ImportError as e:
 		},
 		{
 			id:   "comfort",
-			name: "Comfort studio UI",
+			name: "Comfort studio (web UI)",
 			check: func() (bool, string) {
 				return fileExists(join("Comfort", "comfort-ui", "dist", "index.html"))
 			},
@@ -144,14 +144,14 @@ except ImportError as e:
 		},
 		{
 			id:   "", // not an installer phase
-			name: "ComfyUI server",
+			name: "Render engine running",
 			check: func() (bool, string) {
 				if comfyServerReachable() {
 					return true, "responding at http://127.0.0.1:8188"
 				}
 				return false, "not running"
 			},
-			skipMsg: "running",
+			skipMsg: "responding",
 			custom:  ensureComfyServer,
 		},
 	}
@@ -253,10 +253,11 @@ func runInstallScript(id string) error {
 	return c.Run()
 }
 
-// ensureComfyServer starts ComfyUI in a screen session if it isn't already
-// reachable, then waits for the HTTP API to come up. First-boot import of
-// WanVideoWrapper + KJNodes + sageattention can take 60-90s on a cold venv,
-// so we give it 150s and dump the tail of the log on timeout to surface why.
+// ensureComfyServer starts the render engine (ComfyUI) in a screen session if
+// it isn't already reachable, then waits for the HTTP API to come up. First-
+// boot import of WanVideoWrapper + KJNodes + sageattention can take 60-90s
+// on a cold venv, so we give it 150s and dump the tail of the log on timeout
+// to surface why.
 func ensureComfyServer(opts *setupOpts) error {
 	if comfyServerReachable() {
 		return nil
@@ -280,9 +281,9 @@ func ensureComfyServer(opts *setupOpts) error {
 		}
 	}
 	fmt.Println()
-	return fmt.Errorf("ComfyUI did not become reachable on :8188 within %ds.\n%s\n%s",
+	return fmt.Errorf("render engine did not become reachable on :8188 within %ds.\n%s\n%s",
 		waitSeconds,
-		"  Last 30 lines of the log:",
+		"  Last 30 lines of the engine log:",
 		tailComfyLog(30))
 }
 

@@ -20,8 +20,25 @@ from contextlib import contextmanager
 from pathlib import Path
 
 # ── color palette (no external deps) ──
-B='\033[1m'; D='\033[2m'; R='\033[0m'
-G='\033[38;5;42m'; C='\033[38;5;51m'; Y='\033[38;5;220m'; P='\033[38;5;213m'; X='\033[38;5;203m'
+# Respects standard color env vars: NO_COLOR strips, FORCE_COLOR or
+# CLICOLOR_FORCE enables. Auto-detects TTY otherwise. The Go wrapper sets
+# these env vars from --color so `anime --color=always wan presets` flows
+# through to Python.
+def _enable_color() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR") or os.environ.get("CLICOLOR_FORCE"):
+        return True
+    try:
+        return sys.stdout.isatty()
+    except Exception:
+        return False
+
+if _enable_color():
+    B='\033[1m'; D='\033[2m'; R='\033[0m'
+    G='\033[38;5;42m'; C='\033[38;5;51m'; Y='\033[38;5;220m'; P='\033[38;5;213m'; X='\033[38;5;203m'
+else:
+    B=D=R=G=C=Y=P=X=''
 
 DB_PATH = Path(os.environ.get("WAN_DB", str(Path.home() / ".anime/wan-pipeline.db")))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)

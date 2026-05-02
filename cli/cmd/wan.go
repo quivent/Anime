@@ -127,6 +127,12 @@ func runWanPython(args []string) error {
 		return err
 	}
 	py := findPython()
+	// DisableFlagParsing on the wan subcommands means cobra hands us every
+	// arg verbatim — including root flags like --color / --debug. Strip them
+	// before forwarding to wan.py, which uses argparse and would error out
+	// with "unrecognized arguments" otherwise. Their effects have already
+	// been applied in initColor / initLogger via direct os.Args scans.
+	args = stripRootFlags(args)
 	full := append([]string{scriptPath}, args...)
 	c := exec.Command(py, full...)
 	c.Stdin = os.Stdin
@@ -153,6 +159,7 @@ func runWanCapture(args ...string) (string, error) {
 		return "", err
 	}
 	py := findPython()
+	args = stripRootFlags(args)
 	full := append([]string{scriptPath}, args...)
 	c := exec.Command(py, full...)
 	c.Env = os.Environ()

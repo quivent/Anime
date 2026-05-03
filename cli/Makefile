@@ -59,12 +59,21 @@ embed-source:
 		--exclude='animated' \
 		--exclude='*.md' \
 		--exclude='*.yml' \
-		--exclude='*.yaml' \
+		--exclude='setup-gh200.yml' \
 		--exclude='*.ini' \
 		--exclude='coverage.*' \
-		--exclude='anime' \
+		--exclude='*/anime' \
 		--exclude='anime-linux-*' \
 		--exclude='anime-darwin-*' \
+		--exclude='*.pem' \
+		--exclude='*.key' \
+		--exclude='.env' \
+		--exclude='.env.*' \
+		--exclude='*.bak' \
+		--exclude='*.bak2' \
+		--exclude='*.bak3' \
+		--exclude='*.backup' \
+		--exclude='*.orig' \
 		-h \
 		-C .. cli
 	@echo "✓ Created cmd/anime-src.tar.gz ($$(du -h cmd/anime-src.tar.gz | cut -f1))"

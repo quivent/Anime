@@ -17,10 +17,10 @@ type OAuthCredentials struct {
 
 // EmbeddedOAuth contains the Claude Code OAuth credentials embedded at compile time
 var EmbeddedOAuth = OAuthCredentials{
-	AccessToken:      "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",
-	RefreshToken:     "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",
-	ExpiresAt:        1765827063572,
-	Scopes:           []string{"user:inference", "user:profile", "user:sessions:claude_code"},
+	AccessToken:      "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",
+	RefreshToken:     "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",
+	ExpiresAt:        1777860389770,
+	Scopes:           []string{"user:file_upload", "user:inference", "user:mcp_servers", "user:profile", "user:sessions:claude_code"},
 	SubscriptionType: "max",
 	RateLimitTier:    "default_claude_max_20x",
 }

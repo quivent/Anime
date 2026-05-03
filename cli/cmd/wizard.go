@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	wizardStep bool
+)
+
 var wizardCmd = &cobra.Command{
 	Use:     "wizard",
 	Short:   "Interactive setup wizard for configuring your node",
@@ -19,6 +23,7 @@ var wizardCmd = &cobra.Command{
 }
 
 func init() {
+	wizardCmd.Flags().BoolVar(&wizardStep, "step", false, "Step mode: pause between each install, confirm before continuing")
 	rootCmd.AddCommand(wizardCmd)
 }
 
@@ -328,6 +333,9 @@ func runWizard(cmd *cobra.Command, args []string) {
 
 	// Execute installation
 	fmt.Println()
+	if wizardStep {
+		phased = true
+	}
 	runLocalInstall(resolved)
 }
 

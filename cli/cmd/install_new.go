@@ -148,58 +148,159 @@ func runLocalInstall(packages []*installer.Package) {
 	fmt.Println(theme.RenderBanner("🚀 DEPLOYING PACKAGES 🚀"))
 	fmt.Println()
 
+	total := len(packages)
+	fmt.Printf("  %s %s\n",
+		theme.InfoStyle.Render("Plan:"),
+		theme.DimTextStyle.Render(fmt.Sprintf("%d packages to install", total)))
+	fmt.Println()
+
+	// Show what's coming
+	for i, pkg := range packages {
+		bullet := "○"
+		if i == 0 {
+			bullet = "●"
+		}
+		fmt.Printf("  %s %s %s  %s\n",
+			theme.DimTextStyle.Render(fmt.Sprintf("%s %d.", bullet, i+1)),
+			theme.HighlightStyle.Render(pkg.Name),
+			theme.DimTextStyle.Render(pkg.Size),
+			theme.DimTextStyle.Render("~"+pkg.EstimatedTime.String()))
+	}
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  ─────────────────────────────────────────"))
+	fmt.Println()
+
 	var failures []installFailure
 	var successes []*installer.Package
+	totalStart := time.Now()
 
 	for i, pkg := range packages {
+		remaining := total - i
+		// Phased mode: pause and confirm
 		if phased && i > 0 {
-			fmt.Printf("\n%s\n",
-				theme.WarningStyle.Render("⏸️  Press Enter to continue, or Ctrl+C to abort..."))
+			fmt.Println()
+			fmt.Printf("  %s  %s\n",
+				theme.WarningStyle.Render("⏸"),
+				theme.DimTextStyle.Render(fmt.Sprintf("%d of %d complete, %d remaining", i, total, remaining)))
+			if len(failures) > 0 {
+				fmt.Printf("  %s  %s\n",
+					theme.ErrorStyle.Render("!"),
+					theme.ErrorStyle.Render(fmt.Sprintf("%d failed so far", len(failures))))
+			}
+			fmt.Println()
+			fmt.Printf("  %s ", theme.InfoStyle.Render("Next:"))
+			fmt.Printf("%s — %s\n", theme.HighlightStyle.Render(pkg.Name), pkg.Description)
+			fmt.Printf("  %s %s, estimated %s\n",
+				theme.DimTextStyle.Render("     "),
+				theme.DimTextStyle.Render(pkg.Size),
+				theme.DimTextStyle.Render(pkg.EstimatedTime.String()))
+			fmt.Println()
+			fmt.Printf("  %s", theme.DimTextStyle.Render("Press Enter to install, or Ctrl+C to stop → "))
 			bufio.NewReader(os.Stdin).ReadString('\n')
 		}
 
-		// Progress indicator
-		fmt.Printf("[%s] %s %s\n",
-			theme.InfoStyle.Render(fmt.Sprintf("%d/%d", i+1, len(packages))),
-			theme.SymbolLoading,
-			theme.HighlightStyle.Render("Installing "+pkg.Name))
+		// Step header
+		fmt.Printf("  %s  %s\n",
+			theme.InfoStyle.Render(fmt.Sprintf("Step %d/%d", i+1, total)),
+			theme.HighlightStyle.Render(pkg.Name))
+		fmt.Printf("  %s  %s\n",
+			theme.DimTextStyle.Render("       "),
+			theme.DimTextStyle.Render(pkg.Description))
+		fmt.Println()
 
 		script, exists := installer.GetScript(pkg.ID)
 		if !exists {
-			fmt.Println(theme.ErrorStyle.Render("  " + theme.SymbolError + " Script not found"))
+			fmt.Println(theme.ErrorStyle.Render("  ✗ Script not found for " + pkg.ID))
 			failures = append(failures, installFailure{pkg: pkg, err: fmt.Errorf("script not found")})
 			continue
 		}
 
-		// Execute script
+		// Execute script with indented output
 		cmd := exec.Command("bash", "-c", script)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = newPrefixWriter(os.Stdout, "  │ ")
+		cmd.Stderr = newPrefixWriter(os.Stderr, "  │ ")
 
 		start := time.Now()
 		err := cmd.Run()
 		elapsed := time.Since(start)
 
 		if err != nil {
-			fmt.Printf("  %s %s\n",
-				theme.ErrorStyle.Render(theme.SymbolError+" FAILED"),
-				theme.DimTextStyle.Render(fmt.Sprintf("(after %s)", elapsed.Round(time.Second))))
+			fmt.Println()
+			fmt.Printf("  %s %s  %s\n",
+				theme.ErrorStyle.Render("✗"),
+				theme.ErrorStyle.Render(pkg.Name+" FAILED"),
+				theme.DimTextStyle.Render(fmt.Sprintf("after %s", formatElapsed(elapsed))))
+			fmt.Printf("  %s  %s\n",
+				theme.DimTextStyle.Render("  "),
+				theme.DimTextStyle.Render(err.Error()))
 			fmt.Println()
 			failures = append(failures, installFailure{pkg: pkg, err: err, elapsed: elapsed})
-			// Continue with next package instead of exiting
 			continue
 		}
 
-		// Success with elapsed time
-		fmt.Printf("  %s %s\n",
-			theme.SuccessStyle.Render(theme.SymbolSuccess+" COMPLETE"),
-			theme.DimTextStyle.Render(fmt.Sprintf("(%s)", elapsed.Round(time.Second))))
+		// Success
+		fmt.Println()
+		fmt.Printf("  %s %s  %s\n",
+			theme.SuccessStyle.Render("✓"),
+			theme.SuccessStyle.Render(pkg.Name+" done"),
+			theme.DimTextStyle.Render(formatElapsed(elapsed)))
 		fmt.Println()
 		successes = append(successes, pkg)
 	}
 
-	// Show summary
+	// Final summary
+	totalElapsed := time.Since(totalStart)
+	fmt.Println(theme.DimTextStyle.Render("  ─────────────────────────────────────────"))
+	fmt.Println()
+	fmt.Printf("  %s  %s installed, %s failed, %s total\n",
+		theme.InfoStyle.Render("Done:"),
+		theme.SuccessStyle.Render(fmt.Sprintf("%d", len(successes))),
+		theme.ErrorStyle.Render(fmt.Sprintf("%d", len(failures))),
+		theme.DimTextStyle.Render(formatElapsed(totalElapsed)))
+	fmt.Println()
+
 	showInstallSummary(successes, failures, "")
+}
+
+func formatElapsed(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// prefixWriter wraps an io.Writer and prepends a prefix to each line.
+// This keeps script output visually nested under the install step.
+type prefixWriter struct {
+	w      *os.File
+	prefix string
+	atBOL  bool
+}
+
+func newPrefixWriter(w *os.File, prefix string) *prefixWriter {
+	return &prefixWriter{w: w, prefix: prefix, atBOL: true}
+}
+
+func (pw *prefixWriter) Write(p []byte) (int, error) {
+	written := 0
+	for _, b := range p {
+		if pw.atBOL {
+			pw.w.WriteString(pw.prefix)
+			pw.atBOL = false
+		}
+		n, err := pw.w.Write([]byte{b})
+		written += n
+		if err != nil {
+			return written, err
+		}
+		if b == '\n' {
+			pw.atBOL = true
+		}
+	}
+	return len(p), nil
 }
 
 func runRemoteInstall(packages []*installer.Package) {

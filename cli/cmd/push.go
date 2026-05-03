@@ -415,7 +415,7 @@ func buildLinuxBinary() (binaryPath, version, buildTime, sourceDir string, err e
 	commit := getGitCommitFromDir(sourceDir)
 
 	// Build flags - include BuildDir so future pushes know where source lives
-	ldflags := fmt.Sprintf("-X github.com/joshkornreich/anime/cmd.Version=%s -X github.com/joshkornreich/anime/cmd.BuildTime=%s -X github.com/joshkornreich/anime/cmd.Commit=%s -X github.com/joshkornreich/anime/cmd.BuildDir=%s",
+	ldflags := fmt.Sprintf("-s -w -X github.com/joshkornreich/anime/cmd.Version=%s -X github.com/joshkornreich/anime/cmd.BuildTime=%s -X github.com/joshkornreich/anime/cmd.Commit=%s -X github.com/joshkornreich/anime/cmd.BuildDir=%s",
 		version, buildTime, commit, sourceDir)
 
 	// Output path
@@ -701,11 +701,13 @@ func rsyncToServer(localPath, target string) error {
 		args = append(args, "--progress")
 	}
 
-	// Add SSH options with embedded key if available
+	// Add SSH options with embedded key + keepalives to prevent drops on large transfers
 	if keyPath, cleanup, err := GetEmbeddedSSHKeyPath(); err == nil {
 		defer cleanup()
-		sshCmd := fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new", keyPath)
+		sshCmd := fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=4", keyPath)
 		args = append(args, "-e", sshCmd)
+	} else {
+		args = append(args, "-e", "ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4")
 	}
 
 	args = append(args, localPath, target+":~/")

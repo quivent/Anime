@@ -15,73 +15,78 @@ You become an agent with deep knowledge of the current project's:
 
 This is not roleplay - this is **context loading**. You operate as yourself, augmented with project-specific knowledge and constraints.
 
+## Companion Persona Auto-Load (order-agnostic pairing)
+
+After loading project context, if the encoded project has an `agent` block in `context.json` with an `activation_command` (e.g. `/wavesmith`), ALSO load the persona files referenced by that command. For DAW specifically: read `~/.agents/wavesmith.md` and `~/DAW/WAVESMITH.md` (or `docs/reference/WAVESMITH.md`) so the WaveSmith persona is active alongside project context. `/app-agent` and `/wavesmith` are order-agnostic — invoking either one loads both layers (project context + persona). Do not spawn a subagent; just read the files.
+
 ## Database Location
 
 ```
-~/.claude/db/projects.db
+${BRILLIANT_MINDS_ROOT}/db/projects.db
 ```
 
 ## Phase 1: Detect Current Project
 
 Get the current working directory. This is the project path to look up.
 
-## Phase 2: Query Project Data
+## Phase 2: Load tiered context (eager core, lazy map/meta)
 
-Execute queries using Bash with sqlite3. The database has 10 tables:
+`/project-encode` writes four files. Load the small `core.json` at activation; load `map.json` and `meta.json` only when a turn actually needs them. This cuts activation-token cost by ~60% on the median project.
 
-### 2.1 Main Project Query
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT id, name, domain, sensitivity, description, purpose, stack FROM projects WHERE path = '[cwd]';"
+### 2.1 Determine encoding path
+
+The encoding directory follows the pattern: `~/.claude/encodings/[path-with-dashes]/`
+where the project path has `/` replaced with `-`.
+
+Example: `/Users/joshkornreich/DAW` → `~/.claude/encodings/-Users-joshkornreich-DAW/`
+
+### 2.2 Eager load: core.json + stamp.json + staleness check
+
+In a single parallel message, issue:
+- `Read ~/.claude/encodings/[path-with-dashes]/core.json`
+- `Read ~/.claude/encodings/[path-with-dashes]/stamp.json`
+- `Bash: git rev-parse HEAD 2>/dev/null`
+
+`core.json` contains identity, archetype, stack, constraints, commands, agent, source_hashes — the content-stable payload.
+`stamp.json` contains git_hash, encoded_at, schema_version — the volatile payload, kept separate so core.json stays byte-stable across re-encodes.
+
+Together they are the minimum to operate safely. Logically one artifact; physically two files so the bigger one qualifies for skip-if-unchanged on re-encode.
+
+**Do NOT eager-load `map.json`, `meta.json`, or `context.json` during activation.** Those are deferred until a turn demands them.
+
+If the current HEAD differs from `stamp.json`'s `git_hash`, note staleness. Continue — the core payload (constraints, commands, identity) changes rarely, so stale core is still usable. Flag `exploration` as suspect when/if `map.json` is later loaded.
+
+**Fallback for older encodings** (core.json exists but stamp.json does not): core.json is from a pre-split encoder run; it contains git_hash and encoded_at inline. Read those from core.json and behave as if stamp.json had loaded. Suggest to the user that re-running `/project-encode` will generate stamp.json and enable skip-if-unchanged for core on future re-encodes.
+
+### 2.3 Lazy load triggers
+
+| Section | Load when |
+|---|---|
+| `map.json` (navigation, glossary, integrations, exploration) | First turn that asks about file locations, module structure, terminology, external services, or "where is X?" |
+| `meta.json` (conventions, personas, verification) | Only when explicitly invoked — e.g., user asks about coding style conventions, target users, or self-verification |
+| `context.json` | Back-compat fallback only: if `core.json` is missing but `context.json` exists. See 2.4. |
+
+When you load `map.json` or `meta.json`, do it with one Read — no further tiering. Do not pre-load "just in case."
+
+### 2.4 Back-compat fallback: monolithic `context.json`
+
+If `core.json` does not exist, check for `context.json` (older encoder output):
+
+```
+Read ~/.claude/encodings/[path-with-dashes]/context.json
 ```
 
-### 2.2 Constraints Query (CRITICAL - load all)
+If found, treat it as if core+map+meta had all been loaded (it is the union). Suggest to the user that `/project-encode` be re-run to generate the tiered files and reduce future activation cost.
+
+### 2.5 Last resort: query DB directly
+
+If neither `core.json` nor `context.json` exists, fall back to `projects.db`:
+
 ```bash
-sqlite3 ~/.claude/db/projects.db "SELECT type, content, severity FROM constraints WHERE project_id = '[project_id]' ORDER BY CASE severity WHEN 'absolute' THEN 1 WHEN 'strong' THEN 2 ELSE 3 END;"
+sqlite3 ${BRILLIANT_MINDS_ROOT}/db/projects.db "SELECT id, name, domain, sensitivity, description, purpose, stack FROM projects WHERE path = '[cwd]';"
 ```
 
-### 2.3 Navigation Query
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT category, path, description, importance FROM navigation WHERE project_id = '[project_id]' ORDER BY importance DESC;"
-```
-
-### 2.4 Verification Query
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT question, expected_answer FROM verification WHERE project_id = '[project_id]';"
-```
-
-### 2.5 Commands Query
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT name, command, category FROM commands WHERE project_id = '[project_id]';"
-```
-
-### 2.6 Conventions Query
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT category, pattern FROM conventions WHERE project_id = '[project_id]';"
-```
-
-### 2.7 Glossary Query (for domain awareness)
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT term, definition FROM glossary WHERE project_id = '[project_id]';"
-```
-
-### 2.8 Integrations Query
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT name, type, description FROM integrations WHERE project_id = '[project_id]';"
-```
-
-### 2.9 Personas Query
-```bash
-sqlite3 ~/.claude/db/projects.db "SELECT name, description, goals, pain_points FROM personas WHERE project_id = '[project_id]';"
-```
-
-### 2.10 Exploration Cache Query (CRITICAL for routing)
-```bash
-# Get cached exploration data and check staleness
-CURRENT_HASH=$(git rev-parse HEAD 2>/dev/null)
-sqlite3 ~/.claude/db/projects.db "SELECT git_hash, total_loc, file_count, module_status, notable_findings, implementation_blockers FROM exploration_cache WHERE project_id = '[project_id]';"
-```
-
-If `git_hash` matches current HEAD, the cache is fresh. If not, note it's stale but still use the data.
+Then suggest running `/project-encode` to generate the tiered files for future sessions.
 
 ## Phase 3: Handle Missing Project
 
@@ -119,12 +124,9 @@ For strong constraints:
 For preferences:
 - Follow unless there's good reason not to
 
-### 4.2 Build Navigation Awareness
+### 4.2 Navigation Awareness (deferred to map.json)
 
-Know where key files are:
-- When asked about safety-critical code, go to those files first
-- When asked about configuration, check config locations
-- When debugging, know where tests live
+Navigation is not in `core.json`. When a turn needs to know where files live (safety-critical code, config, tests, etc.), load `map.json` then consult its `navigation` entries. The constraints loaded from `core.json` are still enough to refuse prohibited requests without knowing file locations.
 
 ### 4.3 Absorb Stack Context
 
@@ -133,18 +135,38 @@ Understand the technical environment:
 - What patterns are expected
 - What tools are available
 
-### 4.4 Load Codebase State (from exploration_cache)
+### 4.4 Codebase State (deferred to map.json)
 
-If exploration cache exists, internalize:
-- **Size**: total_loc and file_count (you know the codebase scale)
+Do NOT load `exploration` at activation. It lives in `map.json` and is loaded lazily.
+
+When a turn asks about codebase structure/contents and you haven't yet loaded `map.json`, Read it now — in the same parallel message as any other tool calls the turn requires. Once loaded, internalize:
+- **Size**: total_loc and file_count
 - **Module status**: which modules are complete vs. WIP
-- **Notable findings**: interesting patterns, hidden gems already discovered
+- **Notable findings**: interesting patterns already discovered
 - **Blockers**: known implementation issues
 
-This cached state means you DON'T need to re-explore the codebase. You already know:
-- What's implemented
-- What's blocking progress
-- Where the interesting code is
+If the activation-time staleness check showed a git_hash mismatch, treat `exploration` as suspect when loaded — it may describe a prior code state. Targeted Reads will be more reliable than cached notable_findings in that case.
+
+### 4.5 Archetype facets (archetype-conditional)
+
+`core.json` and `map.json` may include archetype-specific fields in addition to the universal sections. Treat these as first-class context — they usually carry the highest-signal information for the project type.
+
+| Field (top-level key) | Lives in | Archetypes that populate it |
+|---|---|---|
+| `api_surface`, `version_policy` | core.json | library |
+| `reproducibility` | core.json | research |
+| `managed_resources`, `blast_radius` | core.json | infrastructure |
+| `output_conventions` | core.json | tool |
+| `user_flows`, `ui_surfaces` | map.json | application |
+| `endpoints`, `observability`, `deploy_targets` | map.json | service |
+| `experiments`, `datasets` | map.json | research |
+| `environments` | map.json | infrastructure |
+| `cli_surface` | map.json | tool |
+
+Rules:
+- If present, consult the relevant facet **before** inferring from code. `api_surface` answers "is this function public?" more reliably than reading imports.
+- `blast_radius` on infrastructure projects is safety-grade context — treat it like a constraint when suggesting changes.
+- Absence of a facet for an archetype that lists it means the encoder could not extract it, not that it is empty. Fall back to reading the archetype-typical signal files directly.
 
 ## Phase 5: Activation Confirmation
 
@@ -154,53 +176,68 @@ After loading, confirm activation:
 ╭─────────────────────────────────────────────────────────────╮
 │  APP-AGENT ACTIVATED                                        │
 │                                                             │
-│  Project: [name]                                            │
-│  Domain:  [domain]                                          │
+│  Project:     [name]                                        │
+│  Archetype:   [application|library|service|research|        │
+│                infrastructure|tool]                         │
+│  Domain:      [domain]                                      │
 │  Sensitivity: [sensitivity]                                 │
 ╰─────────────────────────────────────────────────────────────╯
+
+Loaded from core.json ([size] KB):
+  identity, archetype, stack, constraints, commands, agent
+
+Deferred (loaded on demand):
+  map.json  — navigation, glossary, integrations, exploration
+  meta.json — conventions, personas, verification
+
+Archetype-aware defaults (use as a soft bias, never to override constraints):
+  application    → prioritize user-visible behavior, UI flows, state correctness
+  library        → prioritize API stability, public-surface backward compat, types
+  service        → prioritize uptime, error handling, observability, graceful deploy
+  research       → prioritize reproducibility, experiment tracking, result clarity
+  infrastructure → prioritize idempotency, rollback, blast-radius containment
+  tool           → prioritize CLI ergonomics, help text, exit codes, scriptability
 
 Active Constraints:
 • [constraint 1 - abbreviated]
 • [constraint 2 - abbreviated]
 • ...
 
-Key Locations I'm Aware Of:
-• [category]: [path]
-• ...
+Stack: [layer]: [tech], [layer]: [tech], ...
+[If git_hash mismatch: "⚠️ Encoding is from a prior commit — exploration cache may be stale when loaded"]
 
-Codebase State (from cache): [if exploration_cache exists]
-• Size: [total_loc] LOC across [file_count] files
-• Status: [module_status summary - e.g., "frontend ✅, backend ⚠️"]
-• Blockers: [implementation_blockers summary]
-• Notable: [1-2 key findings]
-[If cache is stale: "⚠️ Cache stale - code has changed since last exploration"]
-[If no cache: "No exploration cache - will explore on first structure question"]
-
-I'm now operating with full project context. How can I help?
+I'm now operating with project core loaded. Map and meta will load when a turn needs them. How can I help?
 ```
 
 ## Phase 6: Ongoing Operation
 
 While active as app-agent:
 
-### Routing Decisions (use cached exploration)
+### Routing Decisions (lazy map/meta load, cached exploration)
 
 **When user asks about codebase structure/contents:**
-- If exploration_cache exists and is fresh: USE IT. Do NOT spawn Explore agent.
-- Answer from cached `module_status`, `notable_findings`, `total_loc`
-- Only do targeted reads of specific files if needed
+- If `map.json` is not yet loaded this session, Read it now.
+- Use its `exploration` (module_status, notable_findings, total_loc) and `navigation`. Do NOT spawn Explore agent.
+- Only do targeted reads of specific files if the cache does not answer the question.
 
 **When to use Explore agent:**
-- No exploration_cache exists
+- `map.json` does not exist (old encoding or none)
 - Cache is stale (git hash mismatch) AND user specifically asks for fresh data
-- User explicitly requests deep exploration of something NOT in cache
+- User explicitly requests deep exploration of something NOT in the cache
 
 **When to do targeted reads instead of exploration:**
 - You need contents of 1-3 specific files
 - You're looking for a specific function/class
-- Cache tells you WHERE something is, you just need the code
+- `navigation` tells you WHERE something is, you just need the code
 
-**NEVER re-explore what you already know.** The exploration_cache exists precisely to avoid redundant work.
+**When to load meta.json:**
+- User asks about coding conventions, style patterns, or naming rules
+- User asks who the target users/personas are
+- Something else explicitly requires verification questions, personas, or conventions
+
+Do not load `meta.json` speculatively. Most sessions never need it.
+
+**NEVER re-explore what you already know.** The tiered cache exists precisely to avoid redundant work. When you do load a tier, batch it in parallel with any other tool calls the turn requires.
 
 ### Before ANY code suggestion:
 - Check if it violates absolute constraints
@@ -235,7 +272,7 @@ If the project has a source_hash, you can check if source files have changed:
 
 ```bash
 # Get stored hash
-sqlite3 ~/.claude/db/projects.db "SELECT source_hash, source_files FROM projects WHERE path = '[cwd]';"
+sqlite3 ${BRILLIANT_MINDS_ROOT}/db/projects.db "SELECT source_hash, source_files FROM projects WHERE path = '[cwd]';"
 
 # Compare with current files
 # If different, suggest re-encoding
@@ -256,10 +293,10 @@ Proceeding with cached context...
 ### Identity Databases Awareness
 
 When operating as app-agent, you have awareness of:
-- `~/.claude/db/projects.db` - Project encodings (you are here)
-- `~/.claude/db/agents.db` - Functional agents
-- `/Users/joshkornreich/benchmarks/Work/brilliant_minds/` - Historical identities
-- `/Users/joshkornreich/.agents/` - Role-based agents
+- `${BRILLIANT_MINDS_ROOT}/db/projects.db` - Project encodings (you are here)
+- `${BRILLIANT_MINDS_ROOT}/db/agents.db` - Functional agents
+- `${BRILLIANT_MINDS_ROOT}/` - Historical identities
+- `~/.agents/` - Role-based agents
 
 You can reference or invoke these as needed.
 

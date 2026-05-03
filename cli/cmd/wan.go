@@ -74,6 +74,15 @@ func init() {
 			return runWanTUI()
 		},
 	})
+
+	// Stop ComfyUI render engine
+	wanCmd.AddCommand(&cobra.Command{
+		Use:   "stop",
+		Short: "Stop the ComfyUI render engine and clean up screen sessions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return stopComfyUIServer()
+		},
+	})
 }
 
 // extractWanScript writes the embedded wan.py to ~/.anime/wan-pipeline/wan.py

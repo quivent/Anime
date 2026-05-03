@@ -266,7 +266,7 @@ If no: you cut too much. Signal was lost.
 MISSION: Review and fix socratic-tuner code quality issues
 
 PROJECT:
-  Path: ~/socratic-tuner
+  Path: ${BRILLIANT_MINDS_ROOT}
   Type: Rust (Tauri) + Svelte
   Key Files:
     - src-tauri/src/commands/mod.rs (1640 lines - SPLIT)
@@ -322,7 +322,7 @@ USER CONTEXT:
 
 ═══════════════════════════════════════════════════════════════
 
-RESUMPTION: Run /linus-doc-consolidate ~/socratic-tuner
+RESUMPTION: Run /linus-doc-consolidate ${BRILLIANT_MINDS_ROOT}
 
 ╚══════════════════════════════════════════════════════════════╝
 ```

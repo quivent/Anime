@@ -12,15 +12,15 @@ Load simultaneously:
 
 **Project Context:**
 ```bash
-sqlite3 ~/.claude/db/projects.db "SELECT id, name, domain, sensitivity, description, purpose, stack FROM projects WHERE path = '$(pwd)';"
-sqlite3 ~/.claude/db/projects.db "SELECT type, content, severity FROM constraints WHERE project_id = '[project_id]' ORDER BY severity;"
-sqlite3 ~/.claude/db/projects.db "SELECT category, path, description FROM navigation WHERE project_id = '[project_id]';"
-sqlite3 ~/.claude/db/projects.db "SELECT git_hash, total_loc, module_status, notable_findings FROM exploration_cache WHERE project_id = '[project_id]';"
+sqlite3 ${BRILLIANT_MINDS_ROOT}/db/projects.db "SELECT id, name, domain, sensitivity, description, purpose, stack FROM projects WHERE path = '$(pwd)';"
+sqlite3 ${BRILLIANT_MINDS_ROOT}/db/projects.db "SELECT type, content, severity FROM constraints WHERE project_id = '[project_id]' ORDER BY severity;"
+sqlite3 ${BRILLIANT_MINDS_ROOT}/db/projects.db "SELECT category, path, description FROM navigation WHERE project_id = '[project_id]';"
+sqlite3 ${BRILLIANT_MINDS_ROOT}/db/projects.db "SELECT git_hash, total_loc, module_status, notable_findings FROM exploration_cache WHERE project_id = '[project_id]';"
 ```
 
 **Shannon Identity:**
-- `/Users/joshkornreich/benchmarks/Work/brilliant_minds/claude_shannon/IDENTITY.md`
-- `/Users/joshkornreich/benchmarks/Work/brilliant_minds/claude_shannon/research_philosophy.md`
+- `${BRILLIANT_MINDS_ROOT}/minds/claude_shannon/IDENTITY.md`
+- `${BRILLIANT_MINDS_ROOT}/minds/claude_shannon/research_philosophy.md`
 
 ### Step 2: Activate Composed Identity
 

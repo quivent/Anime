@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -104,6 +106,7 @@ const (
 	scrDetail
 	scrPrompt
 	scrPending
+	scrSystem
 )
 
 type wanTUIModel struct {
@@ -118,13 +121,19 @@ type wanTUIModel struct {
 	flash      string // transient status line shown above hints, cleared on next nav
 	preset     string // active preset for the next render (cycled with 'p' / tab)
 	gpuLabel   string // cached host blurb for the status bar (e.g. "GH200 · 95GB")
+
+	// system management tab
+	sysPhases  []sysPhaseLine // cached phase status for system view
+	sysCursor  int            // cursor position in system view
+	sysAction  string         // "reset", "fix", or "" — pending action feedback
 }
 
 const (
-	hintsList    = "↑/↓ select · enter detail · n new · p preset · v vary · r resume · 1-5 rate · / filter · q quit"
+	hintsList    = "↑/↓ select · enter detail · n new · p preset · v vary · r resume · 1-5 rate · / filter · tab system · q quit"
 	hintsDetail  = "v vary · r resume · esc back · q quit"
 	hintsPrompt  = "enter submit · tab cycle preset · esc cancel"
 	hintsPending = "(detached — ctrl+c to leave; the render keeps going in ComfyUI)"
+	hintsSystem  = "↑/↓ select · r reset phase · f fix phase · R reset all · P purge · tab renders · q quit"
 )
 
 // cyclePreset returns the next preset in wanTUIPresets after `current`. Used
@@ -258,6 +267,11 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "p":
 				m.preset = cyclePreset(m.preset)
 				m.flash = wanAccentStyle.Render("preset → ") + m.preset
+			case "tab":
+				m.scr = scrSystem
+				m.sysCursor = 0
+				m.sysAction = ""
+				cmds = append(cmds, refreshSysPhases())
 			case "ctrl+r":
 				cmds = append(cmds, refreshList())
 			}
@@ -310,6 +324,57 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case scrPending:
 			// only quit handled above
+
+		case scrSystem:
+			switch msg.String() {
+			case "tab":
+				m.scr = scrList
+				m.sysAction = ""
+			case "up", "k":
+				if m.sysCursor > 0 {
+					m.sysCursor--
+				}
+			case "down", "j":
+				if m.sysCursor < len(m.sysPhases)-1 {
+					m.sysCursor++
+				}
+			case "r":
+				// Reset selected phase
+				if m.sysCursor < len(m.sysPhases) {
+					ph := m.sysPhases[m.sysCursor]
+					if ph.id == "server" {
+						m.sysAction = wanWarnStyle.Render("  stopping server...")
+						cmds = append(cmds, func() tea.Msg {
+							stopComfyScreenSession()
+							return sysActionDoneMsg{summary: wanGoodStyle.Render("  ✓ server stopped")}
+						})
+					} else if ph.installed {
+						m.sysAction = wanWarnStyle.Render(fmt.Sprintf("  resetting %s...", ph.name))
+						cmds = append(cmds, doSysReset(ph.id))
+					} else {
+						m.sysAction = wanDimStyle.Render(fmt.Sprintf("  %s not installed — nothing to reset", ph.name))
+					}
+				}
+			case "f":
+				// Fix selected phase
+				if m.sysCursor < len(m.sysPhases) {
+					ph := m.sysPhases[m.sysCursor]
+					if ph.id != "server" && !ph.installed {
+						m.sysAction = wanAccentStyle.Render(fmt.Sprintf("  fixing %s...", ph.name))
+						cmds = append(cmds, doSysFix(ph.id))
+					} else if ph.installed {
+						m.sysAction = wanDimStyle.Render(fmt.Sprintf("  %s is healthy — nothing to fix", ph.name))
+					}
+				}
+			case "R":
+				m.sysAction = wanWarnStyle.Render("  resetting all phases...")
+				cmds = append(cmds, doSysResetAll())
+			case "P":
+				m.sysAction = wanBadStyle.Render("  purging entire Wan stack...")
+				cmds = append(cmds, doSysPurge())
+			case "ctrl+r":
+				cmds = append(cmds, refreshSysPhases())
+			}
 		}
 
 	case wanCmdDoneMsg:
@@ -329,6 +394,13 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+	case sysRefreshDoneMsg:
+		m.sysPhases = msg.phases
+
+	case sysActionDoneMsg:
+		m.sysAction = msg.summary
+		cmds = append(cmds, refreshSysPhases())
 	}
 
 	if m.scr == scrList {
@@ -421,6 +493,9 @@ func (m *wanTUIModel) View() string {
 			wanDimStyle.Render(hintsPrompt),
 		}, "\n"))
 		return body
+
+	case scrSystem:
+		return viewSystemTab(m)
 
 	case scrPending:
 		body := wanBorder.Render(strings.Join([]string{
@@ -539,6 +614,219 @@ func atoiSafe(s string) int {
 	return n
 }
 
+
+// ─── system management view ───
+
+type sysPhaseLine struct {
+	id        string
+	name      string
+	installed bool
+	detail    string
+	size      string
+}
+
+func loadSysPhases() []sysPhaseLine {
+	home, _ := os.UserHomeDir()
+	j := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
+
+	level := detectInstalledLevel()
+	phases := wanStudioPhases(level)
+
+	var out []sysPhaseLine
+	for _, ph := range phases {
+		if ph.id == "" {
+			// Include server status too
+			ok, detail := ph.check()
+			out = append(out, sysPhaseLine{
+				id:        "server",
+				name:      ph.name,
+				installed: ok,
+				detail:    detail,
+			})
+			continue
+		}
+		ok, detail := ph.check()
+		line := sysPhaseLine{
+			id:        ph.id,
+			name:      ph.name,
+			installed: ok,
+			detail:    detail,
+		}
+		// Get sizes for key dirs
+		switch ph.id {
+		case "comfyui":
+			line.size = dirSize(j("ComfyUI"))
+		case "wanmodels":
+			// Sum model dirs
+			for _, d := range []string{"diffusion_models", "text_encoders", "vae", "loras"} {
+				p := j("ComfyUI", "models", d)
+				if s := dirSize(p); s != "" {
+					line.size = s // just show last non-empty
+				}
+			}
+		case "comfort":
+			line.size = dirSize(j("Comfort"))
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+type sysRefreshDoneMsg struct{ phases []sysPhaseLine }
+type sysActionDoneMsg struct{ summary string }
+
+func refreshSysPhases() tea.Cmd {
+	return func() tea.Msg {
+		return sysRefreshDoneMsg{phases: loadSysPhases()}
+	}
+}
+
+func viewSystemTab(m *wanTUIModel) string {
+	var s strings.Builder
+
+	s.WriteString(wanTitleStyle.Render("wan-pipeline · system"))
+	s.WriteString("\n\n")
+
+	// Tab bar
+	renderTab := wanDimStyle.Render(" renders ")
+	systemTab := wanAccentStyle.Render("│ system │")
+	s.WriteString("  " + renderTab + "  " + systemTab)
+	s.WriteString("\n\n")
+
+	if len(m.sysPhases) == 0 {
+		s.WriteString(wanDimStyle.Render("  Loading..."))
+		s.WriteString("\n")
+	} else {
+		for i, ph := range m.sysPhases {
+			cursor := "  "
+			if i == m.sysCursor {
+				cursor = wanAccentStyle.Render("▸ ")
+			}
+
+			var icon string
+			if ph.installed {
+				icon = wanGoodStyle.Render("✓")
+			} else {
+				icon = wanWarnStyle.Render("✗")
+			}
+
+			name := fmt.Sprintf("%-32s", ph.name)
+			if i == m.sysCursor {
+				name = wanAccentStyle.Render(name)
+			} else {
+				name = wanDimStyle.Render(name)
+			}
+
+			detail := wanDimStyle.Render(ph.detail)
+			sizeHint := ""
+			if ph.size != "" {
+				sizeHint = wanDimStyle.Render(" (" + ph.size + ")")
+			}
+
+			s.WriteString(fmt.Sprintf("%s%s %s  %s%s\n", cursor, icon, name, detail, sizeHint))
+		}
+	}
+
+	// Flash / action feedback
+	if m.sysAction != "" {
+		s.WriteString("\n")
+		s.WriteString("  " + m.sysAction)
+		s.WriteString("\n")
+	}
+
+	// Status bar
+	s.WriteString("\n")
+	statusBar := wanDimStyle.Render("│ ") +
+		wanAccentStyle.Render("gpu ") + wanDimStyle.Render(m.gpuLabel) +
+		wanDimStyle.Render("  │  ") +
+		wanAccentStyle.Render("level ") + wanGoodStyle.Render(detectInstalledLevel())
+	s.WriteString(statusBar)
+	s.WriteString("\n")
+	s.WriteString(wanDimStyle.Render(hintsSystem))
+
+	return s.String()
+}
+
+// ─── system management commands ───
+
+func doSysReset(phaseID string) tea.Cmd {
+	return func() tea.Msg {
+		home, _ := os.UserHomeDir()
+		phases := wanResetPhases()
+		for _, ph := range phases {
+			if ph.id == phaseID {
+				if ph.pre != nil {
+					ph.pre()
+				}
+				for _, p := range ph.paths(home) {
+					os.RemoveAll(p)
+				}
+				saveWanSnapshot([]wanResetPhase{ph}, home)
+				return sysActionDoneMsg{summary: wanGoodStyle.Render(fmt.Sprintf("  ✓ %s reset", ph.name))}
+			}
+		}
+		return sysActionDoneMsg{summary: wanBadStyle.Render("  ✗ phase not found")}
+	}
+}
+
+func doSysFix(phaseID string) tea.Cmd {
+	return func() tea.Msg {
+		level := detectInstalledLevel()
+		phases := wanStudioPhases(level)
+		for _, ph := range phases {
+			if ph.id == phaseID {
+				os.Setenv("WAN_INSTALL_LEVEL", level)
+				var err error
+				if ph.custom != nil {
+					err = ph.custom(&setupOpts{yes: true, installLevel: level})
+				} else {
+					err = runInstallScript(ph.id)
+				}
+				if err != nil {
+					return sysActionDoneMsg{summary: wanBadStyle.Render(fmt.Sprintf("  ✗ fix failed: %v", err))}
+				}
+				saveWanInstallSnapshot(ph.id, ph.name, nil)
+				return sysActionDoneMsg{summary: wanGoodStyle.Render(fmt.Sprintf("  ✓ %s fixed", ph.name))}
+			}
+		}
+		return sysActionDoneMsg{summary: wanBadStyle.Render("  ✗ phase not found")}
+	}
+}
+
+func doSysResetAll() tea.Cmd {
+	return func() tea.Msg {
+		home, _ := os.UserHomeDir()
+		phases := wanResetPhases()
+		stopComfyScreenSession()
+		for _, ph := range phases {
+			for _, p := range ph.paths(home) {
+				os.RemoveAll(p)
+			}
+		}
+		saveWanSnapshot(phases, home)
+		return sysActionDoneMsg{summary: wanGoodStyle.Render("  ✓ all phases reset")}
+	}
+}
+
+func doSysPurge() tea.Cmd {
+	return func() tea.Msg {
+		home, _ := os.UserHomeDir()
+		stopComfyScreenSession()
+		targets := []string{
+			filepath.Join(home, "ComfyUI"),
+			filepath.Join(home, "Comfort"),
+			filepath.Join(home, ".anime", "comfyui.log"),
+			filepath.Join(home, ".anime", "wan-pipeline.db"),
+			filepath.Join(home, ".anime", "wan-snapshots.json"),
+			filepath.Join(home, ".anime", "comfort-path"),
+		}
+		for _, t := range targets {
+			os.RemoveAll(t)
+		}
+		saveWanSnapshot(wanResetPhases(), home)
+		return sysActionDoneMsg{summary: wanGoodStyle.Render("  ✓ purge complete — system clean")}
+	}
+}
 
 // ─── entrypoint ───
 

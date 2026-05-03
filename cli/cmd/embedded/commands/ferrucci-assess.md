@@ -52,7 +52,7 @@ Prompt: |
   Inventory all available research artifacts:
 
   Locations to check:
-  - ~/socratic-tuner/
+  - ${BRILLIANT_MINDS_ROOT}/
   - ~/Lexar/eigen/
   - ~/mlx-fork/
 

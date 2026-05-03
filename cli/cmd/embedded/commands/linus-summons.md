@@ -28,7 +28,7 @@ who actually knows this stuff.
 
 **Step 2: Invoke the Mind**
 
-Read the identity file from `~/benchmarks/Work/brilliant_minds/[name]/IDENTITY.md` if it exists.
+Read the identity file from `${BRILLIANT_MINDS_ROOT}/minds/[name]/IDENTITY.md` if it exists.
 
 If not, use the built-in profiles below.
 

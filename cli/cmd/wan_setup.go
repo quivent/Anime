@@ -300,6 +300,12 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 		if ok, detail := ph.check(); !ok {
 			return fmt.Errorf("phase %q completed but check still fails: %s", ph.name, detail)
 		}
+
+		// Record successful install for rollback/audit.
+		if ph.id != "" {
+			saveWanInstallSnapshot(ph.id, ph.name, nil)
+		}
+
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "  %s %s  %s\n", theme.SymbolSuccess,
 			theme.HighlightStyle.Render(fmt.Sprintf("%-32s", ph.name)),

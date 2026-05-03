@@ -123,9 +123,10 @@ type wanTUIModel struct {
 	gpuLabel   string // cached host blurb for the status bar (e.g. "GH200 · 95GB")
 
 	// system management tab
-	sysPhases  []sysPhaseLine // cached phase status for system view
-	sysCursor  int            // cursor position in system view
-	sysAction  string         // "reset", "fix", or "" — pending action feedback
+	sysPhases   []sysPhaseLine // cached phase status for system view
+	sysCursor   int            // cursor position in system view
+	sysAction   string         // "reset", "fix", or "" — pending action feedback
+	sysConfirm  string         // pending destructive action awaiting second keypress
 }
 
 const (
@@ -326,6 +327,10 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// only quit handled above
 
 		case scrSystem:
+			// Clear pending confirm on any key that isn't the confirm key
+			if msg.String() != "R" && msg.String() != "P" {
+				m.sysConfirm = ""
+			}
 			switch msg.String() {
 			case "tab":
 				m.scr = scrList
@@ -367,11 +372,23 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "R":
-				m.sysAction = wanWarnStyle.Render("  resetting all phases...")
-				cmds = append(cmds, doSysResetAll())
+				if m.sysConfirm == "R" {
+					m.sysConfirm = ""
+					m.sysAction = wanWarnStyle.Render("  resetting all phases...")
+					cmds = append(cmds, doSysResetAll())
+				} else {
+					m.sysConfirm = "R"
+					m.sysAction = wanWarnStyle.Render("  press R again to confirm reset ALL phases")
+				}
 			case "P":
-				m.sysAction = wanBadStyle.Render("  purging entire Wan stack...")
-				cmds = append(cmds, doSysPurge())
+				if m.sysConfirm == "P" {
+					m.sysConfirm = ""
+					m.sysAction = wanBadStyle.Render("  purging entire Wan stack...")
+					cmds = append(cmds, doSysPurge())
+				} else {
+					m.sysConfirm = "P"
+					m.sysAction = wanBadStyle.Render("  press P again to confirm PURGE (deletes everything)")
+				}
 			case "ctrl+r":
 				cmds = append(cmds, refreshSysPhases())
 			}

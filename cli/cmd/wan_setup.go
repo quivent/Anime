@@ -73,12 +73,23 @@ func modelsRequiredForLevel(level string) []struct{ rel, label string } {
 			[2]string{"models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "umt5_xxl encoder"},
 			[2]string{"models/vae/wan_2.1_vae.safetensors", "wan 2.1 VAE"},
 		)
-	default: // "full"
+	default: // "full" — strict superset of standard + minimal
 		return mk(
+			// T2V 14B dual-expert
 			[2]string{"models/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "14B T2V high-noise"},
 			[2]string{"models/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors", "14B T2V low-noise"},
+			// I2V 14B dual-expert
+			[2]string{"models/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", "14B I2V high-noise"},
+			[2]string{"models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors", "14B I2V low-noise"},
+			// 5B TI2V
+			[2]string{"models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "5B TI2V"},
+			// 4-step LoRAs
+			[2]string{"models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "4-step high-noise LoRA"},
+			[2]string{"models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors", "4-step low-noise LoRA"},
+			// Shared
 			[2]string{"models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "umt5_xxl encoder"},
 			[2]string{"models/vae/wan_2.1_vae.safetensors", "wan 2.1 VAE"},
+			[2]string{"models/vae/wan2.2_vae.safetensors", "wan 2.2 VAE"},
 		)
 	}
 }
@@ -207,6 +218,19 @@ except ImportError as e:
 				return fileExists(join("Comfort", "comfort-ui", "dist", "index.html"))
 			},
 			skipMsg: "dist/index.html present",
+		},
+		{
+			id:   "domain",
+			name: "Domain + SSL (comfort.producer.cafe)",
+			check: func() (bool, string) {
+				// The domain install script writes to sites-available/comfort
+				// and symlinks to sites-enabled/comfort
+				if exists("/etc/nginx/sites-enabled/comfort") {
+					return true, "https://comfort.producer.cafe"
+				}
+				return false, "not configured"
+			},
+			skipMsg: "https://comfort.producer.cafe",
 		},
 		{
 			id:   "", // not an installer phase

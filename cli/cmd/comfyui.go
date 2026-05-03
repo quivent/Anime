@@ -70,7 +70,7 @@ func runComfyUICommand(cmd *cobra.Command, args []string) error {
 }
 
 func startComfyUIServer() error {
-	fmt.Println(theme.InfoStyle.Render("🚀 Starting render engine (ComfyUI) in background..."))
+	fmt.Println(theme.InfoStyle.Render("🚀 Starting render engine in background..."))
 
 	// Pick the venv python (where torch cu130 + sageattention live) when it
 	// exists; fall back to system python3 only if the venv is missing — that
@@ -139,12 +139,7 @@ func startComfyUIServer() error {
 	fmt.Println()
 	fmt.Println()
 
-	publicIP := getPublicIPForComfyUI()
-	fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ Render engine reachable at http://%s:8188", publicIP)))
-	fmt.Println()
-	fmt.Println(theme.DimTextStyle.Render("View logs:    anime comfyui logs"))
-	fmt.Println(theme.DimTextStyle.Render("Check status: anime comfyui status"))
-	fmt.Println(theme.DimTextStyle.Render("Stop engine:  anime comfyui stop"))
+	fmt.Println(theme.SuccessStyle.Render("✓ Render engine started"))
 	fmt.Println()
 
 	return nil

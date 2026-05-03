@@ -87,7 +87,11 @@ func appendSnapshot(snap WanSnapshot) {
 
 	var log WanSnapshotLog
 	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &log)
+		if err := json.Unmarshal(data, &log); err != nil {
+			// Corrupt snapshot file — back it up and start fresh
+			os.Rename(path, path+".corrupt")
+			log = WanSnapshotLog{}
+		}
 	}
 
 	log.Snapshots = append(log.Snapshots, snap)

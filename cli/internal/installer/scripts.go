@@ -855,6 +855,11 @@ if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
     GO_ARCH="arm64"
 fi
 
+GO_OS="linux"
+if [ "$(uname -s)" = "Darwin" ]; then
+    GO_OS="darwin"
+fi
+
 # Skip if already installed and recent (1.23+)
 if command -v go &>/dev/null; then
     CUR=$(go version | sed 's/.*go1\.\([0-9]*\).*/\1/')
@@ -867,9 +872,9 @@ fi
 
 # Fetch latest stable
 GO_VERSION=$(curl -sL 'https://go.dev/VERSION?m=text' | head -1)
-echo "  → ${GO_VERSION} linux/${GO_ARCH}"
+echo "  → ${GO_VERSION} ${GO_OS}/${GO_ARCH}"
 
-curl -sLo /tmp/go.tar.gz "https://go.dev/dl/${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+curl -sLo /tmp/go.tar.gz "https://go.dev/dl/${GO_VERSION}.${GO_OS}-${GO_ARCH}.tar.gz"
 sudo rm -rf /usr/local/go
 sudo tar -C /usr/local -xzf /tmp/go.tar.gz
 rm -f /tmp/go.tar.gz
@@ -2339,13 +2344,15 @@ fi
 echo "    Public IP: $MY_IP"
 echo ""
 
-# Step 2: Verify Comfort is reachable on :3000
-echo "==> Checking Comfort on :3000..."
-if curl -s --max-time 5 http://127.0.0.1:3000 >/dev/null 2>&1; then
-    echo "    Comfort responding on :3000"
+# Step 2: Verify Comfort studio is reachable
+echo "==> Checking Comfort studio..."
+if curl -s --max-time 5 http://127.0.0.1:5180 >/dev/null 2>&1; then
+    echo "    Comfort responding on :5180"
+elif curl -s --max-time 5 http://127.0.0.1:5173 >/dev/null 2>&1; then
+    echo "    Comfort dev responding on :5173"
 else
-    echo "    WARNING: Comfort not responding on :3000"
-    echo "    DNS will point but SSL cert may fail without a running server"
+    echo "    WARNING: Comfort not responding on :5180 or :5173"
+    echo "    Start it first: anime wan studio --public --port 5180"
 fi
 echo ""
 
@@ -2376,14 +2383,21 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 $SUDO apt-get update -y -qq
 $SUDO apt-get install -y -qq nginx certbot python3-certbot-nginx
 
-echo "==> Configuring nginx reverse proxy for $DOMAIN → :3000..."
+echo "==> Configuring nginx reverse proxy for $DOMAIN → Comfort dev server..."
+
+# Detect Comfort dev port: Vite defaults to 5173, studio defaults to 5180
+COMFORT_PORT=5173
+if curl -s --max-time 2 http://127.0.0.1:5180 >/dev/null 2>&1; then
+    COMFORT_PORT=5180
+fi
+
 cat <<NGINX | $SUDO tee /etc/nginx/sites-available/comfort >/dev/null
 server {
     listen 80;
     server_name $DOMAIN;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:$COMFORT_PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -2391,6 +2405,8 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 }
 NGINX
@@ -2398,7 +2414,7 @@ NGINX
 $SUDO ln -sf /etc/nginx/sites-available/comfort /etc/nginx/sites-enabled/comfort
 $SUDO rm -f /etc/nginx/sites-enabled/default
 $SUDO nginx -t && $SUDO systemctl reload nginx
-echo "    nginx configured"
+echo "    nginx configured → :$COMFORT_PORT"
 
 echo "==> Requesting Let's Encrypt certificate..."
 $SUDO certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
@@ -2407,7 +2423,11 @@ echo "    SSL certificate issued"
 $SUDO systemctl enable certbot.timer 2>/dev/null || true
 
 echo ""
-echo "==> https://$DOMAIN is live"
+echo "============================================"
+echo ""
+echo "  https://$DOMAIN"
+echo ""
+echo "============================================"
 `,
 }
 

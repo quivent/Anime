@@ -233,8 +233,11 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "binding")),
 			theme.WarningStyle.Render("0.0.0.0 — reachable from outside the host"))
 	}
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "engine")), theme.PrimaryTextStyle.Render(upstream.String()+"  (ComfyUI)"))
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "ui dist")), theme.DimTextStyle.Render(dist))
+	// Show domain URL if nginx is configured
+	if exists("/etc/nginx/sites-enabled/comfort") {
+		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%-12s", "domain")),
+			theme.GlowStyle.Render("https://comfort.producer.cafe"))
+	}
 	fmt.Println()
 	fmt.Println(theme.DimTextStyle.Render("  Ctrl+C to stop the studio."))
 	fmt.Println()

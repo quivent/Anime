@@ -547,6 +547,26 @@ func createPackage(binaryPath, sourceDir string) (string, error) {
 		}
 	}
 
+	// Add Sixth binaries if ~/anime-sixth/bin/ exists
+	home, _ := os.UserHomeDir()
+	sixthBinDir := filepath.Join(home, "anime-sixth", "bin")
+	if entries, err := os.ReadDir(sixthBinDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() || strings.HasSuffix(entry.Name(), "-e1") {
+				continue // skip dirs and old e1 duplicates
+			}
+			binPath := filepath.Join(sixthBinDir, entry.Name())
+			destName := "anime-" + entry.Name() // anime-wan-check, anime-wan-stop, etc.
+			if entry.Name() == "main" {
+				continue // don't shadow the Go binary
+			}
+			if err := addFileToTar(tarWriter, binPath, destName); err != nil {
+				// Non-fatal: log and continue
+				fmt.Fprintf(os.Stderr, "warning: skipping sixth binary %s: %v\n", entry.Name(), err)
+			}
+		}
+	}
+
 	return tarPath, nil
 }
 
@@ -732,6 +752,9 @@ func extractOnServer(target string) error {
 		mkdir -p ~/.local/bin && \
 		mv -f /tmp/anime-extract/anime ~/.local/bin/anime && \
 		chmod +x ~/.local/bin/anime && \
+		for f in /tmp/anime-extract/anime-*; do \
+			[ -f "$f" ] && mv -f "$f" ~/.local/bin/ && chmod +x ~/.local/bin/"$(basename "$f")"; \
+		done && \
 		if [ -d /tmp/anime-extract/src ]; then \
 			mkdir -p ~/anime && \
 			rm -rf ~/anime/cli 2>/dev/null || true && \

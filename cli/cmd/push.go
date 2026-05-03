@@ -695,8 +695,8 @@ func addEmbeddedFilesToTar(tw *tar.Writer) error {
 }
 
 func rsyncToServer(localPath, target string) error {
-	// Rsync command - use compression and quiet mode for speed
-	args := []string{"-az", "--compress-level=9"}
+	// Rsync command - use compression and rate-limit to prevent connection kills
+	args := []string{"-az", "--compress-level=9", "--bwlimit=2500"}
 	if !pushFast {
 		args = append(args, "--progress")
 	}

@@ -7,7 +7,9 @@ package gh
 
 // EmbeddedToken is the GitHub personal access token embedded at compile time.
 // Empty string means "no token embedded — use other auth paths".
-const EmbeddedToken = ""
+// EmbeddedToken is set via ldflags at build time:
+//   -X github.com/joshkornreich/anime/internal/gh.EmbeddedToken=ghp_...
+var EmbeddedToken = ""
 
 // GetToken returns the embedded GitHub token (may be empty).
 func GetToken() string {

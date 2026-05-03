@@ -2031,9 +2031,12 @@ mkdir -p "$MODELS/diffusion_models" "$MODELS/text_encoders" "$MODELS/vae" "$MODE
 "$VENV/bin/pip" show hf_transfer >/dev/null 2>&1 || "$VENV/bin/pip" install -q hf_transfer
 
 export HF_HUB_ENABLE_HF_TRANSFER=1
-# Pass HF_TOKEN through if we have one. The Comfy-Org Wan repos are
-# currently public, but having auth available is safer (rate limits,
-# future gating, mirror flakiness).
+# Pass HF_TOKEN through if we have one (embedded or env). Auth avoids
+# rate limits and makes downloads more reliable.
+if [ -z "${HF_TOKEN:-}" ] && command -v anime >/dev/null 2>&1; then
+    EMBEDDED_HF=$(anime embed token list 2>/dev/null | grep -i 'hf:' | awk '{print $2}' || true)
+    [ -n "$EMBEDDED_HF" ] && export HF_TOKEN="$EMBEDDED_HF"
+fi
 export HF_TOKEN="${HF_TOKEN:-}"
 
 # Each (repo, file_in_repo, dest_subdir, levels) — flatten to dest_subdir/<basename>.
@@ -2148,26 +2151,14 @@ fi
 
 echo ""
 
-# Start Comfort UI if installed
+# Verify Comfort is running
 COMFORT_UI="$HOME/Comfort/comfort-ui"
 if [ -d "$COMFORT_UI/dist" ]; then
-    echo "==> Starting Comfort studio..."
     if screen -list 2>/dev/null | grep -q comfort; then
-        echo "    Comfort already running"
+        echo "==> Comfort running on :3000"
     else
+        echo "==> Starting Comfort on :3000..."
         screen -dmS comfort bash -c "cd $COMFORT_UI && npx serve dist -l 3000"
-        echo "    Comfort started on :3000 (screen -r comfort to attach)"
-    fi
-    echo ""
-    echo "==> Comfort → http://localhost:3000"
-
-    # Auto-point comfort.producer.cafe if anime dns is available
-    if command -v anime >/dev/null 2>&1; then
-        MY_IP=$(curl -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
-        if [ -n "$MY_IP" ]; then
-            echo "==> Pointing comfort.producer.cafe → $MY_IP"
-            anime dns point comfort.producer.cafe "$MY_IP" --ssl 2>&1 | sed 's/^/    /' || echo "    DNS/SSL setup skipped (run manually: anime dns point comfort.producer.cafe $MY_IP --ssl)"
-        fi
     fi
 else
     echo "==> Comfort not found — run: anime install comfort"
@@ -2324,20 +2315,99 @@ if screen -list 2>/dev/null | grep -q comfort; then
 fi
 screen -dmS comfort bash -c "cd $UI && npx serve dist -l 3000"
 echo "    Comfort running on :3000 (screen -r comfort)"
+`,
+
+	"domain": `#!/bin/bash
+set -euo pipefail
+
+DOMAIN="comfort.producer.cafe"
+
+echo "==> Domain + SSL setup for $DOMAIN"
 echo ""
 
-# Auto-point comfort.producer.cafe → this server
-if command -v anime >/dev/null 2>&1; then
-    MY_IP=$(curl -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
-    if [ -n "$MY_IP" ]; then
-        echo "==> Pointing comfort.producer.cafe → $MY_IP + SSL..."
-        anime dns point comfort.producer.cafe "$MY_IP" --ssl 2>&1 | sed 's/^/    /' || echo "    DNS/SSL deferred (run: anime dns point comfort.producer.cafe $MY_IP --ssl)"
-    fi
+# Step 1: Detect public IP
+echo "==> Detecting public IP..."
+MY_IP=$(curl -s --max-time 10 ifconfig.me || true)
+if [ -z "$MY_IP" ]; then
+    MY_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+fi
+if [ -z "$MY_IP" ]; then
+    echo "ERROR: could not detect public IP"
+    echo "  Run manually: anime dns point $DOMAIN <your-ip> --ssl"
+    exit 1
+fi
+echo "    Public IP: $MY_IP"
+echo ""
+
+# Step 2: Verify Comfort is reachable on :3000
+echo "==> Checking Comfort on :3000..."
+if curl -s --max-time 5 http://127.0.0.1:3000 >/dev/null 2>&1; then
+    echo "    Comfort responding on :3000"
 else
-    echo "    DNS: run 'anime dns point comfort.producer.cafe <IP> --ssl' after install"
+    echo "    WARNING: Comfort not responding on :3000"
+    echo "    DNS will point but SSL cert may fail without a running server"
 fi
 echo ""
-echo "==> https://comfort.producer.cafe"
+
+# Step 3: Check dns config exists
+echo "==> Checking DNS credentials..."
+if [ ! -f "$HOME/.dns-config.json" ]; then
+    echo "ERROR: ~/.dns-config.json not found"
+    echo ""
+    echo "  Create it with your Vercel API token:"
+    echo "    echo '{\"token\": \"your-vercel-token\", \"teamId\": \"your-team-id\"}' > ~/.dns-config.json"
+    echo ""
+    echo "  Get a token at: https://vercel.com/account/tokens"
+    echo "  Then retry: anime install domain"
+    exit 1
+fi
+echo "    Credentials found"
+echo ""
+
+# Step 4: Point DNS (no SSL yet)
+echo "==> Pointing $DOMAIN → $MY_IP..."
+echo ""
+anime dns point "$DOMAIN" "$MY_IP"
+echo ""
+
+# Step 5: Install nginx + certbot locally (we're already on the server)
+echo "==> Installing nginx + certbot..."
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+$SUDO apt-get update -y -qq
+$SUDO apt-get install -y -qq nginx certbot python3-certbot-nginx
+
+echo "==> Configuring nginx reverse proxy for $DOMAIN → :3000..."
+cat <<NGINX | $SUDO tee /etc/nginx/sites-available/comfort >/dev/null
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINX
+
+$SUDO ln -sf /etc/nginx/sites-available/comfort /etc/nginx/sites-enabled/comfort
+$SUDO rm -f /etc/nginx/sites-enabled/default
+$SUDO nginx -t && $SUDO systemctl reload nginx
+echo "    nginx configured"
+
+echo "==> Requesting Let's Encrypt certificate..."
+$SUDO certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
+echo "    SSL certificate issued"
+
+$SUDO systemctl enable certbot.timer 2>/dev/null || true
+
+echo ""
+echo "==> https://$DOMAIN is live"
 `,
 }
 

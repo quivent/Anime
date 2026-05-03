@@ -56,3 +56,5 @@ internal/ssh/keys/
 *_internal.pub
 id_*
 *.key
+.tokens
+.tokens.mk

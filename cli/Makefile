@@ -96,11 +96,24 @@ pull-claude:
 		echo "  No ~/.claude/commands directory found"; \
 	fi
 
+# Read tokens from .tokens file (never committed)
+-include .tokens.mk
+.tokens.mk: .tokens
+	@test -f .tokens && awk -F= '/^[A-Z]/{printf "%s=%s\n", $$1, $$2}' .tokens > .tokens.mk 2>/dev/null || true
+
+TOKEN_FLAGS=
+ifneq ($(GH_TOKEN),)
+TOKEN_FLAGS += -X github.com/joshkornreich/anime/internal/gh.EmbeddedToken=$(GH_TOKEN)
+endif
+ifneq ($(HF_TOKEN),)
+TOKEN_FLAGS += -X github.com/joshkornreich/anime/internal/hf.EmbeddedToken=$(HF_TOKEN)
+endif
+
 # Build the anime binary for current platform
 build: pull-claude embed-source
 	@echo "Building $(BINARY_NAME) v$$(cat VERSION) for $(OS)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	go build -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
+	go build -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd) $(TOKEN_FLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
 	@echo "✓ Built: $(BUILD_DIR)/$(BINARY_NAME) v$$(cat VERSION)"
 	@echo ""
 	@# Verify source embedding in built binary
@@ -109,7 +122,7 @@ build: pull-claude embed-source
 	@echo "✓ Source embedding verified"
 	@echo ""
 	@echo "Installing to ~/go/bin and ~/.local/bin..."
-	@go install -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)"
+	@go install -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd) $(TOKEN_FLAGS)"
 	@mkdir -p $(HOME)/.local/bin
 	@cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/.local/bin/$(BINARY_NAME)
 	@# Re-sign binaries on macOS to prevent SIGKILL

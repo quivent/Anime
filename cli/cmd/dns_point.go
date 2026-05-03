@@ -238,8 +238,12 @@ func vercelAPI(token, method, path string, body io.Reader) ([]byte, error) {
 
 func vercelRemoveARecords(token, teamID, zone, subdomain string) error {
 	path := fmt.Sprintf("/v4/domains/%s/records", zone)
+	// Try without teamId first (personal tokens), fall back to teamId
 	if teamID != "" {
-		path += "?teamId=" + teamID
+		_, err := vercelAPI(token, "GET", path, nil)
+		if err != nil {
+			path += "?teamId=" + teamID
+		}
 	}
 
 	data, err := vercelAPI(token, "GET", path, nil)
@@ -274,8 +278,13 @@ func vercelRemoveARecords(token, teamID, zone, subdomain string) error {
 
 func vercelCreateARecord(token, teamID, zone, subdomain, ip string) error {
 	path := fmt.Sprintf("/v2/domains/%s/records", zone)
+	// Try without teamId first; add only if personal scope fails
 	if teamID != "" {
-		path += "?teamId=" + teamID
+		testPath := fmt.Sprintf("/v4/domains/%s/records", zone)
+		_, err := vercelAPI(token, "GET", testPath, nil)
+		if err != nil {
+			path += "?teamId=" + teamID
+		}
 	}
 
 	payload := map[string]interface{}{

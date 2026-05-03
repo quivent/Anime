@@ -848,56 +848,41 @@ npm --version
 	"go": `#!/bin/bash
 set -e
 
-echo "==> Installing Go"
-if command -v go &> /dev/null; then
-    echo "Go $(go version) already installed"
-    exit 0
-fi
+echo "==> Installing Go (latest stable)"
 
-# Get latest stable Go version (or use a specific version)
-GO_VERSION="1.23.5"
 GO_ARCH="amd64"
-
-# Detect architecture
 if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
     GO_ARCH="arm64"
 fi
 
-echo "==> Downloading Go $GO_VERSION for $GO_ARCH"
-wget -q https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz -O /tmp/go.tar.gz
+# Skip if already installed and recent (1.23+)
+if command -v go &>/dev/null; then
+    CUR=$(go version | sed 's/.*go1\.\([0-9]*\).*/\1/')
+    if [ "${CUR:-0}" -ge 23 ]; then
+        echo "  ✓ $(go version) — up to date"
+        exit 0
+    fi
+    echo "  → Upgrading from go1.${CUR}"
+fi
 
-echo "==> Installing Go to /usr/local"
+# Fetch latest stable
+GO_VERSION=$(curl -sL 'https://go.dev/VERSION?m=text' | head -1)
+echo "  → ${GO_VERSION} linux/${GO_ARCH}"
+
+curl -sLo /tmp/go.tar.gz "https://go.dev/dl/${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
 sudo rm -rf /usr/local/go
 sudo tar -C /usr/local -xzf /tmp/go.tar.gz
-rm /tmp/go.tar.gz
+rm -f /tmp/go.tar.gz
 
-# Add Go to PATH if not already present
-if ! grep -q "/usr/local/go/bin" ~/.profile 2>/dev/null; then
-    echo "==> Adding Go to PATH in ~/.profile"
-    echo "" >> ~/.profile
-    echo "# Go" >> ~/.profile
-    echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
-    echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.profile
-fi
+# PATH
+for rc in ~/.bashrc ~/.profile; do
+    if ! grep -q "/usr/local/go/bin" "$rc" 2>/dev/null; then
+        echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> "$rc"
+    fi
+done
+export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
 
-if ! grep -q "/usr/local/go/bin" ~/.bashrc 2>/dev/null; then
-    echo "==> Adding Go to PATH in ~/.bashrc"
-    echo "" >> ~/.bashrc
-    echo "# Go" >> ~/.bashrc
-    echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-    echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
-fi
-
-# Also add to current session
-export PATH=$PATH:/usr/local/go/bin
-export PATH=$PATH:$HOME/go/bin
-
-echo "==> Go installed successfully"
-/usr/local/go/bin/go version
-
-echo ""
-echo "Note: Restart your shell or run 'source ~/.profile' to update PATH"
-echo "Go workspace: ~/go"
+echo "  ✓ $(/usr/local/go/bin/go version)"
 `,
 
 	"claude": `#!/bin/bash
@@ -2162,10 +2147,32 @@ else
 fi
 
 echo ""
-echo "==> All set. Start ComfyUI with sage attention engaged:"
-echo "    screen -dmS comfyui bash -c 'cd ~/ComfyUI && ./venv/bin/python main.py --listen --use-sage-attention'"
+
+# Start Comfort UI if installed
+COMFORT_UI="$HOME/Comfort/comfort-ui"
+if [ -d "$COMFORT_UI/dist" ]; then
+    echo "==> Starting Comfort studio..."
+    if screen -list 2>/dev/null | grep -q comfort; then
+        echo "    Comfort already running"
+    else
+        screen -dmS comfort bash -c "cd $COMFORT_UI && npx serve dist -l 3000"
+        echo "    Comfort started on :3000 (screen -r comfort to attach)"
+    fi
+    echo ""
+    echo "==> Comfort → http://localhost:3000"
+
+    # Auto-point comfort.producer.cafe if anime dns is available
+    if command -v anime >/dev/null 2>&1; then
+        MY_IP=$(curl -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
+        if [ -n "$MY_IP" ]; then
+            echo "==> Pointing comfort.producer.cafe → $MY_IP"
+            anime dns point comfort.producer.cafe "$MY_IP" --ssl 2>&1 | sed 's/^/    /' || echo "    DNS/SSL setup skipped (run manually: anime dns point comfort.producer.cafe $MY_IP --ssl)"
+        fi
+    fi
+else
+    echo "==> Comfort not found — run: anime install comfort"
+fi
 echo ""
-echo "==> Then load the Wan 2.2 14B T2V NoLoRA MaxQuality workflow from the Workflow menu."
 `,
 
 	"comfort": `#!/bin/bash
@@ -2309,8 +2316,28 @@ echo ""
 echo "==> Comfort installed at $UI"
 echo "==> dist/ ready ($(du -sh dist | cut -f1))"
 echo ""
-echo "    Launch the studio: anime wan studio"
-echo "    Dev mode:          (cd $UI && npm run dev)"
+
+# Start Comfort
+echo "==> Starting Comfort on :3000..."
+if screen -list 2>/dev/null | grep -q comfort; then
+    screen -S comfort -X quit 2>/dev/null || true
+fi
+screen -dmS comfort bash -c "cd $UI && npx serve dist -l 3000"
+echo "    Comfort running on :3000 (screen -r comfort)"
+echo ""
+
+# Auto-point comfort.producer.cafe → this server
+if command -v anime >/dev/null 2>&1; then
+    MY_IP=$(curl -s --max-time 5 ifconfig.me || hostname -I | awk '{print $1}')
+    if [ -n "$MY_IP" ]; then
+        echo "==> Pointing comfort.producer.cafe → $MY_IP + SSL..."
+        anime dns point comfort.producer.cafe "$MY_IP" --ssl 2>&1 | sed 's/^/    /' || echo "    DNS/SSL deferred (run: anime dns point comfort.producer.cafe $MY_IP --ssl)"
+    fi
+else
+    echo "    DNS: run 'anime dns point comfort.producer.cafe <IP> --ssl' after install"
+fi
+echo ""
+echo "==> https://comfort.producer.cafe"
 `,
 }
 

@@ -28,6 +28,8 @@ var (
 	dryRun      bool
 	skipConfirm bool
 	phased      bool
+	installAuto bool
+	installFrom int
 )
 
 func init() {
@@ -36,7 +38,9 @@ func init() {
 	installNewCmd.Flags().StringVarP(&installServer, "server", "s", "", "Server name (required for remote install)")
 	installNewCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be installed without doing it")
 	installNewCmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "Skip confirmation prompt")
-	installNewCmd.Flags().BoolVar(&phased, "phased", false, "Install in phases with confirmation between each")
+	installNewCmd.Flags().BoolVar(&phased, "phased", false, "Install one at a time with confirmation between each")
+	installNewCmd.Flags().BoolVar(&installAuto, "auto", false, "Run all steps without pausing (non-interactive)")
+	installNewCmd.Flags().IntVar(&installFrom, "from", 0, "Resume from step N (skip already-completed packages)")
 }
 
 func runInstallNew(cmd *cobra.Command, args []string) {
@@ -47,6 +51,19 @@ func runInstallNew(cmd *cobra.Command, args []string) {
 	}
 
 	packageIDs := args
+
+	// Default to step-by-step for heavy bundles unless --auto is passed
+	if !installAuto && !cmd.Flags().Changed("phased") {
+		for _, id := range packageIDs {
+			if id == "wan" || id == "comfort" {
+				phased = true
+				break
+			}
+		}
+	}
+	if installAuto {
+		phased = false
+	}
 
 	// Resolve dependencies
 	resolved, err := installer.ResolveDependencies(packageIDs)
@@ -174,7 +191,26 @@ func runLocalInstall(packages []*installer.Package) {
 	var successes []*installer.Package
 	totalStart := time.Now()
 
+	// --from: skip already-completed steps
+	startIdx := 0
+	if installFrom > 0 {
+		startIdx = installFrom - 1 // user-facing is 1-indexed
+		if startIdx >= total {
+			startIdx = 0
+		}
+		if startIdx > 0 {
+			fmt.Printf("  %s Resuming from step %d (%s), skipping %d completed\n\n",
+				theme.InfoStyle.Render("↳"),
+				startIdx+1,
+				packages[startIdx].Name,
+				startIdx)
+		}
+	}
+
 	for i, pkg := range packages {
+		if i < startIdx {
+			continue
+		}
 		remaining := total - i
 		// Phased mode: pause and confirm
 		if phased && i > 0 {
@@ -233,6 +269,9 @@ func runLocalInstall(packages []*installer.Package) {
 			fmt.Printf("  %s  %s\n",
 				theme.DimTextStyle.Render("  "),
 				theme.DimTextStyle.Render(err.Error()))
+			fmt.Printf("  %s  %s\n",
+				theme.DimTextStyle.Render("  "),
+				theme.InfoStyle.Render(fmt.Sprintf("Resume from here: anime install --from %d --phased <packages...>", i+1)))
 			fmt.Println()
 			failures = append(failures, installFailure{pkg: pkg, err: err, elapsed: elapsed})
 			continue

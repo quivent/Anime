@@ -99,8 +99,14 @@ fi
 # ============================================================
 IS_LAMBDA_STACK=false
 IS_GPU_BASE=false
+ARCH=$(uname -m)
 
-if dpkg -l | grep -q "python3-torch-cuda" || dpkg -l | grep -q "python3-tensorflow"; then
+# ARM64/GH200: always use GPU Base path — system torch-cuda has
+# NCCL symbol conflicts with pip torch and causes cascading failures
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    IS_GPU_BASE=true
+    echo "==> ARM64/GH200 detected → pip-managed torch path"
+elif dpkg -l | grep -q "python3-torch-cuda" || dpkg -l | grep -q "python3-tensorflow"; then
     IS_LAMBDA_STACK=true
     echo "==> Lambda Stack detected - will clean up conflicts"
 else
@@ -114,7 +120,6 @@ fi
 # avoiding the wasteful "install cu128 then have wantorch swap it" flow.
 # Everything else stays on cu128 stable.
 # ============================================================
-ARCH=$(uname -m)
 TORCH_INDEX="https://download.pytorch.org/whl/cu128"
 TORCH_FLAVOR="cu128 stable"
 PIP_PRE_FLAG=""

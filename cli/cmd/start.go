@@ -42,6 +42,15 @@ func init() {
 	startCmd.Flags().StringVarP(&startServer, "server", "s", "lambda", "Server to use")
 	startCmd.Flags().BoolVarP(&startLocal, "local", "l", false, "Start locally instead of on server")
 	rootCmd.AddCommand(startCmd)
+
+	// anime serve llama → delegates to start llama
+	serveCmd.AddCommand(&cobra.Command{
+		Use:   "llama",
+		Short: "Start Llama 3.3 70B + 1B spec decode on vLLM",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runStart(cmd, []string{"llama"})
+		},
+	})
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -100,6 +109,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return startJupyter(sshClient, host)
 	case "serve", "http":
 		return startHTTPServer(sshClient, host)
+	case "llama", "vllm":
+		return startLlama(sshClient, host)
 	default:
 		return fmt.Errorf("unknown service: %s\n\nRun 'anime start' for options", service)
 	}
@@ -395,6 +406,130 @@ func getServerTarget(server string) (target, host, user, keyPath string, err err
 	return target, host, user, keyPath, nil
 }
 
+func startLlama(client *ssh.Client, host string) error {
+	fmt.Println(theme.InfoStyle.Render("🦙 Starting Llama 3.3 70B + 1B spec decode on vLLM..."))
+	fmt.Println()
+
+	// Check if already running
+	output, _ := client.RunCommand("curl -s http://localhost:8000/health")
+	if strings.TrimSpace(output) != "" {
+		fmt.Println(theme.SuccessStyle.Render("✓ vLLM Llama server already running on :8000"))
+		fmt.Println()
+		return setupPortForwarding(host, "8000", "vLLM Llama", "http://localhost:8000/v1")
+	}
+
+	// Check if vLLM is installed
+	exists, _ := client.RunCommand("python3 -c 'import vllm' 2>/dev/null && echo yes")
+	if strings.TrimSpace(exists) != "yes" {
+		fmt.Println(theme.ErrorStyle.Render("❌ vLLM not installed"))
+		fmt.Println()
+		fmt.Println(theme.InfoStyle.Render("💡 Install it first:"))
+		fmt.Println(theme.HighlightStyle.Render("  anime install llama"))
+		return fmt.Errorf("vLLM not installed")
+	}
+
+	// Detect GPU count for tensor parallel
+	gpuCount, _ := client.RunCommand("nvidia-smi --query-gpu=name --format=csv,noheader | wc -l")
+	tp := strings.TrimSpace(gpuCount)
+	if tp == "" || tp == "0" {
+		tp = "1"
+	}
+
+	// Start vLLM with speculative decoding
+	startScript := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
+python3 -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-3.3-70B-Instruct \
+    --speculative-model meta-llama/Llama-3.2-1B-Instruct \
+    --num-speculative-tokens 5 \
+    --use-v2-block-manager \
+    --tensor-parallel-size %s \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --trust-remote-code \
+    2>&1 | tee /tmp/vllm-llama.log
+'`, tp)
+
+	_, err := client.RunCommand(startScript)
+	if err != nil {
+		return fmt.Errorf("failed to start vLLM: %w", err)
+	}
+
+	fmt.Println(theme.SuccessStyle.Render("✓ vLLM Llama server starting (loading 70B model)"))
+	fmt.Println(theme.DimTextStyle.Render("  Waiting for server to be ready..."))
+
+	// Wait for server
+	for i := 0; i < 120; i++ {
+		output, _ := client.RunCommand("curl -s http://localhost:8000/health > /dev/null && echo ready")
+		if strings.Contains(output, "ready") {
+			break
+		}
+		fmt.Print(".")
+		exec.Command("sleep", "5").Run()
+	}
+	fmt.Println()
+
+	// Verify
+	output, _ = client.RunCommand("curl -s http://localhost:8000/health")
+	if strings.TrimSpace(output) == "" {
+		fmt.Println(theme.ErrorStyle.Render("❌ Server did not start"))
+		fmt.Println(theme.DimTextStyle.Render("  Check logs: ssh into server, then: screen -r vllm-llama"))
+		return fmt.Errorf("vLLM server failed to start")
+	}
+
+	fmt.Println(theme.SuccessStyle.Render("✓ vLLM Llama server ready"))
+	fmt.Println()
+	return setupPortForwarding(host, "8000", "vLLM Llama", "http://localhost:8000/v1")
+}
+
+func startLlamaLocal() error {
+	fmt.Println(theme.InfoStyle.Render("🦙 Starting Llama 3.3 70B + 1B spec decode on vLLM..."))
+	fmt.Println()
+
+	// Check if already running
+	checkCmd := exec.Command("curl", "-s", "http://localhost:8000/health")
+	if out, err := checkCmd.Output(); err == nil && len(out) > 0 {
+		fmt.Println(theme.SuccessStyle.Render("✓ vLLM Llama server already running on :8000"))
+		fmt.Println(theme.HighlightStyle.Render("  API: http://localhost:8000/v1"))
+		return nil
+	}
+
+	// Get GPU count
+	gpuCmd := exec.Command("bash", "-c", "nvidia-smi --query-gpu=name --format=csv,noheader | wc -l")
+	gpuOut, _ := gpuCmd.Output()
+	tp := strings.TrimSpace(string(gpuOut))
+	if tp == "" || tp == "0" {
+		tp = "1"
+	}
+
+	// Start in screen
+	script := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
+python3 -m vllm.entrypoints.openai.api_server \
+    --model meta-llama/Llama-3.3-70B-Instruct \
+    --speculative-model meta-llama/Llama-3.2-1B-Instruct \
+    --num-speculative-tokens 5 \
+    --use-v2-block-manager \
+    --tensor-parallel-size %s \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --trust-remote-code \
+    2>&1 | tee /tmp/vllm-llama.log
+'`, tp)
+
+	cmd := exec.Command("bash", "-c", script)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start vLLM: %w", err)
+	}
+
+	fmt.Println(theme.SuccessStyle.Render("✓ vLLM Llama server starting"))
+	fmt.Println(theme.DimTextStyle.Render("  Loading 70B model — this takes a few minutes"))
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("  Monitor:  screen -r vllm-llama"))
+	fmt.Println(theme.InfoStyle.Render("  Logs:     tail -f /tmp/vllm-llama.log"))
+	fmt.Println(theme.InfoStyle.Render("  API:      http://localhost:8000/v1"))
+	fmt.Println(theme.InfoStyle.Render("  Stop:     screen -S vllm-llama -X quit"))
+	return nil
+}
+
 func isLocalhost(host string) bool {
 	// Check common localhost identifiers
 	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
@@ -427,6 +562,8 @@ func runStartLocal(service string) error {
 		return runService(nil, []string{"jupyter"})
 	case "tensorboard", "tb":
 		return runService(nil, []string{"tensorboard"})
+	case "llama", "vllm":
+		return startLlamaLocal()
 	default:
 		return fmt.Errorf("unknown service: %s\n\nRun 'anime start' for options", service)
 	}

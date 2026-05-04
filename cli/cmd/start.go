@@ -439,9 +439,7 @@ func startLlama(client *ssh.Client, host string) error {
 	startScript := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
 python3 -m vllm.entrypoints.openai.api_server \
     --model meta-llama/Llama-3.3-70B-Instruct \
-    --speculative-model meta-llama/Llama-3.2-1B-Instruct \
-    --num-speculative-tokens 5 \
-    --use-v2-block-manager \
+    --speculative-config '"'"'{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'"'"' \
     --tensor-parallel-size %s \
     --host 0.0.0.0 \
     --port 8000 \
@@ -505,9 +503,7 @@ func startLlamaLocal() error {
 	script := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
 python3 -m vllm.entrypoints.openai.api_server \
     --model meta-llama/Llama-3.3-70B-Instruct \
-    --speculative-model meta-llama/Llama-3.2-1B-Instruct \
-    --num-speculative-tokens 5 \
-    --use-v2-block-manager \
+    --speculative-config '"'"'{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'"'"' \
     --tensor-parallel-size %s \
     --host 0.0.0.0 \
     --port 8000 \

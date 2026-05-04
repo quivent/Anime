@@ -2632,10 +2632,9 @@ for model in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Inst
 "
 
 # ─── kill existing vllm if running ────────────────────────────────
-VLLM_PID=$(pgrep -f "vllm.entrypoints.openai" 2>/dev/null | head -1 || true)
-if [ -n "$VLLM_PID" ]; then
-    echo "==> Stopping existing vLLM server (pid $VLLM_PID)..."
-    kill "$VLLM_PID" 2>/dev/null || true
+if screen -list 2>/dev/null | grep -q vllm-llama; then
+    echo "==> Stopping existing vLLM screen session..."
+    screen -S vllm-llama -X quit 2>/dev/null || true
     sleep 3
 fi
 
@@ -2656,12 +2655,11 @@ echo "    Port:         $PORT"
 echo ""
 
 # Use screen so it survives this script exiting
+SPEC_JSON="{\"model\":\"meta-llama/Llama-3.2-1B-Instruct\",\"num_speculative_tokens\":5}"
 screen -dmS vllm-llama bash -c "
     python3 -m vllm.entrypoints.openai.api_server \
         --model meta-llama/Llama-3.3-70B-Instruct \
-        --speculative-model meta-llama/Llama-3.2-1B-Instruct \
-        --num-speculative-tokens 5 \
-        --use-v2-block-manager \
+        --speculative-config '$SPEC_JSON' \
         --tensor-parallel-size $TP_SIZE \
         --host 0.0.0.0 \
         --port $PORT \

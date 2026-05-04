@@ -387,9 +387,12 @@ sudo apt-get remove -y python3-tensorflow 2>/dev/null || true
 sudo rm -rf /usr/lib/python3/dist-packages/tensorflow* 2>/dev/null || true
 
 # Remove pip-installed torch if system torch is available (prevents override)
-if [ "$HAS_SYSTEM_TORCH" = true ]; then
+# EXCEPT on ARM64/GH200 where system torch-cuda .so files conflict with vLLM
+if [ "$HAS_SYSTEM_TORCH" = true ] && [ "$ARCH" != "aarch64" ]; then
     echo "    → Removing pip torch to use system torch-cuda..."
     pip3 uninstall -y torch torchvision torchaudio 2>/dev/null || true
+elif [ "$HAS_SYSTEM_TORCH" = true ] && [ "$ARCH" = "aarch64" ]; then
+    echo "    → ARM64: keeping pip torch (system torch-cuda has .so conflicts with vLLM)"
 fi
 
 # Set TensorFlow prevention env vars

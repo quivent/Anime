@@ -437,6 +437,7 @@ func startLlama(client *ssh.Client, host string) error {
 
 	// Start vLLM with speculative decoding
 	startScript := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
+export HF_TOKEN="${HF_TOKEN:-}"
 python3 -m vllm.entrypoints.openai.api_server \
     --model meta-llama/Llama-3.3-70B-Instruct \
     --speculative-config '"'"'{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'"'"' \
@@ -501,6 +502,7 @@ func startLlamaLocal() error {
 
 	// Start in screen
 	script := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
+export HF_TOKEN="${HF_TOKEN:-}"
 python3 -m vllm.entrypoints.openai.api_server \
     --model meta-llama/Llama-3.3-70B-Instruct \
     --speculative-config '"'"'{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'"'"' \

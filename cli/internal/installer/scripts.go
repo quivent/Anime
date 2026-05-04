@@ -2657,6 +2657,7 @@ echo ""
 # Use screen so it survives this script exiting
 SPEC_JSON="{\"model\":\"meta-llama/Llama-3.2-1B-Instruct\",\"num_speculative_tokens\":5}"
 screen -dmS vllm-llama bash -c "
+    export HF_TOKEN='${HF_TOKEN:-}'
     python3 -m vllm.entrypoints.openai.api_server \
         --model meta-llama/Llama-3.3-70B-Instruct \
         --speculative-config '$SPEC_JSON' \

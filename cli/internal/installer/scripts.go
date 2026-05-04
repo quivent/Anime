@@ -275,6 +275,14 @@ echo "==> Ollama installed successfully"
 set -e
 echo "==> Installing vLLM Inference Engine"
 
+# ── idempotency: skip if already working ──────────────────────
+if python3 -c "from vllm import LLM; import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+    VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null)
+    TORCH_INFO=$(python3 -c "import torch; print(f'torch {torch.__version__} cuda={torch.version.cuda}')" 2>/dev/null)
+    echo "    ✓ vLLM $VLLM_VERSION already installed and working ($TORCH_INFO)"
+    exit 0
+fi
+
 # ============================================================
 # STEP 1: Detect environment type
 # ============================================================
@@ -2443,6 +2451,24 @@ echo "============================================"
 set -euo pipefail
 echo "==> Downloading Llama models for vLLM speculative decoding"
 
+# ── idempotency: skip if both models are already cached ───────
+BOTH_CACHED=$(python3 -c "
+from huggingface_hub import snapshot_download
+ok = 0
+for m in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Instruct']:
+    try:
+        snapshot_download(m, local_files_only=True)
+        ok += 1
+    except: pass
+print(ok)
+" 2>/dev/null || echo "0")
+
+if [ "$BOTH_CACHED" = "2" ]; then
+    echo "    ✓ Llama 3.3 70B-Instruct already cached"
+    echo "    ✓ Llama 3.2 1B-Instruct already cached"
+    exit 0
+fi
+
 # ─── ensure huggingface-cli + hf_transfer ─────────────────────────
 if ! command -v huggingface-cli >/dev/null 2>&1; then
     echo "==> Installing huggingface-cli + hf_transfer..."
@@ -2502,6 +2528,21 @@ echo "==> Both models downloaded successfully"
 	"llamaserve": `#!/bin/bash
 set -euo pipefail
 echo "==> Starting vLLM with Llama 3.3 70B + speculative decoding"
+
+# ── idempotency: skip if server is already running and healthy ─
+if curl -s http://localhost:8000/health >/dev/null 2>&1; then
+    echo "    ✓ vLLM server already running on :8000"
+    MODELS=$(curl -s http://localhost:8000/v1/models 2>/dev/null | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+for m in r.get('data', []): print(f'      {m[\"id\"]}')
+" 2>/dev/null || true)
+    if [ -n "$MODELS" ]; then
+        echo "    Models loaded:"
+        echo "$MODELS"
+    fi
+    exit 0
+fi
 
 # ─── verify vLLM is installed ─────────────────────────────────────
 if ! python3 -c "import vllm" 2>/dev/null; then

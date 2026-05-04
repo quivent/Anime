@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/joshkornreich/anime/internal/config"
+	"github.com/joshkornreich/anime/internal/hf"
 	"github.com/joshkornreich/anime/internal/installer"
 	"github.com/joshkornreich/anime/internal/ssh"
 	"github.com/joshkornreich/anime/internal/theme"
@@ -253,6 +254,11 @@ func runLocalInstall(packages []*installer.Package) {
 
 		// Execute script with indented output
 		cmd := exec.Command("bash", "-c", script)
+		cmd.Env = os.Environ()
+		// Inject embedded HF token if not already set
+		if os.Getenv("HF_TOKEN") == "" && hf.EmbeddedToken != "" {
+			cmd.Env = append(cmd.Env, "HF_TOKEN="+hf.EmbeddedToken)
+		}
 		cmd.Stdout = newPrefixWriter(os.Stdout, "  │ ")
 		cmd.Stderr = newPrefixWriter(os.Stderr, "  │ ")
 

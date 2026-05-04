@@ -296,7 +296,12 @@ if dpkg -l | grep -q "python3-tensorflow"; then
 fi
 
 # Determine environment type
-if [ "$HAS_SYSTEM_TORCH" = true ] || [ "$HAS_SYSTEM_TF" = true ]; then
+# ARM64/GH200: always use GPU Base fast path — Lambda Stack system torch
+# has .so conflicts with vLLM and the cleanup path makes things worse
+if [ "$ARCH" = "aarch64" ]; then
+    IS_GPU_BASE=true
+    echo "    ✓ ARM64/GH200 detected → using pip-managed torch path"
+elif [ "$HAS_SYSTEM_TORCH" = true ] || [ "$HAS_SYSTEM_TF" = true ]; then
     IS_LAMBDA_STACK=true
     echo "    ⚠ Lambda Stack detected (system ML packages present)"
     echo "    → Will clean up conflicting packages"
@@ -387,12 +392,10 @@ sudo apt-get remove -y python3-tensorflow 2>/dev/null || true
 sudo rm -rf /usr/lib/python3/dist-packages/tensorflow* 2>/dev/null || true
 
 # Remove pip-installed torch if system torch is available (prevents override)
-# EXCEPT on ARM64/GH200 where system torch-cuda .so files conflict with vLLM
-if [ "$HAS_SYSTEM_TORCH" = true ] && [ "$ARCH" != "aarch64" ]; then
+# (ARM64 never reaches here — it takes the GPU Base path above)
+if [ "$HAS_SYSTEM_TORCH" = true ]; then
     echo "    → Removing pip torch to use system torch-cuda..."
     pip3 uninstall -y torch torchvision torchaudio 2>/dev/null || true
-elif [ "$HAS_SYSTEM_TORCH" = true ] && [ "$ARCH" = "aarch64" ]; then
-    echo "    → ARM64: keeping pip torch (system torch-cuda has .so conflicts with vLLM)"
 fi
 
 # Set TensorFlow prevention env vars

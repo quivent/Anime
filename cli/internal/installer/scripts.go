@@ -2659,24 +2659,32 @@ echo "    Port:         $PORT"
 echo ""
 
 # Use screen so it survives this script exiting
-# Check if flash_attn works — if not, use enforce-eager
-EAGER_FLAG=""
-if ! python3 -c "import flash_attn" 2>/dev/null; then
-    echo "    ⚠ flash_attn not working — using --enforce-eager"
-    EAGER_FLAG="--enforce-eager"
+# Determine if we have enough VRAM for speculative decoding
+# 70B bf16 ≈ 140GB, 1B draft ≈ 2GB, KV cache needs headroom
+# GH200 96GB → no room for spec decode; need ≥160GB or quantization
+SPEC_FLAG=""
+SPEC_MSG="(no speculative decoding — insufficient VRAM)"
+TOTAL_MEM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1}END{print s}')
+if [ "${TOTAL_MEM_MB:-0}" -ge 160000 ]; then
+    SPEC_JSON="{\"model\":\"meta-llama/Llama-3.2-1B-Instruct\",\"num_speculative_tokens\":5}"
+    SPEC_FLAG="--speculative-config '$SPEC_JSON'"
+    SPEC_MSG="+ 1B spec decode"
 fi
 
-SPEC_JSON="{\"model\":\"meta-llama/Llama-3.2-1B-Instruct\",\"num_speculative_tokens\":5}"
+echo "    Mode: $SPEC_MSG"
+
 screen -dmS vllm-llama bash -c "
     export HF_TOKEN='${HF_TOKEN:-}'
     python3 -m vllm.entrypoints.openai.api_server \
         --model meta-llama/Llama-3.3-70B-Instruct \
-        --speculative-config '$SPEC_JSON' \
+        $SPEC_FLAG \
         --tensor-parallel-size $TP_SIZE \
+        --max-model-len 8192 \
+        --gpu-memory-utilization 0.92 \
         --host 0.0.0.0 \
         --port $PORT \
         --trust-remote-code \
-        $EAGER_FLAG \
+        --enforce-eager \
         2>&1 | tee /tmp/vllm-llama.log
 "
 

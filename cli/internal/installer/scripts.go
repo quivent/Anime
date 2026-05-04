@@ -5,6 +5,12 @@ var Scripts = map[string]string{
 	"core": `#!/bin/bash
 set -e
 
+# ── idempotency: skip if essential tools already present ──────
+if command -v gcc >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && command -v cmake >/dev/null 2>&1; then
+    echo "    ✓ Core tools already installed (gcc, git, python3, cmake)"
+    exit 0
+fi
+
 # Wait for dpkg lock
 wait_for_dpkg() {
     local max_wait=300  # 5 minutes max
@@ -54,6 +60,12 @@ echo "==> Install them separately if needed: anime install nvidia docker nodejs"
 set -e
 echo "==> Setting up Python environment"
 
+# ── idempotency: skip if python3 + pip + numpy already present ─
+if python3 -c "import numpy; import pip; print(f'python3 + pip {pip.__version__} + numpy {numpy.__version__}')" 2>/dev/null; then
+    echo "    ✓ Python environment already set up"
+    exit 0
+fi
+
 # Only upgrade pip if needed (check version)
 CURRENT_PIP=$(pip3 --version 2>/dev/null | awk '{print $2}' || echo "0")
 MAJOR_VERSION=$(echo $CURRENT_PIP | cut -d. -f1)
@@ -74,6 +86,13 @@ pip3 --version
 	"pytorch": `#!/bin/bash
 set -e
 echo "==> Installing PyTorch and AI libraries"
+
+# ── idempotency: skip if torch+CUDA already works ────────────
+if python3 -c "import torch; assert torch.cuda.is_available(); print(f'torch {torch.__version__} cuda={torch.version.cuda}')" 2>/dev/null; then
+    TORCH_V=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
+    echo "    ✓ PyTorch $TORCH_V with CUDA already installed"
+    exit 0
+fi
 
 # ============================================================
 # Detect environment type
@@ -738,6 +757,14 @@ echo "    or: $COMFYUI_DIR/launch.sh --listen"
 
 	"nvidia": `#!/bin/bash
 set -e
+
+# ── idempotency: skip if nvidia-smi works ─────────────────────
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name --format=csv,noheader >/dev/null 2>&1; then
+    GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
+    CUDA=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader | head -1)
+    echo "    ✓ NVIDIA drivers already working ($GPU, CUDA $CUDA)"
+    exit 0
+fi
 
 # Wait for dpkg lock
 wait_for_dpkg() {

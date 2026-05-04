@@ -2658,15 +2658,12 @@ echo "    Draft model:  meta-llama/Llama-3.2-1B-Instruct (spec decode)"
 echo "    Port:         $PORT"
 echo ""
 
-# AWQ INT4 model (~36GB) + 1B draft (~2GB) = ~38GB — fits any ≥48GB GPU
-# with plenty of room for KV cache and spec decode
-SPEC_JSON='{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'
-
+# AWQ INT4 model (~36GB) — fits any ≥48GB GPU with room for 32K context
 screen -dmS vllm-llama bash -c "
     export HF_TOKEN='${HF_TOKEN:-}'
+    export VLLM_USE_DEEP_GEMM=0
     python3 -m vllm.entrypoints.openai.api_server \
         --model hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4 \
-        --speculative-config '$SPEC_JSON' \
         --quantization awq \
         --tensor-parallel-size $TP_SIZE \
         --max-model-len 32768 \

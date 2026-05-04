@@ -363,6 +363,14 @@ if [ "$IS_GPU_BASE" = true ]; then
     echo "==> [5/6] GPU Base: Installing vLLM..."
     pip3 install vllm
 
+    # ARM64 Lambda Stack: system scipy/sklearn/pandas are compiled against
+    # numpy 1.x and break with numpy 2.x (which vLLM/torch pull in).
+    # Upgrade them via pip to override the broken system packages.
+    if [ "$ARCH" = "aarch64" ]; then
+        echo "    → ARM64: upgrading system packages for numpy 2.x compat..."
+        pip3 install --upgrade scipy scikit-learn pandas 2>/dev/null || true
+    fi
+
     echo "==> [6/6] Verifying installation..."
     if python3 -c "from vllm import LLM; print('vLLM OK')" 2>/dev/null; then
         VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null)
@@ -2500,6 +2508,9 @@ if [ "$BOTH_CACHED" = "2" ]; then
     echo "    ✓ Llama 3.2 1B-Instruct already cached"
     exit 0
 fi
+
+# ─── ensure PATH includes ~/.local/bin (pip --user installs go here) ─
+export PATH="$HOME/.local/bin:$PATH"
 
 # ─── ensure huggingface-cli + hf_transfer ─────────────────────────
 if ! command -v huggingface-cli >/dev/null 2>&1; then

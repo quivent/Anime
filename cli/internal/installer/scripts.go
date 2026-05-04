@@ -363,12 +363,16 @@ if [ "$IS_GPU_BASE" = true ]; then
     echo "==> [5/6] GPU Base: Installing vLLM..."
     pip3 install vllm
 
-    # ARM64 Lambda Stack: system scipy/sklearn/pandas are compiled against
-    # numpy 1.x and break with numpy 2.x (which vLLM/torch pull in).
-    # Upgrade them via pip to override the broken system packages.
+    # ARM64 Lambda Stack: system scipy/sklearn/pandas/flash_attn are compiled
+    # against old numpy/torch and break. Upgrade via pip to shadow them.
     if [ "$ARCH" = "aarch64" ]; then
-        echo "    → ARM64: upgrading system packages for numpy 2.x compat..."
+        echo "    → ARM64: upgrading system packages for numpy 2.x + torch compat..."
         pip3 install --upgrade scipy scikit-learn pandas 2>/dev/null || true
+        # System flash_attn has undefined torch symbols — rebuild from pip
+        if ! python3 -c "import flash_attn" 2>/dev/null; then
+            echo "    → Rebuilding flash_attn from source (may take 10+ min)..."
+            pip3 install flash-attn --no-build-isolation 2>/dev/null || echo "    ⚠ flash_attn build failed (will use --enforce-eager)"
+        fi
     fi
 
     echo "==> [6/6] Verifying installation..."
@@ -2655,6 +2659,13 @@ echo "    Port:         $PORT"
 echo ""
 
 # Use screen so it survives this script exiting
+# Check if flash_attn works — if not, use enforce-eager
+EAGER_FLAG=""
+if ! python3 -c "import flash_attn" 2>/dev/null; then
+    echo "    ⚠ flash_attn not working — using --enforce-eager"
+    EAGER_FLAG="--enforce-eager"
+fi
+
 SPEC_JSON="{\"model\":\"meta-llama/Llama-3.2-1B-Instruct\",\"num_speculative_tokens\":5}"
 screen -dmS vllm-llama bash -c "
     export HF_TOKEN='${HF_TOKEN:-}'
@@ -2665,6 +2676,7 @@ screen -dmS vllm-llama bash -c "
         --host 0.0.0.0 \
         --port $PORT \
         --trust-remote-code \
+        $EAGER_FLAG \
         2>&1 | tee /tmp/vllm-llama.log
 "
 

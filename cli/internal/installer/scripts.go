@@ -1083,7 +1083,7 @@ if [ -f "requirements.txt" ]; then
     fi
 fi
 echo "==> Downloading Mochi-1 model weights with parallel downloads..."
-huggingface-cli download genmo/mochi-1-preview --local-dir ./weights --max-workers 8
+hf download genmo/mochi-1-preview --local-dir ./weights --max-workers 8
 echo "==> Mochi-1 installed successfully"
 `,
 
@@ -1169,7 +1169,7 @@ if [ -f "requirements.txt" ]; then
     fi
 fi
 echo "==> Downloading CogVideoX-5B model with parallel downloads..."
-huggingface-cli download THUDM/CogVideoX-5b --local-dir ./weights --max-workers 8
+hf download THUDM/CogVideoX-5b --local-dir ./weights --max-workers 8
 echo "==> CogVideoX installed successfully"
 `,
 
@@ -1194,7 +1194,7 @@ git clone https://github.com/hpcaitech/Open-Sora open-sora
 cd open-sora
 pip3 install -e . --upgrade-strategy only-if-needed
 echo "==> Downloading Open-Sora models with parallel downloads..."
-huggingface-cli download hpcai-tech/OpenSora-STDiT-v3 --local-dir ./pretrained_models --max-workers 8
+hf download hpcai-tech/OpenSora-STDiT-v3 --local-dir ./pretrained_models --max-workers 8
 echo "==> Open-Sora installed successfully"
 `,
 
@@ -1230,7 +1230,7 @@ if [ -f "requirements.txt" ]; then
     fi
 fi
 echo "==> Downloading LTXVideo model with parallel downloads..."
-huggingface-cli download Lightricks/LTX-Video --local-dir ./checkpoints --max-workers 8
+hf download Lightricks/LTX-Video --local-dir ./checkpoints --max-workers 8
 echo "==> LTXVideo installed successfully"
 `,
 
@@ -1285,7 +1285,7 @@ fi
 
 echo "==> Downloading Wan2.2 model weights with parallel downloads..."
 # Download model from HuggingFace with parallel workers
-huggingface-cli download Alibaba-PAI/wan2.2 --local-dir ./checkpoints --max-workers 8
+hf download Alibaba-PAI/wan2.2 --local-dir ./checkpoints --max-workers 8
 
 echo "==> Wan2.2 installed successfully"
 echo "Model location: ~/video-models/wan2"
@@ -1609,7 +1609,7 @@ if [ -f "flux1-dev.safetensors" ]; then
 fi
 
 echo "==> Downloading Flux.1 Dev model with parallel downloads..."
-huggingface-cli download black-forest-labs/FLUX.1-dev flux1-dev.safetensors --local-dir . --max-workers 8
+hf download black-forest-labs/FLUX.1-dev flux1-dev.safetensors --local-dir . --max-workers 8
 
 echo "==> Flux.1 Dev installed successfully"
 echo "Model location: ~/ComfyUI/models/unet/flux1-dev.safetensors"
@@ -1635,7 +1635,7 @@ if [ -f "flux1-schnell.safetensors" ]; then
 fi
 
 echo "==> Downloading Flux.1 Schnell model with parallel downloads..."
-huggingface-cli download black-forest-labs/FLUX.1-schnell flux1-schnell.safetensors --local-dir . --max-workers 8
+hf download black-forest-labs/FLUX.1-schnell flux1-schnell.safetensors --local-dir . --max-workers 8
 
 echo "==> Flux.1 Schnell installed successfully"
 echo "Model location: ~/ComfyUI/models/unet/flux1-schnell.safetensors"
@@ -1656,7 +1656,7 @@ if [ -f "flux2-fp8.safetensors" ]; then
 fi
 
 echo "==> Downloading Flux 2 FP8 model with parallel downloads..."
-huggingface-cli download black-forest-labs/FLUX.2-fp8 flux2-fp8.safetensors --local-dir . --max-workers 8
+hf download black-forest-labs/FLUX.2-fp8 flux2-fp8.safetensors --local-dir . --max-workers 8
 
 echo "==> Flux 2 (FP8) installed successfully"
 echo "Model location: ~/ComfyUI/models/unet/flux2-fp8.safetensors"
@@ -1694,7 +1694,7 @@ set -e
 echo "==> Installing SVD-XT 1.1 for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download stabilityai/stable-video-diffusion-img2vid-xt-1-1 --local-dir svd-xt --max-workers 8
+hf download stabilityai/stable-video-diffusion-img2vid-xt-1-1 --local-dir svd-xt --max-workers 8
 echo "==> SVD-XT 1.1 installed successfully"
 `,
 	"i2v-adapter": `#!/bin/bash
@@ -1713,7 +1713,7 @@ set -e
 echo "==> Installing Stable Diffusion 3.5 Large for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download stabilityai/stable-diffusion-3.5-large --local-dir sd3.5-large --max-workers 8
+hf download stabilityai/stable-diffusion-3.5-large --local-dir sd3.5-large --max-workers 8
 echo "==> SD 3.5 Large installed successfully"
 `,
 	"sd3.5-large-turbo": `#!/bin/bash
@@ -1721,7 +1721,7 @@ set -e
 echo "==> Installing SD 3.5 Large Turbo for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download stabilityai/stable-diffusion-3.5-large-turbo --local-dir sd3.5-large-turbo --max-workers 8
+hf download stabilityai/stable-diffusion-3.5-large-turbo --local-dir sd3.5-large-turbo --max-workers 8
 echo "==> SD 3.5 Large Turbo installed successfully"
 `,
 	"sd3.5-medium": `#!/bin/bash
@@ -1729,7 +1729,7 @@ set -e
 echo "==> Installing Stable Diffusion 3.5 Medium for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download stabilityai/stable-diffusion-3.5-medium --local-dir sd3.5-medium --max-workers 8
+hf download stabilityai/stable-diffusion-3.5-medium --local-dir sd3.5-medium --max-workers 8
 echo "==> SD 3.5 Medium installed successfully"
 `,
 	"sdxl-turbo": `#!/bin/bash
@@ -1737,7 +1737,7 @@ set -e
 echo "==> Installing SDXL Turbo for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download stabilityai/sdxl-turbo --local-dir sdxl-turbo --max-workers 8
+hf download stabilityai/sdxl-turbo --local-dir sdxl-turbo --max-workers 8
 echo "==> SDXL Turbo installed successfully"
 `,
 	"sdxl-lightning": `#!/bin/bash
@@ -1745,7 +1745,7 @@ set -e
 echo "==> Installing SDXL Lightning for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download ByteDance/SDXL-Lightning --local-dir sdxl-lightning --max-workers 8
+hf download ByteDance/SDXL-Lightning --local-dir sdxl-lightning --max-workers 8
 echo "==> SDXL Lightning installed successfully"
 `,
 	"playground-v2.5": `#!/bin/bash
@@ -1753,7 +1753,7 @@ set -e
 echo "==> Installing Playground v2.5 for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download playgroundai/playground-v2.5-1024px-aesthetic --local-dir playground-v2.5 --max-workers 8
+hf download playgroundai/playground-v2.5-1024px-aesthetic --local-dir playground-v2.5 --max-workers 8
 echo "==> Playground v2.5 installed successfully"
 `,
 	"pixart-sigma": `#!/bin/bash
@@ -1761,7 +1761,7 @@ set -e
 echo "==> Installing PixArt-Σ for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --local-dir pixart-sigma --max-workers 8
+hf download PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --local-dir pixart-sigma --max-workers 8
 echo "==> PixArt-Σ installed successfully"
 `,
 	"kandinsky-3": `#!/bin/bash
@@ -1769,7 +1769,7 @@ set -e
 echo "==> Installing Kandinsky 3"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download ai-forever/Kandinsky3.1 --local-dir kandinsky-3 --max-workers 8
+hf download ai-forever/Kandinsky3.1 --local-dir kandinsky-3 --max-workers 8
 echo "==> Kandinsky 3 installed successfully"
 `,
 	"kolors": `#!/bin/bash
@@ -1777,7 +1777,7 @@ set -e
 echo "==> Installing Kolors for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download Kwai-Kolors/Kolors --local-dir kolors --max-workers 8
+hf download Kwai-Kolors/Kolors --local-dir kolors --max-workers 8
 echo "==> Kolors installed successfully"
 `,
 	"real-esrgan": `#!/bin/bash
@@ -1802,7 +1802,7 @@ set -e
 echo "==> Installing AuraSR for ComfyUI"
 mkdir -p ~/ComfyUI/models/upscale_models
 cd ~/ComfyUI/models/upscale_models
-huggingface-cli download fal/AuraSR --local-dir aurasr --max-workers 8
+hf download fal/AuraSR --local-dir aurasr --max-workers 8
 echo "==> AuraSR installed successfully"
 `,
 	"supir": `#!/bin/bash
@@ -1810,7 +1810,7 @@ set -e
 echo "==> Installing SUPIR for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download Kijai/SUPIR_pruned --local-dir supir --max-workers 8
+hf download Kijai/SUPIR_pruned --local-dir supir --max-workers 8
 echo "==> SUPIR installed successfully"
 `,
 	"rife": `#!/bin/bash
@@ -1842,7 +1842,7 @@ set -e
 echo "==> Installing SD 1.5 Inpainting for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download runwayml/stable-diffusion-inpainting --local-dir sd-inpainting --max-workers 8
+hf download runwayml/stable-diffusion-inpainting --local-dir sd-inpainting --max-workers 8
 echo "==> SD 1.5 Inpainting installed successfully"
 `,
 	"sdxl-inpainting": `#!/bin/bash
@@ -1850,7 +1850,7 @@ set -e
 echo "==> Installing SDXL Inpainting for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --local-dir sdxl-inpainting --max-workers 8
+hf download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --local-dir sdxl-inpainting --max-workers 8
 echo "==> SDXL Inpainting installed successfully"
 `,
 	"controlnet-canny": `#!/bin/bash
@@ -1858,7 +1858,7 @@ set -e
 echo "==> Installing ControlNet Canny for ComfyUI"
 mkdir -p ~/ComfyUI/models/controlnet
 cd ~/ComfyUI/models/controlnet
-huggingface-cli download lllyasviel/sd-controlnet-canny --local-dir controlnet-canny --max-workers 8
+hf download lllyasviel/sd-controlnet-canny --local-dir controlnet-canny --max-workers 8
 echo "==> ControlNet Canny installed successfully"
 `,
 	"controlnet-depth": `#!/bin/bash
@@ -1866,7 +1866,7 @@ set -e
 echo "==> Installing ControlNet Depth for ComfyUI"
 mkdir -p ~/ComfyUI/models/controlnet
 cd ~/ComfyUI/models/controlnet
-huggingface-cli download lllyasviel/sd-controlnet-depth --local-dir controlnet-depth --max-workers 8
+hf download lllyasviel/sd-controlnet-depth --local-dir controlnet-depth --max-workers 8
 echo "==> ControlNet Depth installed successfully"
 `,
 	"controlnet-openpose": `#!/bin/bash
@@ -1874,7 +1874,7 @@ set -e
 echo "==> Installing ControlNet OpenPose for ComfyUI"
 mkdir -p ~/ComfyUI/models/controlnet
 cd ~/ComfyUI/models/controlnet
-huggingface-cli download lllyasviel/sd-controlnet-openpose --local-dir controlnet-openpose --max-workers 8
+hf download lllyasviel/sd-controlnet-openpose --local-dir controlnet-openpose --max-workers 8
 echo "==> ControlNet OpenPose installed successfully"
 `,
 	"ip-adapter": `#!/bin/bash
@@ -1882,7 +1882,7 @@ set -e
 echo "==> Installing IP-Adapter for ComfyUI"
 mkdir -p ~/ComfyUI/models/ipadapter
 cd ~/ComfyUI/models/ipadapter
-huggingface-cli download h94/IP-Adapter --local-dir ip-adapter --max-workers 8
+hf download h94/IP-Adapter --local-dir ip-adapter --max-workers 8
 echo "==> IP-Adapter installed successfully"
 `,
 	"ip-adapter-faceid": `#!/bin/bash
@@ -1890,7 +1890,7 @@ set -e
 echo "==> Installing IP-Adapter FaceID for ComfyUI"
 mkdir -p ~/ComfyUI/models/ipadapter
 cd ~/ComfyUI/models/ipadapter
-huggingface-cli download h94/IP-Adapter-FaceID --local-dir ip-adapter-faceid --max-workers 8
+hf download h94/IP-Adapter-FaceID --local-dir ip-adapter-faceid --max-workers 8
 echo "==> IP-Adapter FaceID installed successfully"
 `,
 	"instantid": `#!/bin/bash
@@ -1898,7 +1898,7 @@ set -e
 echo "==> Installing InstantID for ComfyUI"
 mkdir -p ~/ComfyUI/models/instantid
 cd ~/ComfyUI/models/instantid
-huggingface-cli download InstantX/InstantID --local-dir instantid --max-workers 8
+hf download InstantX/InstantID --local-dir instantid --max-workers 8
 echo "==> InstantID installed successfully"
 `,
 
@@ -2145,14 +2145,14 @@ for repo, fname, sub in selected:
     try:
         p = hf_hub_download(repo_id=repo, filename=fname, local_dir=str(dest_dir), token=TOKEN)
     except GatedRepoError:
-        print(f"ERROR: {repo} is gated. Run: huggingface-cli login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
+        print(f"ERROR: {repo} is gated. Run: hf login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
         sys.exit(2)
     except RepositoryNotFoundError:
         print(f"ERROR: {repo} not found (was it renamed?)", file=sys.stderr)
         sys.exit(2)
     except HfHubHTTPError as e:
         if "401" in str(e) or "403" in str(e):
-            print(f"ERROR: HF auth required for {repo}/{fname}. Run: huggingface-cli login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
+            print(f"ERROR: HF auth required for {repo}/{fname}. Run: hf login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
         else:
             print(f"ERROR: HF download failed for {repo}/{fname}: {e}", file=sys.stderr)
         sys.exit(2)
@@ -2512,10 +2512,10 @@ fi
 # ─── ensure PATH includes ~/.local/bin (pip --user installs go here) ─
 export PATH="$HOME/.local/bin:$PATH"
 
-# ─── ensure huggingface-cli + hf_transfer ─────────────────────────
-if ! command -v huggingface-cli >/dev/null 2>&1; then
-    echo "==> Installing huggingface-cli + hf_transfer..."
-    pip3 install -q huggingface_hub[cli] hf_transfer
+# ─── ensure hf + hf_transfer ─────────────────────────
+if ! command -v hf >/dev/null 2>&1; then
+    echo "==> Installing hf + hf_transfer..."
+    pip3 install -q huggingface_hub hf_transfer
 fi
 
 # Enable fast multi-connection downloads
@@ -2525,7 +2525,7 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 # Llama models are gated — a valid HF token with Meta approval is required.
 if [ -z "${HF_TOKEN:-}" ]; then
     # Check if already logged in
-    if ! huggingface-cli whoami >/dev/null 2>&1; then
+    if ! hf whoami >/dev/null 2>&1; then
         echo ""
         echo "ERROR: Llama models require HuggingFace authentication."
         echo ""
@@ -2535,7 +2535,7 @@ if [ -z "${HF_TOKEN:-}" ]; then
         echo ""
         echo "  2. Set your token:"
         echo "     export HF_TOKEN=hf_..."
-        echo "     or: huggingface-cli login"
+        echo "     or: hf login"
         echo ""
         echo "  Then retry: anime install llama"
         exit 1
@@ -2553,14 +2553,14 @@ echo ""
 echo "==> [1/2] Downloading meta-llama/Llama-3.3-70B-Instruct..."
 echo "    This is ~141GB — may take a while on first download."
 echo ""
-huggingface-cli download meta-llama/Llama-3.3-70B-Instruct \
+hf download meta-llama/Llama-3.3-70B-Instruct \
     --quiet 2>&1 | tail -5
 echo "    ✓ Llama 3.3 70B-Instruct downloaded"
 echo ""
 
 # ─── Download Llama 3.2 1B-Instruct (spec decode draft) ──────────
 echo "==> [2/2] Downloading meta-llama/Llama-3.2-1B-Instruct..."
-huggingface-cli download meta-llama/Llama-3.2-1B-Instruct \
+hf download meta-llama/Llama-3.2-1B-Instruct \
     --quiet 2>&1 | tail -5
 echo "    ✓ Llama 3.2 1B-Instruct downloaded"
 echo ""

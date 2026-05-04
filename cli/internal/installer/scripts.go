@@ -2632,9 +2632,10 @@ for model in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Inst
 "
 
 # ─── kill existing vllm if running ────────────────────────────────
-if pgrep -f "vllm.entrypoints" >/dev/null 2>&1; then
-    echo "==> Stopping existing vLLM server..."
-    pkill -f "vllm.entrypoints" 2>/dev/null || true
+VLLM_PID=$(pgrep -f "vllm.entrypoints.openai" 2>/dev/null | head -1 || true)
+if [ -n "$VLLM_PID" ]; then
+    echo "==> Stopping existing vLLM server (pid $VLLM_PID)..."
+    kill "$VLLM_PID" 2>/dev/null || true
     sleep 3
 fi
 

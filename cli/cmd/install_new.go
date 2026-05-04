@@ -55,7 +55,7 @@ func runInstallNew(cmd *cobra.Command, args []string) {
 	// Default to step-by-step for heavy bundles unless --auto is passed
 	if !installAuto && !cmd.Flags().Changed("phased") {
 		for _, id := range packageIDs {
-			if id == "wan" || id == "comfort" {
+			if id == "wan" || id == "comfort" || id == "llama" {
 				phased = true
 				break
 			}

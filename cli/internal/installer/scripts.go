@@ -2429,5 +2429,281 @@ echo "  https://$DOMAIN"
 echo ""
 echo "============================================"
 `,
+
+	// =========================================================================
+	// Llama inference stack — vLLM + speculative decoding on GH200
+	// =========================================================================
+	"llamamodels": `#!/bin/bash
+set -euo pipefail
+echo "==> Downloading Llama models for vLLM speculative decoding"
+
+# ─── ensure huggingface-cli + hf_transfer ─────────────────────────
+if ! command -v huggingface-cli >/dev/null 2>&1; then
+    echo "==> Installing huggingface-cli + hf_transfer..."
+    pip3 install -q huggingface_hub[cli] hf_transfer
+fi
+
+# Enable fast multi-connection downloads
+export HF_HUB_ENABLE_HF_TRANSFER=1
+
+# ─── HuggingFace auth ─────────────────────────────────────────────
+# Llama models are gated — a valid HF token with Meta approval is required.
+if [ -z "${HF_TOKEN:-}" ]; then
+    # Check if already logged in
+    if ! huggingface-cli whoami >/dev/null 2>&1; then
+        echo ""
+        echo "ERROR: Llama models require HuggingFace authentication."
+        echo ""
+        echo "  1. Accept the license at:"
+        echo "     https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct"
+        echo "     https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct"
+        echo ""
+        echo "  2. Set your token:"
+        echo "     export HF_TOKEN=hf_..."
+        echo "     or: huggingface-cli login"
+        echo ""
+        echo "  Then retry: anime install llama"
+        exit 1
+    fi
+    echo "==> HuggingFace: logged in (cached credentials)"
+else
+    echo "==> HuggingFace: using HF_TOKEN"
+fi
+
+MODEL_DIR="${HF_HOME:-$HOME/.cache/huggingface}/hub"
+echo "==> Model cache: $MODEL_DIR"
+echo ""
+
+# ─── Download Llama 3.3 70B-Instruct (target model) ──────────────
+echo "==> [1/2] Downloading meta-llama/Llama-3.3-70B-Instruct..."
+echo "    This is ~141GB — may take a while on first download."
+echo ""
+huggingface-cli download meta-llama/Llama-3.3-70B-Instruct \
+    --quiet 2>&1 | tail -5
+echo "    ✓ Llama 3.3 70B-Instruct downloaded"
+echo ""
+
+# ─── Download Llama 3.2 1B-Instruct (spec decode draft) ──────────
+echo "==> [2/2] Downloading meta-llama/Llama-3.2-1B-Instruct..."
+huggingface-cli download meta-llama/Llama-3.2-1B-Instruct \
+    --quiet 2>&1 | tail -5
+echo "    ✓ Llama 3.2 1B-Instruct downloaded"
+echo ""
+
+echo "==> Both models downloaded successfully"
+`,
+
+	"llamaserve": `#!/bin/bash
+set -euo pipefail
+echo "==> Starting vLLM with Llama 3.3 70B + speculative decoding"
+
+# ─── verify vLLM is installed ─────────────────────────────────────
+if ! python3 -c "import vllm" 2>/dev/null; then
+    echo "ERROR: vLLM not installed. Run: anime install vllm"
+    exit 1
+fi
+VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)")
+echo "    vLLM $VLLM_VERSION"
+
+# ─── verify GPU ───────────────────────────────────────────────────
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "ERROR: nvidia-smi not found. GPU required."
+    exit 1
+fi
+
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
+GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+echo "    GPU: $GPU_NAME (${GPU_MEM}MB) x${GPU_COUNT}"
+
+# ─── verify models are cached ────────────────────────────────────
+echo "==> Verifying model files..."
+export HF_HUB_ENABLE_HF_TRANSFER=1
+python3 -c "
+from huggingface_hub import snapshot_download
+import os, sys
+
+for model in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Instruct']:
+    try:
+        path = snapshot_download(model, local_files_only=True)
+        print(f'    ✓ {model} → {path}')
+    except Exception as e:
+        print(f'    ✗ {model} not cached: {e}')
+        print(f'      Run: anime install llamamodels')
+        sys.exit(1)
+"
+
+# ─── kill existing vllm if running ────────────────────────────────
+if pgrep -f "vllm.entrypoints" >/dev/null 2>&1; then
+    echo "==> Stopping existing vLLM server..."
+    pkill -f "vllm.entrypoints" 2>/dev/null || true
+    sleep 3
+fi
+
+# ─── determine tensor parallel size ──────────────────────────────
+TP_SIZE=1
+if [ "$GPU_COUNT" -gt 1 ]; then
+    TP_SIZE=$GPU_COUNT
+    echo "    Tensor parallel: $TP_SIZE GPUs"
+fi
+
+# ─── start vLLM with speculative decoding ─────────────────────────
+PORT=8000
+echo ""
+echo "==> Launching vLLM server..."
+echo "    Target model: meta-llama/Llama-3.3-70B-Instruct"
+echo "    Draft model:  meta-llama/Llama-3.2-1B-Instruct (spec decode)"
+echo "    Port:         $PORT"
+echo ""
+
+# Use screen so it survives this script exiting
+screen -dmS vllm-llama bash -c "
+    python3 -m vllm.entrypoints.openai.api_server \
+        --model meta-llama/Llama-3.3-70B-Instruct \
+        --speculative-model meta-llama/Llama-3.2-1B-Instruct \
+        --num-speculative-tokens 5 \
+        --use-v2-block-manager \
+        --tensor-parallel-size $TP_SIZE \
+        --host 0.0.0.0 \
+        --port $PORT \
+        --trust-remote-code \
+        2>&1 | tee /tmp/vllm-llama.log
+"
+
+# ─── wait for server to be ready ──────────────────────────────────
+echo "==> Waiting for vLLM server to start (loading 70B model)..."
+MAX_WAIT=600
+WAITED=0
+while ! curl -s http://localhost:$PORT/health >/dev/null 2>&1; do
+    if [ $WAITED -ge $MAX_WAIT ]; then
+        echo "    ✗ Server did not start within ${MAX_WAIT}s"
+        echo "    Check logs: screen -r vllm-llama"
+        echo "    Or: cat /tmp/vllm-llama.log"
+        exit 1
+    fi
+    # Show loading progress from log
+    if [ -f /tmp/vllm-llama.log ]; then
+        LAST_LINE=$(tail -1 /tmp/vllm-llama.log 2>/dev/null || true)
+        printf "\r    Loading... (%ds) %s" "$WAITED" "${LAST_LINE:0:60}"
+    else
+        printf "\r    Loading... (%ds)" "$WAITED"
+    fi
+    sleep 5
+    WAITED=$((WAITED + 5))
+done
+echo ""
+echo "    ✓ vLLM server ready (${WAITED}s)"
+echo ""
+
+# ─── test inference ───────────────────────────────────────────────
+echo "==> Running inference test..."
+echo ""
+
+RESPONSE=$(curl -s http://localhost:$PORT/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "meta-llama/Llama-3.3-70B-Instruct",
+        "messages": [{"role": "user", "content": "What is 2+2? Answer in one word."}],
+        "max_tokens": 32,
+        "temperature": 0
+    }')
+
+# Parse and display response
+python3 -c "
+import json, sys
+r = json.loads('''$RESPONSE''')
+if 'choices' in r:
+    msg = r['choices'][0]['message']['content']
+    usage = r.get('usage', {})
+    prompt_tok = usage.get('prompt_tokens', '?')
+    compl_tok = usage.get('completion_tokens', '?')
+    total_tok = usage.get('total_tokens', '?')
+    print(f'    Response: {msg.strip()}')
+    print(f'    Tokens:   {prompt_tok} prompt + {compl_tok} completion = {total_tok} total')
+    print(f'    ✓ Inference test passed')
+elif 'error' in r:
+    print(f'    ✗ Error: {r[\"error\"][\"message\"]}', file=sys.stderr)
+    sys.exit(1)
+else:
+    print(f'    ✗ Unexpected response: {json.dumps(r)[:200]}', file=sys.stderr)
+    sys.exit(1)
+" || {
+    echo "    ✗ Inference test failed"
+    echo "    Response: $RESPONSE"
+    exit 1
+}
+
+echo ""
+echo "==> vLLM Llama server running"
+echo "    API:   http://localhost:$PORT/v1"
+echo "    Logs:  screen -r vllm-llama"
+echo "    Stop:  screen -S vllm-llama -X quit"
+`,
+
+	"llama": `#!/bin/bash
+set -euo pipefail
+echo "==> Llama inference stack — verification"
+echo ""
+
+# ─── verify GPU ───────────────────────────────────────────────────
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
+GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "0")
+echo "    GPU:    $GPU_NAME (${GPU_MEM}MB)"
+
+# ─── verify vLLM ──────────────────────────────────────────────────
+VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "NOT INSTALLED")
+echo "    vLLM:   $VLLM_VERSION"
+
+# ─── verify PyTorch CUDA ──────────────────────────────────────────
+TORCH_INFO=$(python3 -c "import torch; print(f'{torch.__version__} cuda={torch.version.cuda} avail={torch.cuda.is_available()}')" 2>/dev/null || echo "NOT INSTALLED")
+echo "    torch:  $TORCH_INFO"
+
+# ─── verify models ────────────────────────────────────────────────
+python3 -c "
+from huggingface_hub import snapshot_download
+for m in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Instruct']:
+    try:
+        p = snapshot_download(m, local_files_only=True)
+        print(f'    model:  {m.split(\"/\")[1]} ✓')
+    except:
+        print(f'    model:  {m.split(\"/\")[1]} ✗ (not cached)')
+" 2>/dev/null || echo "    models: could not verify"
+
+# ─── verify server ────────────────────────────────────────────────
+if curl -s http://localhost:8000/health >/dev/null 2>&1; then
+    echo "    server: running on :8000 ✓"
+
+    # Quick model info
+    MODELS=$(curl -s http://localhost:8000/v1/models | python3 -c "
+import json, sys
+r = json.load(sys.stdin)
+for m in r.get('data', []):
+    print(f'            {m[\"id\"]}')
+" 2>/dev/null || true)
+    if [ -n "$MODELS" ]; then
+        echo "    models loaded:"
+        echo "$MODELS"
+    fi
+else
+    echo "    server: not running"
+    echo ""
+    echo "    Start with:"
+    echo "      screen -r vllm-llama   # if screen exists"
+    echo "      anime vllm start llama-70b --spec-model meta-llama/Llama-3.2-1B-Instruct"
+fi
+
+echo ""
+echo "============================================"
+echo ""
+echo "  Llama 3.3 70B + 1B spec decode on vLLM"
+echo "  API: http://localhost:8000/v1"
+echo ""
+echo "  Test:"
+echo "    curl http://localhost:8000/v1/chat/completions \\"
+echo "      -H 'Content-Type: application/json' \\"
+echo "      -d '{\"model\":\"meta-llama/Llama-3.3-70B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
+echo ""
+echo "============================================"
+`,
 }
 

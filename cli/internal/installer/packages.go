@@ -596,6 +596,38 @@ func GetPackages() map[string]*Package {
 			Size:          "~91GB",
 		},
 
+		// =========================================================================
+		// Llama inference stack — vLLM + speculative decoding on GH200
+		// One command: anime install llama
+		// =========================================================================
+		"llamamodels": {
+			ID:            "llamamodels",
+			Name:          "Llama models (70B + 1B draft)",
+			Description:   "Downloads Llama 3.3 70B-Instruct (target) and Llama 3.2 1B-Instruct (speculative draft) from HuggingFace",
+			Dependencies:  []string{"core", "python"},
+			EstimatedTime: 25 * time.Minute,
+			Category:      "LLM",
+			Size:          "~141GB",
+		},
+		"llamaserve": {
+			ID:            "llamaserve",
+			Name:          "vLLM + speculative decoding",
+			Description:   "Starts vLLM with Llama 3.3 70B + 1B spec decoding, runs inference test, reports tokens/sec",
+			Dependencies:  []string{"vllm", "llamamodels"},
+			EstimatedTime: 5 * time.Minute,
+			Category:      "LLM Runtime",
+			Size:          "~10MB",
+		},
+		"llama": {
+			ID:            "llama",
+			Name:          "Llama inference stack (meta)",
+			Description:   "Complete Llama 3.3 70B inference on GH200: vLLM engine, speculative decoding with 1B draft model, OpenAI-compatible API. Requires ≥80GB GPU VRAM.",
+			Dependencies:  []string{"core", "python", "nvidia", "vllm", "llamamodels", "llamaserve"},
+			EstimatedTime: 40 * time.Minute,
+			Category:      "Bundle",
+			Size:          "~145GB",
+		},
+
 		// Individual LLM Models (via Ollama)
 		"llama-3.3-70b": {
 			ID:           "llama-3.3-70b",

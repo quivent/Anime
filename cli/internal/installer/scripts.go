@@ -2553,15 +2553,23 @@ echo ""
 echo "==> [1/2] Downloading meta-llama/Llama-3.3-70B-Instruct..."
 echo "    This is ~141GB — may take a while on first download."
 echo ""
-hf download meta-llama/Llama-3.3-70B-Instruct \
-    --quiet 2>&1 | tail -5
+python3 -c "
+from huggingface_hub import snapshot_download
+import os
+snapshot_download('meta-llama/Llama-3.3-70B-Instruct', token=os.environ.get('HF_TOKEN'))
+print('    done')
+"
 echo "    ✓ Llama 3.3 70B-Instruct downloaded"
 echo ""
 
 # ─── Download Llama 3.2 1B-Instruct (spec decode draft) ──────────
 echo "==> [2/2] Downloading meta-llama/Llama-3.2-1B-Instruct..."
-hf download meta-llama/Llama-3.2-1B-Instruct \
-    --quiet 2>&1 | tail -5
+python3 -c "
+from huggingface_hub import snapshot_download
+import os
+snapshot_download('meta-llama/Llama-3.2-1B-Instruct', token=os.environ.get('HF_TOKEN'))
+print('    done')
+"
 echo "    ✓ Llama 3.2 1B-Instruct downloaded"
 echo ""
 

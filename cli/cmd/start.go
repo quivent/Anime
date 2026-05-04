@@ -439,7 +439,9 @@ func startLlama(client *ssh.Client, host string) error {
 	startScript := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
 export HF_TOKEN="${HF_TOKEN:-}"
 python3 -m vllm.entrypoints.openai.api_server \
-    --model meta-llama/Llama-3.3-70B-Instruct \
+    --model hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4 \
+    --quantization awq \
+    --max-model-len 32768 \
     --speculative-config '"'"'{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'"'"' \
     --tensor-parallel-size %s \
     --host 0.0.0.0 \
@@ -504,7 +506,9 @@ func startLlamaLocal() error {
 	script := fmt.Sprintf(`screen -dmS vllm-llama bash -c '
 export HF_TOKEN="${HF_TOKEN:-}"
 python3 -m vllm.entrypoints.openai.api_server \
-    --model meta-llama/Llama-3.3-70B-Instruct \
+    --model hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4 \
+    --quantization awq \
+    --max-model-len 32768 \
     --speculative-config '"'"'{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'"'"' \
     --tensor-parallel-size %s \
     --host 0.0.0.0 \

@@ -2499,7 +2499,7 @@ echo "==> Downloading Llama models for vLLM speculative decoding"
 BOTH_CACHED=$(python3 -c "
 from huggingface_hub import snapshot_download
 ok = 0
-for m in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Instruct']:
+for m in ['hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', 'meta-llama/Llama-3.2-1B-Instruct']:
     try:
         snapshot_download(m, local_files_only=True)
         ok += 1
@@ -2508,7 +2508,7 @@ print(ok)
 " 2>/dev/null || echo "0")
 
 if [ "$BOTH_CACHED" = "2" ]; then
-    echo "    ✓ Llama 3.3 70B-Instruct already cached"
+    echo "    ✓ Llama 70B AWQ INT4 already cached"
     echo "    ✓ Llama 3.2 1B-Instruct already cached"
     exit 0
 fi
@@ -2534,7 +2534,7 @@ if [ -z "${HF_TOKEN:-}" ]; then
         echo "ERROR: Llama models require HuggingFace authentication."
         echo ""
         echo "  1. Accept the license at:"
-        echo "     https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct"
+        echo "     https://huggingface.co/hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
         echo "     https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct"
         echo ""
         echo "  2. Set your token:"
@@ -2553,17 +2553,17 @@ MODEL_DIR="${HF_HOME:-$HOME/.cache/huggingface}/hub"
 echo "==> Model cache: $MODEL_DIR"
 echo ""
 
-# ─── Download Llama 3.3 70B-Instruct (target model) ──────────────
-echo "==> [1/2] Downloading meta-llama/Llama-3.3-70B-Instruct..."
-echo "    This is ~141GB — may take a while on first download."
+# ─── Download Llama 70B AWQ INT4 (target model, ~36GB) ────────────
+echo "==> [1/2] Downloading hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4..."
+echo "    AWQ INT4 quantized (~36GB) — fits on single GH200 with spec decode"
 echo ""
 python3 -c "
 from huggingface_hub import snapshot_download
 import os
-snapshot_download('meta-llama/Llama-3.3-70B-Instruct', token=os.environ.get('HF_TOKEN'))
+snapshot_download('hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', token=os.environ.get('HF_TOKEN'))
 print('    done')
 "
-echo "    ✓ Llama 3.3 70B-Instruct downloaded"
+echo "    ✓ Llama 70B AWQ INT4 downloaded"
 echo ""
 
 # ─── Download Llama 3.2 1B-Instruct (spec decode draft) ──────────
@@ -2625,7 +2625,7 @@ python3 -c "
 from huggingface_hub import snapshot_download
 import os, sys
 
-for model in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Instruct']:
+for model in ['hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', 'meta-llama/Llama-3.2-1B-Instruct']:
     try:
         path = snapshot_download(model, local_files_only=True)
         print(f'    ✓ {model} → {path}')
@@ -2653,34 +2653,24 @@ fi
 PORT=8000
 echo ""
 echo "==> Launching vLLM server..."
-echo "    Target model: meta-llama/Llama-3.3-70B-Instruct"
+echo "    Target model: hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
 echo "    Draft model:  meta-llama/Llama-3.2-1B-Instruct (spec decode)"
 echo "    Port:         $PORT"
 echo ""
 
-# Use screen so it survives this script exiting
-# Determine if we have enough VRAM for speculative decoding
-# 70B bf16 ≈ 140GB, 1B draft ≈ 2GB, KV cache needs headroom
-# GH200 96GB → no room for spec decode; need ≥160GB or quantization
-SPEC_FLAG=""
-SPEC_MSG="(no speculative decoding — insufficient VRAM)"
-TOTAL_MEM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1}END{print s}')
-if [ "${TOTAL_MEM_MB:-0}" -ge 160000 ]; then
-    SPEC_JSON="{\"model\":\"meta-llama/Llama-3.2-1B-Instruct\",\"num_speculative_tokens\":5}"
-    SPEC_FLAG="--speculative-config '$SPEC_JSON'"
-    SPEC_MSG="+ 1B spec decode"
-fi
-
-echo "    Mode: $SPEC_MSG"
+# AWQ INT4 model (~36GB) + 1B draft (~2GB) = ~38GB — fits any ≥48GB GPU
+# with plenty of room for KV cache and spec decode
+SPEC_JSON='{"model":"meta-llama/Llama-3.2-1B-Instruct","num_speculative_tokens":5}'
 
 screen -dmS vllm-llama bash -c "
     export HF_TOKEN='${HF_TOKEN:-}'
     python3 -m vllm.entrypoints.openai.api_server \
-        --model meta-llama/Llama-3.3-70B-Instruct \
-        $SPEC_FLAG \
+        --model hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4 \
+        --speculative-config '$SPEC_JSON' \
+        --quantization awq \
         --tensor-parallel-size $TP_SIZE \
-        --max-model-len 8192 \
-        --gpu-memory-utilization 0.92 \
+        --max-model-len 32768 \
+        --gpu-memory-utilization 0.90 \
         --host 0.0.0.0 \
         --port $PORT \
         --trust-remote-code \
@@ -2720,7 +2710,7 @@ echo ""
 RESPONSE=$(curl -s http://localhost:$PORT/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "meta-llama/Llama-3.3-70B-Instruct",
+        "model": "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
         "messages": [{"role": "user", "content": "What is 2+2? Answer in one word."}],
         "max_tokens": 32,
         "temperature": 0
@@ -2779,7 +2769,7 @@ echo "    torch:  $TORCH_INFO"
 # ─── verify models ────────────────────────────────────────────────
 python3 -c "
 from huggingface_hub import snapshot_download
-for m in ['meta-llama/Llama-3.3-70B-Instruct', 'meta-llama/Llama-3.2-1B-Instruct']:
+for m in ['hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', 'meta-llama/Llama-3.2-1B-Instruct']:
     try:
         p = snapshot_download(m, local_files_only=True)
         print(f'    model:  {m.split(\"/\")[1]} ✓')
@@ -2819,7 +2809,7 @@ echo ""
 echo "  Test:"
 echo "    curl http://localhost:8000/v1/chat/completions \\"
 echo "      -H 'Content-Type: application/json' \\"
-echo "      -d '{\"model\":\"meta-llama/Llama-3.3-70B-Instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
+echo "      -d '{\"model\":\"hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
 echo ""
 echo "============================================"
 `,

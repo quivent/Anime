@@ -59,21 +59,9 @@ embed-source:
 		--exclude='animated' \
 		--exclude='*.md' \
 		--exclude='*.yml' \
-		--exclude='setup-gh200.yml' \
+		--exclude='*.yaml' \
 		--exclude='*.ini' \
 		--exclude='coverage.*' \
-		--exclude='*/anime' \
-		--exclude='anime-linux-*' \
-		--exclude='anime-darwin-*' \
-		--exclude='*.pem' \
-		--exclude='*.key' \
-		--exclude='.env' \
-		--exclude='.env.*' \
-		--exclude='*.bak' \
-		--exclude='*.bak2' \
-		--exclude='*.bak3' \
-		--exclude='*.backup' \
-		--exclude='*.orig' \
 		-h \
 		-C .. cli
 	@echo "✓ Created cmd/anime-src.tar.gz ($$(du -h cmd/anime-src.tar.gz | cut -f1))"
@@ -96,24 +84,13 @@ pull-claude:
 		echo "  No ~/.claude/commands directory found"; \
 	fi
 
-# Read tokens from .tokens file (never committed)
--include .tokens.mk
-.tokens.mk: .tokens
-	@test -f .tokens && awk -F= '/^[A-Z]/{printf "%s=%s\n", $$1, $$2}' .tokens > .tokens.mk 2>/dev/null || true
-
-TOKEN_FLAGS=
-ifneq ($(GH_TOKEN),)
-TOKEN_FLAGS += -X github.com/joshkornreich/anime/internal/gh.EmbeddedToken=$(GH_TOKEN)
-endif
-ifneq ($(HF_TOKEN),)
-TOKEN_FLAGS += -X github.com/joshkornreich/anime/internal/hf.EmbeddedToken=$(HF_TOKEN)
-endif
-
 # Build the anime binary for current platform
 build: pull-claude embed-source
+	@echo "Bumping version..."
+	@./scripts/bump-version.sh > /dev/null
 	@echo "Building $(BINARY_NAME) v$$(cat VERSION) for $(OS)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	go build -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd) $(TOKEN_FLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
+	go build -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
 	@echo "✓ Built: $(BUILD_DIR)/$(BINARY_NAME) v$$(cat VERSION)"
 	@echo ""
 	@# Verify source embedding in built binary
@@ -122,14 +99,9 @@ build: pull-claude embed-source
 	@echo "✓ Source embedding verified"
 	@echo ""
 	@echo "Installing to ~/go/bin and ~/.local/bin..."
-	@go install -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd) $(TOKEN_FLAGS)"
+	@go install -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)"
 	@mkdir -p $(HOME)/.local/bin
 	@cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/.local/bin/$(BINARY_NAME)
-	@# Re-sign binaries on macOS to prevent SIGKILL
-	@if [ "$(OS)" = "darwin" ]; then \
-		codesign -s - -f $(HOME)/go/bin/$(BINARY_NAME) 2>/dev/null || true; \
-		codesign -s - -f $(HOME)/.local/bin/$(BINARY_NAME) 2>/dev/null || true; \
-	fi
 	@echo "✓ Installed: ~/go/bin/$(BINARY_NAME) v$$(cat VERSION)"
 	@echo "✓ Installed: ~/.local/bin/$(BINARY_NAME) v$$(cat VERSION)"
 
@@ -145,6 +117,8 @@ install: build
 
 # Install to user's go bin (no sudo required)
 install-user: embed-source
+	@echo "Bumping version..."
+	@./scripts/bump-version.sh > /dev/null
 	@echo "Installing $(BINARY_NAME) v$$(cat VERSION) to user Go bin..."
 	go install -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)"
 	@echo "✓ $(BINARY_NAME) installed to ~/go/bin/$(BINARY_NAME) v$$(cat VERSION)"
@@ -174,26 +148,10 @@ deps:
 	go mod tidy
 	@echo "✓ Dependencies updated"
 
-# Run all tests
+# Run tests
 test:
-	@echo "Running all tests..."
+	@echo "Running tests..."
 	go test -v -race -coverprofile=coverage.out ./...
-	@echo ""
-	@echo "Coverage summary:"
-	@go tool cover -func=coverage.out | grep total:
-
-# Run unit tests only (fast, no integration tests)
-test-unit:
-	@echo "Running unit tests..."
-	go test -v -short -race -coverprofile=coverage-unit.out ./internal/...
-	@echo ""
-	@echo "Unit test coverage:"
-	@go tool cover -func=coverage-unit.out | grep total:
-
-# Run integration tests only
-test-integration:
-	@echo "Running integration tests..."
-	go test -v -run Integration ./...
 
 # Verify build integrity (source embedding and build vars)
 test-build: build
@@ -205,37 +163,6 @@ test-coverage: test
 	@echo "Generating coverage report..."
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "✓ Coverage report: coverage.html"
-
-# Generate coverage report for internal packages only
-test-coverage-internal:
-	@echo "Running tests for internal packages..."
-	go test -v -coverprofile=coverage-internal.out ./internal/...
-	@echo ""
-	@echo "Generating coverage report for internal packages..."
-	go tool cover -html=coverage-internal.out -o coverage-internal.html
-	@echo "✓ Coverage report: coverage-internal.html"
-	@echo ""
-	@echo "Internal packages coverage:"
-	@go tool cover -func=coverage-internal.out | grep total:
-
-# Run tests with verbose output and show all failures
-test-verbose:
-	@echo "Running tests with verbose output..."
-	go test -v -race -count=1 ./...
-
-# Run a specific test by pattern
-test-run:
-	@if [ -z "$(TEST)" ]; then \
-		echo "Usage: make test-run TEST=TestName"; \
-		exit 1; \
-	fi
-	@echo "Running tests matching: $(TEST)"
-	go test -v -run $(TEST) ./...
-
-# Run benchmark tests
-test-bench:
-	@echo "Running benchmark tests..."
-	go test -bench=. -benchmem ./...
 
 # Format code
 fmt:
@@ -265,6 +192,8 @@ check: fmt vet lint test
 
 # Build for multiple platforms
 build-all:
+	@echo "Bumping version..."
+	@./scripts/bump-version.sh > /dev/null
 	@echo "Building for multiple platforms (v$$(cat VERSION))..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=arm64 go build -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 main.go
@@ -276,6 +205,8 @@ build-all:
 
 # Build release binaries with optimizations
 release: clean
+	@echo "Bumping version..."
+	@./scripts/bump-version.sh > /dev/null
 	@echo "Building release binaries (v$$(cat VERSION))..."
 	@mkdir -p $(BUILD_DIR)/release
 	GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)" -o $(BUILD_DIR)/release/$(BINARY_NAME)-darwin-arm64 main.go
@@ -325,20 +256,14 @@ help:
 	@echo "  make dev-tools       - Install development tools"
 	@echo ""
 	@echo "Code quality:"
-	@echo "  make deps                   - Download and tidy dependencies"
-	@echo "  make test                   - Run all tests with race detection"
-	@echo "  make test-unit              - Run unit tests only (fast)"
-	@echo "  make test-integration       - Run integration tests only"
-	@echo "  make test-build             - Verify source embedding and build integrity"
-	@echo "  make test-coverage          - Run tests with coverage report (60% threshold)"
-	@echo "  make test-coverage-internal - Coverage report for internal packages only"
-	@echo "  make test-verbose           - Run tests with verbose output"
-	@echo "  make test-run TEST=Name     - Run specific test by pattern"
-	@echo "  make test-bench             - Run benchmark tests"
-	@echo "  make fmt                    - Format code"
-	@echo "  make vet                    - Run go vet"
-	@echo "  make lint                   - Run golangci-lint (requires golangci-lint)"
-	@echo "  make check                  - Run all checks (fmt, vet, lint, test)"
+	@echo "  make deps            - Download and tidy dependencies"
+	@echo "  make test            - Run tests"
+	@echo "  make test-build      - Verify source embedding and build integrity"
+	@echo "  make test-coverage   - Run tests with coverage report"
+	@echo "  make fmt             - Format code"
+	@echo "  make vet             - Run go vet"
+	@echo "  make lint            - Run golangci-lint (requires golangci-lint)"
+	@echo "  make check           - Run all checks (fmt, vet, lint, test)"
 	@echo ""
 	@echo "Other:"
 	@echo "  make version         - Display version information"

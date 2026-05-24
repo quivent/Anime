@@ -146,7 +146,7 @@ func NewServerMonitorModel(host, user string, isLocal bool) (*ServerMonitorModel
 	if !isLocal && host != "" {
 		// Create SSH client for remote monitoring
 		client, err := ssh.NewClientWithOptions(host, user, "", ssh.ClientOptions{
-			StrictHostKeyChecking: true,
+			StrictHostKeyChecking: false,
 			Interactive:           true,
 		})
 		if err != nil {

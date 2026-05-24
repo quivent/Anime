@@ -583,7 +583,7 @@ func isRunningOnServer() bool {
 func checkPackageInstalledLocal(packageID string) bool {
 	// Define check commands for each package type
 	checkCommands := map[string]string{
-		"core":          "command -v nvidia-smi && command -v nvcc",
+		"core":          "command -v gcc && command -v git",
 		"python":        "command -v python3 && python3 -c 'import numpy' 2>/dev/null",
 		"pytorch":       "python3 -c 'import torch' 2>/dev/null",
 		"ollama":        "command -v ollama",
@@ -593,6 +593,10 @@ func checkPackageInstalledLocal(packageID string) bool {
 		"models-large":  "ollama list 2>/dev/null | grep -q 'llama3.3:70b'",
 		"nodejs":        "command -v node",
 		"go":            "command -v go",
+		"rust":          "command -v rustc",
+		"gh":            "command -v gh",
+		"uv":            "command -v uv",
+		"docker":        "command -v docker",
 		"claude":        "command -v claude",
 		"comfyui":       "test -d ~/ComfyUI",
 		"mochi":         "test -d ~/video-models/mochi-1",
@@ -617,7 +621,7 @@ func checkPackageInstalledLocal(packageID string) bool {
 func checkPackageInstalled(client *ssh.Client, packageID string) bool {
 	// Define check commands for each package type
 	checkCommands := map[string]string{
-		"core":          "command -v nvidia-smi && command -v nvcc",
+		"core":          "command -v gcc && command -v git",
 		"python":        "command -v python3 && python3 -c 'import numpy' 2>/dev/null",
 		"pytorch":       "python3 -c 'import torch' 2>/dev/null",
 		"ollama":        "command -v ollama",
@@ -627,6 +631,10 @@ func checkPackageInstalled(client *ssh.Client, packageID string) bool {
 		"models-large":  "ollama list 2>/dev/null | grep -q 'llama3.3:70b'",
 		"nodejs":        "command -v node",
 		"go":            "command -v go",
+		"rust":          "command -v rustc",
+		"gh":            "command -v gh",
+		"uv":            "command -v uv",
+		"docker":        "command -v docker",
 		"claude":        "command -v claude",
 		"comfyui":       "test -d ~/ComfyUI",
 		"mochi":         "test -d ~/video-models/mochi-1",

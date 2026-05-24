@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/devlog"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
@@ -828,7 +827,7 @@ func getChangeTypeIcon(changeType string) string {
 	}
 }
 
-func getChangeTypeStyle(changeType string) lipgloss.Style {
+func getChangeTypeStyle(changeType string) lipglossStyle {
 	switch changeType {
 	case "add":
 		return theme.SuccessStyle
@@ -845,7 +844,7 @@ func getChangeTypeStyle(changeType string) lipgloss.Style {
 	}
 }
 
-func getImpactStyle(impact string) lipgloss.Style {
+func getImpactStyle(impact string) lipglossStyle {
 	switch impact {
 	case "major":
 		return theme.ErrorStyle
@@ -875,6 +874,10 @@ func getCategoryIcon(category string) string {
 	default:
 		return "📦"
 	}
+}
+
+type lipglossStyle = interface {
+	Render(strs ...string) string
 }
 
 func formatTimeAgo(t time.Time) string {

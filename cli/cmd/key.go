@@ -244,7 +244,7 @@ func runKeyRegister(cmd *cobra.Command, args []string) error {
 		fi
 	`, pubKey, pubKey)
 
-	sshCmd := exec.Command("ssh", target, registerScript)
+	sshCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, registerScript)
 	sshCmd.Stdin = os.Stdin
 	output, err := sshCmd.CombinedOutput()
 	if err != nil {

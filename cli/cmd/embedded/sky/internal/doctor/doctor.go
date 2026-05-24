@@ -450,7 +450,7 @@ func (d *Doctor) printRecommendations(results []DiagnosticResult, gpuStatuses []
 			switch r.Name {
 			case "SkyReels Installation":
 				recommendations = append(recommendations,
-					"Clone SkyReels: git clone git@github.com:SkyworkAI/SkyReels-V2.git")
+					"Clone SkyReels: git clone https://github.com/SkyworkAI/SkyReels-V2.git")
 			case "Python Environment":
 				recommendations = append(recommendations,
 					"Activate your Python environment: source venv/bin/activate")

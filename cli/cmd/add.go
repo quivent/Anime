@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/joshkornreich/anime/internal/config"
 	"github.com/spf13/cobra"
@@ -33,7 +31,7 @@ var addCmd = &cobra.Command{
 			serverUser = "ubuntu"
 		}
 		if sshKey == "" {
-			sshKey = findDefaultSSHKey()
+			sshKey = "~/.ssh/id_rsa"
 		}
 		if costPerHour == 0 {
 			costPerHour = 20.0
@@ -53,21 +51,6 @@ var addCmd = &cobra.Command{
 			Modules:     []string{},
 		}
 
-		// Validate server before adding
-		if err := server.Validate(); err != nil {
-			fmt.Println()
-			fmt.Println("Server validation failed:")
-			if valErr, ok := err.(*config.ValidationError); ok {
-				for _, e := range valErr.Errors {
-					fmt.Printf("  - %s\n", e)
-				}
-			} else {
-				fmt.Printf("  - %s\n", err.Error())
-			}
-			fmt.Println()
-			return fmt.Errorf("invalid server configuration")
-		}
-
 		cfg.AddServer(server)
 
 		if err := cfg.Save(); err != nil {
@@ -79,9 +62,8 @@ var addCmd = &cobra.Command{
 		fmt.Printf("  SSH Key: %s\n", sshKey)
 		fmt.Printf("  Cost: $%.2f/hr\n\n", costPerHour)
 		fmt.Println("Next steps:")
-		fmt.Printf("  anime push %s                     # Push anime CLI to server\n", serverName)
-		fmt.Printf("  anime modules %s                  # Select modules interactively\n", serverName)
-		fmt.Printf("  anime set-modules %s core pytorch # Or set modules via CLI\n", serverName)
+		fmt.Printf("  anime modules %s              # Select modules interactively\n", serverName)
+		fmt.Printf("  anime set-modules %s core pytorch  # Or set modules via CLI\n", serverName)
 		fmt.Printf("  anime deploy %s                   # Deploy when ready\n", serverName)
 
 		return nil
@@ -94,30 +76,6 @@ func init() {
 	addCmd.Flags().StringVarP(&serverName, "name", "n", "", "Server name (required)")
 	addCmd.Flags().StringVarP(&serverHost, "host", "H", "", "Server IP or hostname (required)")
 	addCmd.Flags().StringVarP(&serverUser, "user", "u", "ubuntu", "SSH user (default: ubuntu)")
-	addCmd.Flags().StringVarP(&sshKey, "key", "k", "", "SSH private key path (auto-detects ed25519/rsa)")
+	addCmd.Flags().StringVarP(&sshKey, "key", "k", "~/.ssh/id_rsa", "SSH private key path")
 	addCmd.Flags().Float64VarP(&costPerHour, "cost", "c", 20.0, "Cost per hour in USD")
-}
-
-// findDefaultSSHKey finds the first available SSH key
-func findDefaultSSHKey() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "~/.ssh/id_ed25519"
-	}
-
-	// Check in order of preference: ed25519, rsa, ecdsa
-	keys := []string{
-		filepath.Join(home, ".ssh", "id_ed25519"),
-		filepath.Join(home, ".ssh", "id_rsa"),
-		filepath.Join(home, ".ssh", "id_ecdsa"),
-	}
-
-	for _, key := range keys {
-		if _, err := os.Stat(key); err == nil {
-			return key
-		}
-	}
-
-	// Default to ed25519 path even if not found
-	return "~/.ssh/id_ed25519"
 }

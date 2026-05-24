@@ -37,10 +37,10 @@ func GetEmbeddedPrivateKey() []byte {
 	return embeddedPrivateKey
 }
 
-// NewClientWithEmbeddedKey creates an SSH client using the embedded key with strict host key checking
+// NewClientWithEmbeddedKey creates an SSH client using the embedded key (no host key checking — Lambda instances get reprovisioned)
 func NewClientWithEmbeddedKey(host, user string) (*Client, error) {
 	return NewClientWithEmbeddedKeyOptions(host, user, ClientOptions{
-		StrictHostKeyChecking: true,
+		StrictHostKeyChecking: false,
 		Interactive:           true,
 	})
 }

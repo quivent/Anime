@@ -174,7 +174,7 @@ func runGhLogin(cmd *cobra.Command, args []string) error {
 	// 5. Verify SSH access.
 	step(5, "Verify SSH access to github.com")
 	sshTest := exec.Command("ssh", "-T", "-o", "BatchMode=yes",
-		"-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		"git@github.com")
 	out, _ := sshTest.CombinedOutput()
 	if strings.Contains(string(out), "successfully authenticated") {
@@ -330,7 +330,7 @@ func runGhOnServer(server string, ghArgs []string, interactive bool) error {
 	// For login, we need special handling
 	if len(ghArgs) > 0 && ghArgs[0] == "auth" && len(ghArgs) > 1 && ghArgs[1] == "login" {
 		// Check if gh is installed on remote
-		checkCmd := exec.Command("ssh", target, "which gh")
+		checkCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, "which gh")
 		if err := checkCmd.Run(); err != nil {
 			fmt.Println(theme.WarningStyle.Render("gh CLI not installed on server"))
 			fmt.Println()
@@ -346,9 +346,9 @@ func runGhOnServer(server string, ghArgs []string, interactive bool) error {
 
 	var sshCmd *exec.Cmd
 	if interactive {
-		sshCmd = exec.Command("ssh", "-t", target, ghCommand)
+		sshCmd = exec.Command("ssh", "-t", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, ghCommand)
 	} else {
-		sshCmd = exec.Command("ssh", target, ghCommand)
+		sshCmd = exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, ghCommand)
 	}
 
 	sshCmd.Stdin = os.Stdin

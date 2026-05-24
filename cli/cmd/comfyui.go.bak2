@@ -1,0 +1,152 @@
+package cmd
+
+import (
+	"fmt"
+	"os/exec"
+
+	"github.com/joshkornreich/anime/internal/theme"
+	"github.com/spf13/cobra"
+)
+
+var comfyuiCmd = &cobra.Command{
+	Use:   "comfyui <start|stop|status|logs>",
+	Short: "Manage ComfyUI server",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runComfyUICommand,
+}
+
+func init() {
+	rootCmd.AddCommand(comfyuiCmd)
+}
+
+func runComfyUICommand(cmd *cobra.Command, args []string) error {
+	action := args[0]
+
+	switch action {
+	case "start":
+		return startComfyUIServer()
+	case "stop":
+		return stopComfyUIServer()
+	case "status":
+		return statusComfyUIServer()
+	case "logs":
+		return logsComfyUIServer()
+	default:
+		return fmt.Errorf("unknown action: %s (use: start|stop|status|logs)", action)
+	}
+}
+
+func startComfyUIServer() error {
+	fmt.Println(theme.InfoStyle.Render("🚀 Starting ComfyUI in background..."))
+	
+	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", "cd ~/ComfyUI && python3 main.py --listen")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start ComfyUI: %w", err)
+	}
+
+	// Wait a moment and check if it started
+	fmt.Print(theme.DimTextStyle.Render("  Waiting for startup"))
+	for i := 0; i < 5; i++ {
+		fmt.Print(".")
+		cmd := exec.Command("sleep", "1")
+		cmd.Run()
+	}
+	fmt.Println()
+	fmt.Println()
+
+	publicIP := getPublicIP()
+	fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ ComfyUI started at http://%s:8188", publicIP)))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("View logs:    anime comfyui logs"))
+	fmt.Println(theme.DimTextStyle.Render("Check status: anime comfyui status"))
+	fmt.Println(theme.DimTextStyle.Render("Stop server:  anime comfyui stop"))
+	fmt.Println()
+
+	return nil
+}
+
+func stopComfyUIServer() error {
+	fmt.Println(theme.InfoStyle.Render("🛑 Stopping ComfyUI..."))
+	
+	cmd := exec.Command("screen", "-S", "comfyui", "-X", "quit")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop ComfyUI: %w", err)
+	}
+
+	fmt.Println(theme.SuccessStyle.Render("✓ ComfyUI stopped"))
+	return nil
+}
+
+func statusComfyUIServer() error {
+	// Check if screen session exists
+	cmd := exec.Command("screen", "-ls", "comfyui")
+	output, err := cmd.CombinedOutput()
+	
+	if err != nil || len(output) == 0 {
+		fmt.Println(theme.WarningStyle.Render("❌ ComfyUI is not running"))
+		fmt.Println()
+		fmt.Println(theme.InfoStyle.Render("Start with: anime comfyui start"))
+		return nil
+	}
+
+	publicIP := getPublicIP()
+	fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ ComfyUI is running at http://%s:8188", publicIP)))
+	return nil
+}
+
+func logsComfyUIServer() error {
+	fmt.Println(theme.InfoStyle.Render("📋 ComfyUI logs (Ctrl+C to exit)"))
+	fmt.Println()
+	
+	cmd := exec.Command("screen", "-r", "comfyui")
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	
+	fmt.Println(theme.DimTextStyle.Render("To view logs, run:"))
+	fmt.Println(theme.HighlightStyle.Render("  screen -r comfyui"))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("(Press Ctrl+A then D to detach)"))
+	
+	return nil
+}
+
+func getPublicIPForComfyUI() string {
+	// Try to get hostname first (e.g., 209-20-159-132)
+	cmd := exec.Command("hostname")
+	if output, err := cmd.Output(); err == nil {
+		hostname := strings.TrimSpace(string(output))
+		// If hostname looks like an IP with dashes, convert to dots
+		if strings.Count(hostname, "-") >= 3 {
+			parts := strings.Split(hostname, "-")
+			if len(parts) >= 4 {
+				// Check if looks like IP format
+				allNumeric := true
+				for _, part := range parts[:4] {
+					for _, ch := range part {
+						if ch < '0' || ch > '9' {
+							allNumeric = false
+							break
+						}
+					}
+				}
+				if allNumeric {
+					return strings.Join(parts[:4], ".")
+				}
+			}
+		}
+		return hostname
+	}
+
+	// Fallback: try to get public IP from external service
+	cmd = exec.Command("curl", "-s", "ifconfig.me")
+	if output, err := cmd.Output(); err == nil {
+		ip := strings.TrimSpace(string(output))
+		if ip != "" {
+			return ip
+		}
+	}
+
+	// Last resort: return localhost
+	return "127.0.0.1"
+}

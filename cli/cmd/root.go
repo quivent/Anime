@@ -1,22 +1,14 @@
 package cmd
 
 import (
-	stderrors "errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/joshkornreich/anime/internal/errors"
-	"github.com/joshkornreich/anime/internal/gh"
-	"github.com/joshkornreich/anime/internal/hf"
 	"github.com/joshkornreich/anime/internal/installer"
-	"github.com/joshkornreich/anime/internal/logger"
 	"github.com/joshkornreich/anime/internal/theme"
-	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -30,19 +22,6 @@ var (
 
 	versionFlag     bool
 	verifyEmbedFlag bool
-
-	// Logging flags
-	logLevel string
-	logFile  string
-	debug    bool
-
-	// Color flag — drives lipgloss color profile selection in initColor.
-	colorMode string
-
-	// Global SSH security flags
-	SSHInsecure               bool
-	SSHStrictHostKeyChecking  bool
-	SSHNonInteractive         bool
 
 	rootCmd = &cobra.Command{
 		Use:   "anime",
@@ -70,135 +49,71 @@ func showAnimeWelcome(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Count embedded assets
-	agentCount := countEmbeddedAgents()
-	hasSource := HasEmbeddedSource()
-	sourceSize := GetEmbeddedSourceSize()
-
+	// Anime-style welcome screen
 	fmt.Println()
 	fmt.Println(theme.RenderBanner("⚡ ANIME ⚡"))
 	fmt.Println()
-
-	// Tagline
-	fmt.Println(theme.InfoStyle.Render("  Self-Contained AI Development & Deployment System"))
+	fmt.Println(theme.InfoStyle.Render("  Lambda GH200 Deployment & Management System"))
+	fmt.Println(theme.DimTextStyle.Render("  Configure • Deploy • Manage with style"))
 	fmt.Println()
 
-	// Section: What's embedded
-	fmt.Println(theme.SuccessStyle.Render("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
-	fmt.Println(theme.GlowStyle.Render("  📦 EMBEDDED IN THIS BINARY"))
-	fmt.Println(theme.SuccessStyle.Render("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
+	// Quick actions
+	fmt.Println(theme.GlowStyle.Render("🌸 Quick Actions:"))
+	fmt.Println()
+	fmt.Printf("  %s  %s\n",
+		theme.HighlightStyle.Render("anime prompt \"<natural language>\""),
+		theme.DimTextStyle.Render("- Use AI to run commands (NEW!)"))
+	fmt.Printf("  %s  %s\n",
+		theme.HighlightStyle.Render("anime walkthrough"),
+		theme.DimTextStyle.Render("- Interactive tutorial"))
+	fmt.Printf("  %s  %s\n",
+		theme.HighlightStyle.Render("anime query <model> \"prompt\""),
+		theme.DimTextStyle.Render("- Query Ollama models"))
+	fmt.Printf("  %s  %s\n",
+		theme.HighlightStyle.Render("anime tree"),
+		theme.DimTextStyle.Render("- View all commands"))
+	fmt.Printf("  %s  %s\n",
+		theme.HighlightStyle.Render("anime packages"),
+		theme.DimTextStyle.Render("- Browse available packages"))
+	fmt.Printf("  %s  %s\n",
+		theme.HighlightStyle.Render("anime interactive"),
+		theme.DimTextStyle.Render("- Interactive package selector"))
+	fmt.Printf("  %s  %s\n",
+		theme.HighlightStyle.Render("anime install <id>"),
+		theme.DimTextStyle.Render("- Install packages"))
 	fmt.Println()
 
-	// Agents
-	fmt.Printf("  %s %s\n",
-		theme.SuccessStyle.Render(fmt.Sprintf("🤖 %d Claude Code Agents", agentCount)),
-		theme.DimTextStyle.Render("— architect, developer, researcher, planner..."))
-	fmt.Printf("     %s\n", theme.DimTextStyle.Render("Push to any machine: ")+theme.HighlightStyle.Render("anime claude agents push"))
+	// Categories
+	fmt.Println(theme.InfoStyle.Render("✨ Command Categories:"))
 	fmt.Println()
 
-	// Source
-	if hasSource {
-		sizeMB := float64(sourceSize) / (1024 * 1024)
-		fmt.Printf("  %s %s\n",
-			theme.SuccessStyle.Render(fmt.Sprintf("📜 Full Source Code (%.1fMB)", sizeMB)),
-			theme.DimTextStyle.Render("— self-updating, self-deploying"))
-		fmt.Printf("     %s\n", theme.DimTextStyle.Render("Extract anywhere: ")+theme.HighlightStyle.Render("anime extract --embedded"))
-	} else {
-		fmt.Printf("  %s\n", theme.DimTextStyle.Render("  📜 Source: not embedded (use 'make build' to include)"))
-	}
-	fmt.Println()
-
-	// Tooling
-	fmt.Printf("  %s %s\n",
-		theme.SuccessStyle.Render("🎬 Sky + Reel"),
-		theme.DimTextStyle.Render("— video generation & processing pipelines"))
-	fmt.Printf("  %s %s\n",
-		theme.SuccessStyle.Render("🔧 100+ Packages"),
-		theme.DimTextStyle.Render("— ComfyUI, Ollama, CUDA, Python envs..."))
-	fmt.Println()
-
-	fmt.Printf("  %s %s\n",
-		theme.InfoStyle.Render("Browse everything:"),
-		theme.HighlightStyle.Render("anime contents"))
-	fmt.Println()
-
-	// Section: Capabilities
-	fmt.Println(theme.SuccessStyle.Render("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
-	fmt.Println(theme.GlowStyle.Render("  ⚡ CAPABILITIES"))
-	fmt.Println(theme.SuccessStyle.Render("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
-	fmt.Println()
-
-	capabilities := []struct {
-		icon    string
-		name    string
-		desc    string
-		cmd     string
+	categories := []struct {
+		emoji string
+		name  string
+		desc  string
 	}{
-		{"🤖", "Claude Code Integration", "65 specialized AI agents for any task", "anime claude agents push"},
-		{"☁️ ", "Lambda Cloud", "Launch, SSH, manage GH200 GPU instances", "anime lambda list"},
-		{"📦", "Package Management", "Install AI/ML stack with dependencies", "anime packages"},
-		{"🎨", "AI Models", "Browse & install LLMs, SD, video models", "anime models"},
-		{"🎬", "Video Generation", "Reel workflows for AI video pipelines", "anime reel"},
-		{"🔄", "Source Sync", "Rsync-based code deployment", "anime source push"},
-		{"🚀", "Remote Deploy", "Push CLI + agents to any server", "anime push"},
+		{"📦", "Package Management", "install, packages, interactive"},
+		{"🤖", "LLM Operations", "query (query Ollama models)"},
+		{"🏥", "Diagnostics", "doctor (analyze installation failures)"},
+		{"🖥️ ", "Server Management", "add, list, remove, status"},
+		{"⚙️ ", "Configuration", "config, modules, set-modules"},
+		{"🎨", "Models & Resources", "models (list downloaded AI models)"},
+		{"🚀", "Deployment", "deploy, gen, sequence, templates"},
+		{"📜", "Development Logs", "logs dev list, features, changelist"},
+		{"🎯", "Navigation", "tree, help, completion"},
 	}
 
-	for _, cap := range capabilities {
-		fmt.Printf("  %s %s\n", cap.icon, theme.SuccessStyle.Render(cap.name))
-		fmt.Printf("     %s\n", theme.DimTextStyle.Render(cap.desc))
-		fmt.Printf("     %s\n", theme.HighlightStyle.Render(cap.cmd))
-		fmt.Println()
+	for _, cat := range categories {
+		fmt.Printf("  %s %s  %s\n",
+			cat.emoji,
+			theme.SuccessStyle.Render(cat.name),
+			theme.DimTextStyle.Render("→ "+cat.desc))
 	}
 
-	// Section: Quick Start
-	fmt.Println(theme.SuccessStyle.Render("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
-	fmt.Println(theme.GlowStyle.Render("  🚀 QUICK START"))
-	fmt.Println(theme.SuccessStyle.Render("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
 	fmt.Println()
-
-	quickStart := []struct {
-		cmd  string
-		desc string
-	}{
-		{"anime claude agents push", "Deploy AI agents to Claude Code"},
-		{"anime interactive", "TUI package selector"},
-		{"anime extract --embedded", "Extract source code anywhere"},
-		{"anime push <server>", "Deploy CLI to remote server"},
-		{"anime contents", "Browse everything embedded"},
-		{"anime packages", "List installable packages"},
-		{"anime models", "Browse AI models catalog"},
-		{"anime tree", "Full command tree"},
-	}
-
-	for _, qs := range quickStart {
-		fmt.Printf("  %s\n", theme.HighlightStyle.Render(qs.cmd))
-		fmt.Printf("     %s\n", theme.DimTextStyle.Render(qs.desc))
-	}
+	fmt.Println(theme.DimTextStyle.Render("  Run 'anime tree' for full command tree"))
+	fmt.Println(theme.DimTextStyle.Render("  Run 'anime <command> --help' for command details"))
 	fmt.Println()
-
-	// Footer
-	fmt.Println(theme.DimTextStyle.Render("  ─────────────────────────────────────────────────────────────"))
-	fmt.Printf("  %s %s    %s %s\n",
-		theme.DimTextStyle.Render("Version:"),
-		theme.InfoStyle.Render(Version),
-		theme.DimTextStyle.Render("Help:"),
-		theme.HighlightStyle.Render("anime <command> --help"))
-	fmt.Println()
-}
-
-// countEmbeddedAgents returns the number of agents embedded in the binary
-func countEmbeddedAgents() int {
-	entries, err := embeddedAgents.ReadDir("embedded/agents")
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			count++
-		}
-	}
-	return count
 }
 
 func showVersion() {
@@ -442,13 +357,6 @@ func showCommandError(cmd *cobra.Command, args []string, err error) {
 func Execute() error {
 	err := rootCmd.Execute()
 	if err != nil {
-		// Check if it's a DetailedError
-		var detailedErr *errors.DetailedError
-		if stderrors.As(err, &detailedErr) {
-			showDetailedError(detailedErr)
-			return err
-		}
-
 		// Get the args that were attempted from os.Args
 		// Skip the first arg (program name)
 		args := []string{}
@@ -463,7 +371,6 @@ func Execute() error {
 	return nil
 }
 
-
 func isOllamaAvailable() bool {
 	resp, err := http.Get("http://localhost:11434")
 	if err != nil {
@@ -474,23 +381,6 @@ func isOllamaAvailable() bool {
 }
 
 func init() {
-	// Initialize logger and color profile on startup, in that order.
-	cobra.OnInitialize(initLogger, initColor)
-
-	// Always set HF_TOKEN from embedded value if not already set so the
-	// model-download paths just work on a fresh box. Empty embedded value
-	// is harmless; downstream code treats empty as "no token".
-	if os.Getenv("HF_TOKEN") == "" {
-		os.Setenv("HF_TOKEN", hf.GetToken())
-	}
-	// Same pattern for GH_TOKEN — when set, the comfort installer's HTTPS
-	// fallback uses it without needing the user to log in via gh CLI. The
-	// embedded value is empty by default; populate via:
-	//     anime embed token gh ghp_...
-	if os.Getenv("GH_TOKEN") == "" && gh.GetToken() != "" {
-		os.Setenv("GH_TOKEN", gh.GetToken())
-	}
-
 	// Configure error handling
 	rootCmd.SilenceErrors = true // We'll handle errors ourselves
 	rootCmd.SilenceUsage = true  // Don't show usage on errors
@@ -505,160 +395,11 @@ func init() {
 	rootCmd.Flags().BoolVar(&verifyEmbedFlag, "verify-embed", false, "Verify source embedding (for build verification)")
 	rootCmd.Flags().MarkHidden("verify-embed")
 
-	// Add logging flags
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "error", "Log level (debug|info|warn|error)")
-	rootCmd.PersistentFlags().StringVar(&logFile, "log-file", "", "Log file path (default: stderr)")
-	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging (shorthand for --log-level=debug)")
-
-	// Color control: by default we auto-detect (TTY → colors, pipe → no
-	// colors). --color=always force-enables; --color=never strips. Also
-	// respects the standard env vars NO_COLOR / FORCE_COLOR / CLICOLOR_FORCE.
-	rootCmd.PersistentFlags().StringVar(&colorMode, "color", "auto", "Color output (auto|always|never). Also: FORCE_COLOR=1 / NO_COLOR")
-
-	// Add SSH security flags
-	rootCmd.PersistentFlags().BoolVar(&SSHInsecure, "insecure", false, "Disable SSH host key verification (INSECURE - not recommended)")
-	rootCmd.PersistentFlags().BoolVar(&SSHStrictHostKeyChecking, "strict-host-key-checking", true, "Enable strict SSH host key checking (default: true)")
-	rootCmd.PersistentFlags().BoolVar(&SSHNonInteractive, "non-interactive", false, "Non-interactive mode - fail on unknown host keys instead of prompting")
-
 	// Keep old commands for backwards compatibility
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(statusCmd)
 	// Note: addCmd, genCmd, installNewCmd, modulesCmd, removeCmd, and sequenceCmd are registered in their respective files
-}
-
-// initColor decides the lipgloss color profile based on (in priority order):
-//
-//  1. --color=always|never (explicit user choice)
-//  2. NO_COLOR env (any value → strip)
-//  3. FORCE_COLOR / CLICOLOR_FORCE env (any value → force)
-//  4. Auto: lipgloss/termenv default — colors when stdout is a TTY, none otherwise
-//
-// The default lipgloss behavior (auto) is what most users expect, but it's
-// easy to land in a non-TTY situation accidentally (screen, tmux without
-// xterm-256color, captured output) and lose colors entirely. Setting
-// FORCE_COLOR=1 or `--color=always` rescues those cases.
-func initColor() {
-	mode := strings.ToLower(strings.TrimSpace(colorMode))
-	if mode == "" {
-		mode = "auto"
-	}
-	// Subcommands with DisableFlagParsing=true (e.g., anime wan render) skip
-	// ALL flag parsing including persistent flags, so the cobra-bound
-	// `colorMode` stays at "auto" no matter what the user typed. Fall back
-	// to scanning os.Args directly so --color works there too.
-	if mode == "auto" {
-		for i, a := range os.Args {
-			switch {
-			case strings.HasPrefix(a, "--color="):
-				mode = strings.ToLower(strings.TrimPrefix(a, "--color="))
-			case a == "--color" && i+1 < len(os.Args):
-				mode = strings.ToLower(os.Args[i+1])
-			}
-		}
-	}
-	if mode == "auto" {
-		if os.Getenv("NO_COLOR") != "" {
-			mode = "never"
-		} else if os.Getenv("FORCE_COLOR") != "" || os.Getenv("CLICOLOR_FORCE") != "" {
-			mode = "always"
-		}
-	}
-	switch mode {
-	case "always", "force", "1", "true", "yes":
-		lipgloss.SetColorProfile(termenv.TrueColor)
-		// Propagate to child processes (wan.py, npm, screen-launched ComfyUI)
-		// that have their own color logic. Set both env vars so anything
-		// following either convention picks it up.
-		if os.Getenv("FORCE_COLOR") == "" {
-			os.Setenv("FORCE_COLOR", "1")
-		}
-		os.Unsetenv("NO_COLOR") // an explicit FORCE wins over a stale NO_COLOR
-	case "never", "off", "0", "false", "no":
-		lipgloss.SetColorProfile(termenv.Ascii)
-		if os.Getenv("NO_COLOR") == "" {
-			os.Setenv("NO_COLOR", "1")
-		}
-		os.Unsetenv("FORCE_COLOR")
-	}
-	// "auto" with no overriding env: leave the lipgloss default + child env alone.
-}
-
-// stripRootFlags removes flags that belong to rootCmd from `args` so they
-// don't leak into downstream argparse-based tools (most notably wan.py via
-// the DisableFlagParsing=true subcommands). Applied effects (like --color)
-// have already been picked up by initColor's os.Args scan, so it's safe to
-// drop them here.
-func stripRootFlags(args []string) []string {
-	known := map[string]bool{
-		"--color": true, "--debug": true,
-		"--log-level": true, "--log-file": true,
-		"--insecure": true, "--strict-host-key-checking": true, "--non-interactive": true,
-	}
-	// Bool flags don't consume the next arg as a value.
-	bools := map[string]bool{
-		"--debug": true, "--insecure": true,
-		"--strict-host-key-checking": true, "--non-interactive": true,
-	}
-	out := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if eq := strings.IndexByte(a, '='); eq > 0 {
-			if known[a[:eq]] {
-				continue
-			}
-		}
-		if known[a] {
-			if !bools[a] && i+1 < len(args) {
-				i++ // consume value
-			}
-			continue
-		}
-		out = append(out, a)
-	}
-	return out
-}
-
-// initLogger initializes the global logger based on flags
-func initLogger() {
-	// If debug flag is set, override log level
-	if debug {
-		logLevel = "debug"
-	}
-
-	// Parse log level
-	var level slog.Level
-	switch strings.ToLower(logLevel) {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
-		level = slog.LevelError
-	}
-
-	// Initialize logger
-	if err := logger.Init(level, logFile); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Log initialization
-	logger.Debug("Logger initialized",
-		"level", logLevel,
-		"output", func() string {
-			if logFile != "" {
-				return logFile
-			}
-			return "stderr"
-		}(),
-		"version", Version,
-		"commit", Commit,
-	)
 }
 
 // showStylizedHelp displays a beautiful styled help output
@@ -696,20 +437,17 @@ func showRootHelp() {
 		emoji    string
 		commands []string
 	}{
-		{"Getting Started", "🚀", []string{"walkthrough", "docs", "wizard", "tree", "contents", "help"}},
-		{"Claude Code", "🤖", []string{"claude", "key"}},
-		{"Lambda Cloud", "☁️ ", []string{"lambda", "add", "list", "remove", "ssh", "status"}},
-		{"Package Management", "📦", []string{"packages", "install", "interactive", "library", "cpm", "explore"}},
-		{"Models & AI", "🧠", []string{"models", "ollama", "llm", "query", "prompt"}},
-		{"Services", "⚡", []string{"start", "comfyui", "ui", "notebook", "run", "serve"}},
-		{"Deployment", "🎯", []string{"deploy", "push", "source", "bootstrap", "ship", "rsync"}},
-		{"Source Code", "📜", []string{"extract", "build", "develop", "home"}},
-		{"Generation", "🎬", []string{"generate", "animate", "upscale", "reel", "sky"}},
-		{"Workflows", "🎨", []string{"browse-workflows", "collection", "suggest", "dashboard", "studio"}},
-		{"Git & GitHub", "🔀", []string{"git", "github", "gh"}},
-		{"Configuration", "⚙️", []string{"config", "modules", "set-modules", "set", "db"}},
-		{"Diagnostics", "🏥", []string{"doctor", "jobs", "metrics", "logs", "billing", "validate"}},
-		{"Updates", "📋", []string{"update", "updates", "resume", "rollback"}},
+		{"Getting Started", "🚀", []string{"walkthrough", "guide", "wizard", "tree", "help"}},
+		{"Package Management", "📦", []string{"packages", "install", "interactive", "library", "explore"}},
+		{"Models & AI", "🤖", []string{"models", "ollama", "llm", "query", "prompt"}},
+		{"Server Management", "🖥️", []string{"add", "list", "remove", "ssh", "status", "reboot"}},
+		{"Services", "⚡", []string{"start", "comfyui", "ui", "notebook", "run"}},
+		{"Deployment", "🎯", []string{"deploy", "bootstrap", "push", "ship"}},
+		{"Configuration", "⚙️", []string{"config", "modules", "set-modules", "set"}},
+		{"Generation", "🎬", []string{"generate", "animate", "upscale", "reel"}},
+		{"Workflows", "🎨", []string{"browse-workflows", "collection", "suggest"}},
+		{"Diagnostics", "🏥", []string{"doctor", "jobs", "metrics", "logs", "billing"}},
+		{"Updates", "📋", []string{"update", "updates"}},
 	}
 
 	fmt.Printf("  %s\n", theme.GlowStyle.Render("Commands"))
@@ -733,8 +471,8 @@ func showRootHelp() {
 	}
 
 	// Show a few more important commands not in groups
-	fmt.Printf("  %s %s\n", "🔧", theme.SuccessStyle.Render("Utilities"))
-	otherCmds := []string{"aliases", "purge", "reboot", "dns", "enhance", "completion"}
+	fmt.Printf("  %s %s\n", "📜", theme.SuccessStyle.Render("Other Commands"))
+	otherCmds := []string{"aliases", "purge", "home", "develop", "completion"}
 	for _, cmdName := range otherCmds {
 		for _, subCmd := range rootCmd.Commands() {
 			if subCmd.Name() == cmdName && !subCmd.Hidden {
@@ -863,61 +601,5 @@ func showSubcommandHelp(cmd *cobra.Command) {
 
 	// Footer
 	fmt.Printf("  %s\n", theme.DimTextStyle.Render("Use \"anime [command] --help\" for more information about a command."))
-	fmt.Println()
-}
-
-// showDetailedError displays a beautifully formatted DetailedError
-func showDetailedError(err *errors.DetailedError) {
-	fmt.Println()
-	fmt.Println(theme.ErrorStyle.Render("❌ Error"))
-	fmt.Println()
-
-	// Show what failed
-	if err.Operation != "" {
-		fmt.Printf("  %s %s\n",
-			theme.WarningStyle.Render("Operation:"),
-			theme.HighlightStyle.Render("Failed to "+err.Operation))
-		fmt.Println()
-	}
-
-	// Show the underlying error
-	if err.Cause != nil {
-		fmt.Printf("  %s\n", theme.ErrorStyle.Render("Reason:"))
-		fmt.Printf("    %s\n", theme.DimTextStyle.Render(err.Cause.Error()))
-		fmt.Println()
-	}
-
-	// Show context if available
-	if len(err.Context) > 0 {
-		fmt.Printf("  %s\n", theme.InfoStyle.Render("Context:"))
-		for _, ctx := range err.Context {
-			fmt.Printf("    %s %s\n",
-				theme.SuccessStyle.Render("•"),
-				theme.DimTextStyle.Render(ctx))
-		}
-		fmt.Println()
-	}
-
-	// Show suggestions prominently
-	if len(err.Suggestions) > 0 {
-		fmt.Println(theme.GlowStyle.Render("  💡 How to Fix This:"))
-		fmt.Println()
-		for i, suggestion := range err.Suggestions {
-			// Highlight the first 2 suggestions more prominently
-			if i < 2 {
-				fmt.Printf("    %s %s\n",
-					theme.SuccessStyle.Render("→"),
-					theme.HighlightStyle.Render(suggestion))
-			} else {
-				fmt.Printf("    %s %s\n",
-					theme.DimTextStyle.Render("•"),
-					theme.DimTextStyle.Render(suggestion))
-			}
-		}
-		fmt.Println()
-	}
-
-	// Footer
-	fmt.Printf("  %s\n", theme.DimTextStyle.Render("Need more help? Run 'anime help' or check the documentation"))
 	fmt.Println()
 }

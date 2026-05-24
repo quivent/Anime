@@ -2,511 +2,43 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
-	"sync"
 
 	"github.com/joshkornreich/anime/internal/defaults"
-	"github.com/joshkornreich/anime/internal/errors"
-	"github.com/joshkornreich/anime/internal/embeddb"
 	"gopkg.in/yaml.v3"
 )
 
-// ============================================================================
-// CONFIG CACHING - Avoids repeated disk reads
-// ============================================================================
-
-var (
-	cachedConfig     *Config
-	cachedConfigErr  error
-	configOnce       sync.Once
-	configMutex      sync.RWMutex
-)
-
-// LoadCached returns a cached config, loading once on first call.
-// Use this for read-only access to avoid repeated disk reads.
-// For writes, use Load() followed by Save().
-func LoadCached() (*Config, error) {
-	configOnce.Do(func() {
-		cachedConfig, cachedConfigErr = Load()
-	})
-	return cachedConfig, cachedConfigErr
-}
-
-// InvalidateCache clears the cached config, forcing a reload on next LoadCached().
-// Call this after Save() or any config modification.
-func InvalidateCache() {
-	configMutex.Lock()
-	defer configMutex.Unlock()
-	configOnce = sync.Once{} // Reset the Once so next LoadCached reloads
-	cachedConfig = nil
-	cachedConfigErr = nil
-}
-
-// isValidHostOrIP validates if a string is a valid hostname or IP address
-func isValidHostOrIP(host string) bool {
-	// Check if it's a valid IP address
-	if ip := net.ParseIP(host); ip != nil {
-		return true
-	}
-
-	// If it looks like an IPv4 address (all numeric parts), reject it if ParseIP failed
-	// This catches invalid IPs like "192.168.1.999"
-	ipv4Pattern := regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$`)
-	if ipv4Pattern.MatchString(host) {
-		return false // Looks like IPv4 but ParseIP failed, so it's invalid
-	}
-
-	// Check if it's a valid hostname (RFC 1123)
-	hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$`)
-	return hostnameRegex.MatchString(host)
-}
-
-// expandPath expands ~ to user home directory
-func expandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return path
-		}
-		return filepath.Join(home, path[2:])
-	}
-	return path
-}
-
 type Config struct {
-	Servers        []Server          `yaml:"servers"`
-	APIKeys        APIKeys           `yaml:"api_keys"`
-	Aliases        map[string]string `yaml:"aliases,omitempty"`
-	ShellAliases   map[string]string `yaml:"shell_aliases,omitempty"`
-	Collections    []Collection      `yaml:"collections,omitempty"`
-	Users          []User            `yaml:"users,omitempty"`
-	ActiveUser     string            `yaml:"active_user,omitempty"`
+	Servers      []Server          `yaml:"servers"`
+	APIKeys      APIKeys           `yaml:"api_keys"`
+	Aliases      map[string]string `yaml:"aliases,omitempty"`
+	ShellAliases map[string]string `yaml:"shell_aliases,omitempty"`
+	Collections  []Collection      `yaml:"collections,omitempty"`
+	Users        []User            `yaml:"users,omitempty"`
+	ActiveUser   string            `yaml:"active_user,omitempty"`
 	Workflows      []WorkflowProfile `yaml:"workflows,omitempty"`
 	ActiveWorkflow string            `yaml:"active_workflow,omitempty"`
-	Capsules          []Capsule         `yaml:"capsules,omitempty"`
-	DefaultServer     string            `yaml:"default_server,omitempty"`
-	SourceServer      string            `yaml:"source_server,omitempty"`
-	SourceBasePath    string            `yaml:"source_base_path,omitempty"`
-	LaunchedApps      []LaunchedApp     `yaml:"launched_apps,omitempty"`
 }
 
-// LaunchedApp represents a deployed and running web application
-type LaunchedApp struct {
-	Name        string `yaml:"name"`
-	Path        string `yaml:"path"`
-	ProjectType string `yaml:"project_type"`
-	RunCommand  string `yaml:"run_command"`
-	Port        int    `yaml:"port"`
-	Domain      string `yaml:"domain,omitempty"`
-	Server      string `yaml:"server,omitempty"`
-	RemotePath  string `yaml:"remote_path,omitempty"`
-	ServiceName    string `yaml:"service_name"`
-	AuthType       string `yaml:"auth_type,omitempty"` // DEPRECATED: use Auth
-	SSLEnabled     bool   `yaml:"ssl_enabled,omitempty"`
-	PackageManager string `yaml:"package_manager,omitempty"`
-	DatabaseType   string `yaml:"database_type,omitempty"`
-	DatabaseName   string `yaml:"database_name,omitempty"`
-	DatabaseUser   string `yaml:"database_user,omitempty"`
-	DatabaseLocal  bool   `yaml:"database_local,omitempty"`
-	MigrationsRun  bool   `yaml:"migrations_run,omitempty"`
-	CreatedAt      string `yaml:"created_at"`
-
-	// Auth holds the full authentication configuration
-	Auth *AppAuthConfig `yaml:"auth,omitempty"`
-}
-
-// AppAuthConfig holds complete authentication configuration for a launched app
-type AppAuthConfig struct {
-	// Methods enabled for this app (can combine multiple)
-	// Values: "none", "basic", "oauth2-google", "oauth2-github", "oauth2-oidc", "web3-siwe", "api-key"
-	Methods []string `yaml:"methods,omitempty"`
-
-	// OAuth2 configuration
-	OAuth2 *AppOAuth2Config `yaml:"oauth2,omitempty"`
-
-	// Basic auth configuration
-	Basic *AppBasicAuthConfig `yaml:"basic,omitempty"`
-
-	// Web3/SIWE configuration
-	Web3 *AppWeb3Config `yaml:"web3,omitempty"`
-
-	// API key configuration
-	APIKey *AppAPIKeyConfig `yaml:"api_key,omitempty"`
-
-	// IP access control
-	IPAccess *AppIPAccessConfig `yaml:"ip_access,omitempty"`
-
-	// Rate limiting
-	RateLimit *AppRateLimitConfig `yaml:"rate_limit,omitempty"`
-
-	// Security headers
-	Security *AppSecurityConfig `yaml:"security,omitempty"`
-}
-
-// AppOAuth2Config holds OAuth2 provider settings
-type AppOAuth2Config struct {
-	Provider     string   `yaml:"provider"`                // google, github, oidc
-	ClientID     string   `yaml:"client_id"`
-	ClientSecret string   `yaml:"client_secret"`
-	CookieSecret string   `yaml:"cookie_secret"`
-	EmailDomain  string   `yaml:"email_domain,omitempty"`  // Google: * for any
-	Org          string   `yaml:"org,omitempty"`           // GitHub: require org
-	Team         string   `yaml:"team,omitempty"`          // GitHub: require team
-	IssuerURL    string   `yaml:"issuer_url,omitempty"`    // OIDC issuer
-	Scopes       []string `yaml:"scopes,omitempty"`
-}
-
-// AppBasicAuthConfig holds basic auth settings
-type AppBasicAuthConfig struct {
-	Username     string `yaml:"username"`
-	PasswordHash string `yaml:"password_hash"`
-	Realm        string `yaml:"realm,omitempty"`
-}
-
-// AppWeb3Config holds SIWE settings
-type AppWeb3Config struct {
-	ChainID          int      `yaml:"chain_id"`
-	AllowedAddresses []string `yaml:"allowed_addresses,omitempty"`
-	ServicePort      int      `yaml:"service_port"`
-	NonceExpiry      string   `yaml:"nonce_expiry,omitempty"`
-	SessionTTL       string   `yaml:"session_ttl,omitempty"`
-}
-
-// AppAPIKeyConfig holds API key settings
-type AppAPIKeyConfig struct {
-	HeaderName string      `yaml:"header_name"`
-	Keys       []AppAPIKey `yaml:"keys"`
-}
-
-// AppAPIKey represents a single API key
-type AppAPIKey struct {
-	ID        string   `yaml:"id"`
-	Name      string   `yaml:"name"`
-	KeyHash   string   `yaml:"key_hash"`
-	Scopes    []string `yaml:"scopes,omitempty"`
-	RateLimit int      `yaml:"rate_limit,omitempty"`
-	ExpiresAt string   `yaml:"expires_at,omitempty"`
-	CreatedAt string   `yaml:"created_at"`
-	LastUsed  string   `yaml:"last_used,omitempty"`
-}
-
-// AppIPAccessConfig holds IP access control settings
-type AppIPAccessConfig struct {
-	Mode  string   `yaml:"mode"`  // "allow" or "deny"
-	CIDRs []string `yaml:"cidrs"`
-}
-
-// AppRateLimitConfig holds rate limiting settings
-type AppRateLimitConfig struct {
-	RequestsPerSec int    `yaml:"requests_per_sec"`
-	BurstSize      int    `yaml:"burst_size"`
-	ZoneSize       string `yaml:"zone_size"`
-}
-
-// AppSecurityConfig holds security header settings
-type AppSecurityConfig struct {
-	HSTS            bool   `yaml:"hsts"`
-	HSTSMaxAge      int    `yaml:"hsts_max_age,omitempty"`
-	HSTSIncludeSubs bool   `yaml:"hsts_include_subs,omitempty"`
-	CSP             string `yaml:"csp,omitempty"`
-	XFrameOptions   string `yaml:"x_frame_options,omitempty"`
-	XContentType    bool   `yaml:"x_content_type_options"`
-	ReferrerPolicy  string `yaml:"referrer_policy,omitempty"`
-}
-
-// HasAuthMethod checks if a specific auth method is enabled
-func (c *AppAuthConfig) HasAuthMethod(method string) bool {
-	if c == nil {
-		return false
-	}
-	for _, m := range c.Methods {
-		if m == method {
-			return true
-		}
-	}
-	return false
-}
-
-// IsEmpty returns true if no authentication is configured
-func (c *AppAuthConfig) IsEmpty() bool {
-	if c == nil {
-		return true
-	}
-	return len(c.Methods) == 0 || (len(c.Methods) == 1 && c.Methods[0] == "none")
-}
-
-// GetEffectiveAuth returns the auth config, migrating from legacy AuthType if needed
-func (app *LaunchedApp) GetEffectiveAuth() *AppAuthConfig {
-	if app.Auth != nil {
-		return app.Auth
-	}
-	// Migrate legacy AuthType
-	if app.AuthType != "" {
-		auth := &AppAuthConfig{}
-		switch app.AuthType {
-		case "oauth2":
-			auth.Methods = []string{"oauth2-google"}
-		case "basic":
-			auth.Methods = []string{"basic"}
-		default:
-			auth.Methods = []string{"none"}
-		}
-		return auth
-	}
-	return &AppAuthConfig{Methods: []string{"none"}}
-}
-
-// Capsule represents a saved environment/deployment capsule
-type Capsule struct {
-	Name        string            `yaml:"name"`
-	Description string            `yaml:"description,omitempty"`
-	Server      string            `yaml:"server,omitempty"`
-	Env         map[string]string `yaml:"env,omitempty"`
-	Path        string            `yaml:"path,omitempty"`
-	BuildCmd    string            `yaml:"build_cmd,omitempty"`
-	Binary      string            `yaml:"binary,omitempty"`
-}
-
-// GetExpandedPath returns the path with ~ expanded
-func (c *Capsule) GetExpandedPath() string {
-	return expandPath(c.Path)
-}
-
-// GetBuildCommand returns the build command or default
-func (c *Capsule) GetBuildCommand() string {
-	if c.BuildCmd != "" {
-		return c.BuildCmd
-	}
-	return "go build"
-}
-
-// DeleteWorkflow removes a workflow by name
-func (c *Config) DeleteWorkflow(name string) error {
-	for i, w := range c.Workflows {
-		if w.Name == name {
-			c.Workflows = append(c.Workflows[:i], c.Workflows[i+1:]...)
-			if c.ActiveWorkflow == name {
-				c.ActiveWorkflow = ""
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-// AddWorkflow adds or updates a workflow
-func (c *Config) AddWorkflow(wf WorkflowProfile) error {
-	for i, w := range c.Workflows {
-		if w.Name == wf.Name {
-			c.Workflows[i] = wf
-			return nil
-		}
-	}
-	c.Workflows = append(c.Workflows, wf)
-	return nil
-}
-
-// ListWorkflows returns all workflows
-func (c *Config) ListWorkflows() []WorkflowProfile {
-	return c.Workflows
-}
-
-// GetWorkflow returns a workflow by name
-func (c *Config) GetWorkflow(name string) (*WorkflowProfile, error) {
-	for i := range c.Workflows {
-		if c.Workflows[i].Name == name {
-			return &c.Workflows[i], nil
-		}
-	}
-	return nil, fmt.Errorf("workflow %s not found", name)
-}
-
-// AddCapsule adds or updates a capsule
-func (c *Config) AddCapsule(cap Capsule) error {
-	for i, cp := range c.Capsules {
-		if cp.Name == cap.Name {
-			c.Capsules[i] = cap
-			return nil
-		}
-	}
-	c.Capsules = append(c.Capsules, cap)
-	return nil
-}
-
-// DeleteCapsule removes a capsule by name
-func (c *Config) DeleteCapsule(name string) error {
-	for i, cp := range c.Capsules {
-		if cp.Name == name {
-			c.Capsules = append(c.Capsules[:i], c.Capsules[i+1:]...)
-			return nil
-		}
-	}
-	return nil
-}
-
-// ListCapsules returns all capsules
-func (c *Config) ListCapsules() []Capsule {
-	return c.Capsules
-}
-
-// GetCapsule returns a capsule by name
-func (c *Config) GetCapsule(name string) (*Capsule, error) {
-	for i := range c.Capsules {
-		if c.Capsules[i].Name == name {
-			return &c.Capsules[i], nil
-		}
-	}
-	return nil, fmt.Errorf("capsule %s not found", name)
-}
-
-// GetDefaultServer returns the default server name or first server if not set
-func (c *Config) GetDefaultServer() string {
-	if c.DefaultServer != "" {
-		return c.DefaultServer
-	}
-	if len(c.Servers) > 0 {
-		return c.Servers[0].Name
-	}
-	return ""
-}
-
-// GetSourceServer returns the configured source server or empty string
-func (c *Config) GetSourceServer() string {
-	return c.SourceServer
-}
-
-// GetSourceBasePath returns the configured source base path or empty string
-func (c *Config) GetSourceBasePath() string {
-	return c.SourceBasePath
-}
-
-// SetSourceDefault sets the source server and base path
-func (c *Config) SetSourceDefault(server, basePath string) {
-	c.SourceServer = server
-	c.SourceBasePath = basePath
-}
-
-// AddLaunchedApp adds a launched app to the config
-func (c *Config) AddLaunchedApp(app LaunchedApp) {
-	// Replace if same name exists
-	for i, a := range c.LaunchedApps {
-		if a.Name == app.Name {
-			c.LaunchedApps[i] = app
-			return
-		}
-	}
-	c.LaunchedApps = append(c.LaunchedApps, app)
-}
-
-// GetLaunchedApp returns a launched app by name
-func (c *Config) GetLaunchedApp(name string) (*LaunchedApp, error) {
-	for i := range c.LaunchedApps {
-		if c.LaunchedApps[i].Name == name {
-			return &c.LaunchedApps[i], nil
-		}
-	}
-	return nil, fmt.Errorf("launched app %s not found", name)
-}
-
-// DeleteLaunchedApp removes a launched app by name
-func (c *Config) DeleteLaunchedApp(name string) error {
-	for i, a := range c.LaunchedApps {
-		if a.Name == name {
-			c.LaunchedApps = append(c.LaunchedApps[:i], c.LaunchedApps[i+1:]...)
-			return nil
-		}
-	}
-	return fmt.Errorf("launched app %s not found", name)
-}
-
-// RemoveLaunchedApp removes a launched app by name (does not error if not found)
-func (c *Config) RemoveLaunchedApp(name string) {
-	apps := []LaunchedApp{}
-	for _, app := range c.LaunchedApps {
-		if app.Name != name {
-			apps = append(apps, app)
-		}
-	}
-	c.LaunchedApps = apps
-}
-
-// SetActiveWorkflow sets the active workflow
-func (c *Config) SetActiveWorkflow(name string) error {
-	c.ActiveWorkflow = name
-	return nil
-}
-
-// GetActiveWorkflow returns the currently active workflow
-func (c *Config) GetActiveWorkflow() (*WorkflowProfile, error) {
-	if c.ActiveWorkflow == "" {
-		return nil, fmt.Errorf("no active workflow set")
-	}
-	return c.GetWorkflow(c.ActiveWorkflow)
-}
-
-// CloneWorkflow creates a copy of a workflow with a new name
-func (c *Config) CloneWorkflow(srcName, newName string) error {
-	for _, w := range c.Workflows {
-		if w.Name == srcName {
-			clone := w
-			clone.Name = newName
-			c.Workflows = append(c.Workflows, clone)
-			return nil
-		}
-	}
-	return fmt.Errorf("workflow %s not found", srcName)
-}
-
-// LLMServerType represents the type of LLM inference server
+// LLMServerType represents a supported LLM inference server
 type LLMServerType string
 
 const (
 	ServerOllama    LLMServerType = "ollama"
 	ServerVLLM      LLMServerType = "vllm"
-	ServerTensorRT  LLMServerType = "tensorrt"
-	ServerLlamaCpp  LLMServerType = "llama-cpp"
+	ServerTensorRT  LLMServerType = "tensorrt-llm"
+	ServerLlamaCpp  LLMServerType = "llama.cpp"
 	ServerExllamaV2 LLMServerType = "exllamav2"
 )
 
-// GPUConfig represents GPU configuration for a workflow
-type GPUConfig struct {
-	TotalGPUs   int    `yaml:"total_gpus,omitempty"`
-	GPUType     string `yaml:"gpu_type,omitempty"`
-	GPUMemoryGB int    `yaml:"gpu_memory_gb,omitempty"`
-}
-
-// Optimizations represents performance optimization settings
-type Optimizations struct {
-	FlashAttention      bool   `yaml:"flash_attention,omitempty"`
-	PagedAttention      bool   `yaml:"paged_attention,omitempty"`
-	SpeculativeDecoding bool   `yaml:"speculative_decoding,omitempty"`
-	ContinuousBatching  bool   `yaml:"continuous_batching,omitempty"`
-	ChunkedPrefill      bool   `yaml:"chunked_prefill,omitempty"`
-	PrefixCaching       bool   `yaml:"prefix_caching,omitempty"`
-	DraftModel          string `yaml:"draft_model,omitempty"`
-}
-
-// ModelDeployment represents a model deployment configuration
-type ModelDeployment struct {
-	ID      string `yaml:"id"`
-	Name    string `yaml:"name"`
-	Model   string `yaml:"model"`
-	Active  bool   `yaml:"active,omitempty"`
-	Enabled bool   `yaml:"enabled,omitempty"`
-	GPUs    []int  `yaml:"gpus,omitempty"`
-}
-
-// WorkflowProfile represents a saved workflow configuration
+// WorkflowProfile defines an LLM serving workflow configuration
 type WorkflowProfile struct {
 	Name          string            `yaml:"name"`
 	Description   string            `yaml:"description,omitempty"`
-	Server        LLMServerType     `yaml:"server"`
-	ServerType    LLMServerType     `yaml:"server_type"`
-	Model         string            `yaml:"model"`
+	Server        LLMServerType     `yaml:"server,omitempty"`
+	ServerType    LLMServerType     `yaml:"server_type,omitempty"`
+	Model         string            `yaml:"model,omitempty"`
 	Port          int               `yaml:"port,omitempty"`
 	GPULayers     int               `yaml:"gpu_layers,omitempty"`
 	Context       int               `yaml:"context,omitempty"`
@@ -520,6 +52,97 @@ type WorkflowProfile struct {
 	PostCommands  []string          `yaml:"post_commands,omitempty"`
 }
 
+// GPUConfig holds GPU resource settings for a workflow
+type GPUConfig struct {
+	TotalGPUs  int    `yaml:"total_gpus,omitempty"`
+	GPUType    string `yaml:"gpu_type,omitempty"`
+	GPUMemoryGB int   `yaml:"gpu_memory_gb,omitempty"`
+}
+
+// ModelDeployment represents a model to be deployed in a workflow
+type ModelDeployment struct {
+	ID      string `yaml:"id"`
+	Enabled bool   `yaml:"enabled,omitempty"`
+	GPUs    int    `yaml:"gpus,omitempty"`
+}
+
+// Optimizations holds inference optimization flags
+type Optimizations struct {
+	FlashAttention      bool   `yaml:"flash_attention,omitempty"`
+	PagedAttention      bool   `yaml:"paged_attention,omitempty"`
+	SpeculativeDecoding bool   `yaml:"speculative_decoding,omitempty"`
+	ContinuousBatching  bool   `yaml:"continuous_batching,omitempty"`
+	ChunkedPrefill      bool   `yaml:"chunked_prefill,omitempty"`
+	PrefixCaching       bool   `yaml:"prefix_caching,omitempty"`
+	DraftModel          string `yaml:"draft_model,omitempty"`
+}
+
+// AddWorkflow adds a workflow profile to the config
+func (c *Config) AddWorkflow(w WorkflowProfile) {
+	c.Workflows = append(c.Workflows, w)
+}
+
+// DeleteWorkflow removes a workflow by name
+func (c *Config) DeleteWorkflow(name string) error {
+	for i, w := range c.Workflows {
+		if w.Name == name {
+			c.Workflows = append(c.Workflows[:i], c.Workflows[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("workflow %q not found", name)
+}
+
+// ListWorkflows returns all workflow profiles
+func (c *Config) ListWorkflows() []WorkflowProfile {
+	return c.Workflows
+}
+
+// GetWorkflow returns a workflow by name
+func (c *Config) GetWorkflow(name string) (*WorkflowProfile, error) {
+	for i := range c.Workflows {
+		if c.Workflows[i].Name == name {
+			return &c.Workflows[i], nil
+		}
+	}
+	return nil, fmt.Errorf("workflow %q not found", name)
+}
+
+// SetActiveWorkflow sets the active workflow by name
+func (c *Config) SetActiveWorkflow(name string) error {
+	if name == "" {
+		c.ActiveWorkflow = ""
+		return nil
+	}
+	for _, w := range c.Workflows {
+		if w.Name == name {
+			c.ActiveWorkflow = name
+			return nil
+		}
+	}
+	return fmt.Errorf("workflow %q not found", name)
+}
+
+// GetActiveWorkflow returns the active workflow profile
+func (c *Config) GetActiveWorkflow() (*WorkflowProfile, error) {
+	if c.ActiveWorkflow == "" {
+		return nil, fmt.Errorf("no active workflow")
+	}
+	return c.GetWorkflow(c.ActiveWorkflow)
+}
+
+// CloneWorkflow duplicates a workflow with a new name
+func (c *Config) CloneWorkflow(srcName, newName string) error {
+	src, err := c.GetWorkflow(srcName)
+	if err != nil {
+		return err
+	}
+	clone := *src
+	clone.Name = newName
+	c.Workflows = append(c.Workflows, clone)
+	return nil
+}
+
 type Server struct {
 	Name        string `yaml:"name"`
 	Host        string `yaml:"host"`
@@ -529,284 +152,11 @@ type Server struct {
 	Modules     []string `yaml:"modules,omitempty"`
 }
 
-// ValidationError represents a collection of validation errors
-type ValidationError struct {
-	Errors []string
-}
-
-func (e *ValidationError) Error() string {
-	if len(e.Errors) == 0 {
-		return ""
-	}
-	if len(e.Errors) == 1 {
-		return e.Errors[0]
-	}
-	return fmt.Sprintf("%d validation errors:\n  - %s", len(e.Errors), strings.Join(e.Errors, "\n  - "))
-}
-
-func (e *ValidationError) Add(err string) {
-	e.Errors = append(e.Errors, err)
-}
-
-func (e *ValidationError) HasErrors() bool {
-	return len(e.Errors) > 0
-}
-
-// Validate validates the server configuration
-func (s *Server) Validate() error {
-	ve := &ValidationError{}
-
-	// Name validation
-	if strings.TrimSpace(s.Name) == "" {
-		ve.Add("server name is required and cannot be empty")
-	} else if strings.Contains(s.Name, " ") {
-		ve.Add("server name cannot contain spaces")
-	}
-
-	// Host validation
-	if strings.TrimSpace(s.Host) == "" {
-		ve.Add("server host is required and cannot be empty")
-	} else if !isValidHostOrIP(s.Host) {
-		ve.Add(fmt.Sprintf("server host '%s' is not a valid hostname or IP address", s.Host))
-	}
-
-	// User validation
-	if strings.TrimSpace(s.User) == "" {
-		ve.Add("server user is required and cannot be empty")
-	}
-
-	// SSH Key validation
-	if s.SSHKey != "" {
-		expandedKey := expandPath(s.SSHKey)
-		if _, err := os.Stat(expandedKey); os.IsNotExist(err) {
-			ve.Add(fmt.Sprintf("SSH key file does not exist: %s (expanded from %s)", expandedKey, s.SSHKey))
-		} else if err != nil {
-			ve.Add(fmt.Sprintf("cannot access SSH key file %s: %v", expandedKey, err))
-		}
-	}
-
-	// Cost validation
-	if s.CostPerHour < 0 {
-		ve.Add(fmt.Sprintf("cost per hour cannot be negative (got %.2f)", s.CostPerHour))
-	}
-
-	// Module validation
-	if len(s.Modules) > 0 {
-		validModules := make(map[string]bool)
-		for _, mod := range AvailableModules {
-			validModules[mod.ID] = true
-		}
-
-		for _, modID := range s.Modules {
-			if !validModules[modID] {
-				ve.Add(fmt.Sprintf("invalid module ID '%s' in server %s", modID, s.Name))
-			}
-		}
-	}
-
-	if ve.HasErrors() {
-		return ve
-	}
-	return nil
-}
-
 type APIKeys struct {
 	Anthropic   string `yaml:"anthropic,omitempty"`
 	OpenAI      string `yaml:"openai,omitempty"`
 	HuggingFace string `yaml:"huggingface,omitempty"`
 	LambdaLabs  string `yaml:"lambda_labs,omitempty"`
-}
-
-// Validate validates the entire configuration
-func (c *Config) Validate() error {
-	ve := &ValidationError{}
-
-	// Validate all servers
-	serverNames := make(map[string]bool)
-	for i, server := range c.Servers {
-		// Validate individual server
-		if err := server.Validate(); err != nil {
-			if valErr, ok := err.(*ValidationError); ok {
-				for _, e := range valErr.Errors {
-					ve.Add(fmt.Sprintf("server[%d] (%s): %s", i, server.Name, e))
-				}
-			} else {
-				ve.Add(fmt.Sprintf("server[%d] (%s): %s", i, server.Name, err.Error()))
-			}
-		}
-
-		// Check for duplicate server names
-		if server.Name != "" {
-			if serverNames[server.Name] {
-				ve.Add(fmt.Sprintf("duplicate server name '%s'", server.Name))
-			}
-			serverNames[server.Name] = true
-		}
-	}
-
-	// Validate module dependencies across all servers
-	if err := c.validateModuleDependencies(); err != nil {
-		if valErr, ok := err.(*ValidationError); ok {
-			for _, e := range valErr.Errors {
-				ve.Add(e)
-			}
-		} else {
-			ve.Add(err.Error())
-		}
-	}
-
-	// Validate API keys format (if set)
-	if err := c.validateAPIKeys(); err != nil {
-		if valErr, ok := err.(*ValidationError); ok {
-			for _, e := range valErr.Errors {
-				ve.Add(e)
-			}
-		} else {
-			ve.Add(err.Error())
-		}
-	}
-
-	// Validate collections
-	collectionNames := make(map[string]bool)
-	for i, collection := range c.Collections {
-		if collection.Name == "" {
-			ve.Add(fmt.Sprintf("collection[%d]: name is required", i))
-		} else if collectionNames[collection.Name] {
-			ve.Add(fmt.Sprintf("duplicate collection name '%s'", collection.Name))
-		} else {
-			collectionNames[collection.Name] = true
-		}
-
-		if collection.Path == "" {
-			ve.Add(fmt.Sprintf("collection '%s': path is required", collection.Name))
-		}
-
-		if collection.Type != "" && collection.Type != "image" && collection.Type != "video" && collection.Type != "mixed" {
-			ve.Add(fmt.Sprintf("collection '%s': invalid type '%s' (must be 'image', 'video', or 'mixed')", collection.Name, collection.Type))
-		}
-	}
-
-	// Validate users
-	userNames := make(map[string]bool)
-	for i, user := range c.Users {
-		if user.Name == "" {
-			ve.Add(fmt.Sprintf("user[%d]: name is required", i))
-		} else if userNames[user.Name] {
-			ve.Add(fmt.Sprintf("duplicate user name '%s'", user.Name))
-		} else {
-			userNames[user.Name] = true
-		}
-
-		if user.Path == "" {
-			ve.Add(fmt.Sprintf("user '%s': path is required", user.Name))
-		}
-	}
-
-	// Validate active user exists
-	if c.ActiveUser != "" && !userNames[c.ActiveUser] {
-		ve.Add(fmt.Sprintf("active user '%s' does not exist in users list", c.ActiveUser))
-	}
-
-	if ve.HasErrors() {
-		return ve
-	}
-	return nil
-}
-
-// validateModuleDependencies checks for circular dependencies and missing modules
-func (c *Config) validateModuleDependencies() error {
-	ve := &ValidationError{}
-
-	// Build module map for quick lookup
-	moduleMap := make(map[string]*Module)
-	for i := range AvailableModules {
-		moduleMap[AvailableModules[i].ID] = &AvailableModules[i]
-	}
-
-	// Check each server's modules
-	for _, server := range c.Servers {
-		for _, modID := range server.Modules {
-			// Check for circular dependencies
-			if err := checkCircularDependency(modID, moduleMap, []string{}); err != nil {
-				ve.Add(fmt.Sprintf("server '%s': %s", server.Name, err.Error()))
-			}
-
-			// Verify all dependencies exist
-			if mod, exists := moduleMap[modID]; exists {
-				for _, depID := range mod.Dependencies {
-					if _, depExists := moduleMap[depID]; !depExists {
-						ve.Add(fmt.Sprintf("server '%s': module '%s' depends on non-existent module '%s'", server.Name, modID, depID))
-					}
-				}
-			}
-		}
-	}
-
-	if ve.HasErrors() {
-		return ve
-	}
-	return nil
-}
-
-// checkCircularDependency recursively checks for circular dependencies
-func checkCircularDependency(modID string, moduleMap map[string]*Module, visited []string) error {
-	// Check if we've seen this module in the current path
-	for _, v := range visited {
-		if v == modID {
-			return fmt.Errorf("circular dependency detected: %s -> %s", strings.Join(visited, " -> "), modID)
-		}
-	}
-
-	mod, exists := moduleMap[modID]
-	if !exists {
-		return nil // Module doesn't exist, but that's caught elsewhere
-	}
-
-	// Add current module to path
-	newVisited := append(visited, modID)
-
-	// Check all dependencies
-	for _, depID := range mod.Dependencies {
-		if err := checkCircularDependency(depID, moduleMap, newVisited); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// validateAPIKeys checks if API keys have valid format (basic validation)
-func (c *Config) validateAPIKeys() error {
-	ve := &ValidationError{}
-
-	// Anthropic API keys start with "sk-ant-"
-	if c.APIKeys.Anthropic != "" && !strings.HasPrefix(c.APIKeys.Anthropic, "sk-ant-") {
-		ve.Add("Anthropic API key should start with 'sk-ant-'")
-	}
-
-	// OpenAI API keys start with "sk-"
-	if c.APIKeys.OpenAI != "" && !strings.HasPrefix(c.APIKeys.OpenAI, "sk-") {
-		ve.Add("OpenAI API key should start with 'sk-'")
-	}
-
-	// Basic length check for all keys
-	if c.APIKeys.Anthropic != "" && len(c.APIKeys.Anthropic) < 20 {
-		ve.Add("Anthropic API key appears too short to be valid")
-	}
-	if c.APIKeys.OpenAI != "" && len(c.APIKeys.OpenAI) < 20 {
-		ve.Add("OpenAI API key appears too short to be valid")
-	}
-	if c.APIKeys.HuggingFace != "" && len(c.APIKeys.HuggingFace) < 20 {
-		ve.Add("HuggingFace API key appears too short to be valid")
-	}
-	if c.APIKeys.LambdaLabs != "" && len(c.APIKeys.LambdaLabs) < 20 {
-		ve.Add("Lambda Labs API key appears too short to be valid")
-	}
-
-	if ve.HasErrors() {
-		return ve
-	}
-	return nil
 }
 
 type Collection struct {
@@ -845,9 +195,504 @@ type Module struct {
 	Cluster      *ClusterConfig // Optional cluster requirements for frontier models
 }
 
-// AvailableModules is populated at init time from embedded YAML files.
-// See modules.go for the loading logic and modules/*.yaml for definitions.
-var AvailableModules []Module
+var AvailableModules = []Module{
+	// ═══════════════════════════════════════════════════════════════════════
+	// SYSTEM MODULES
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:          "core",
+		Name:        "Core System",
+		Description: "CUDA, Python, Node.js, Docker - required base",
+		TimeMinutes: 5,
+		Script:      "core",
+		Category:    "System",
+		Size:        "~2GB",
+	},
+	{
+		ID:           "pytorch",
+		Name:         "PyTorch + AI Libraries",
+		Description:  "PyTorch, Transformers, Diffusers, xformers",
+		TimeMinutes:  2,
+		Dependencies: []string{"core"},
+		Script:       "pytorch",
+		Category:     "System",
+		Size:         "~8GB",
+	},
+	{
+		ID:           "ollama",
+		Name:         "Ollama Server",
+		Description:  "Ollama LLM server (required for LLM models)",
+		TimeMinutes:  1,
+		Dependencies: []string{"core"},
+		Script:       "ollama",
+		Category:     "System",
+		Size:         "~500MB",
+	},
+	{
+		ID:           "vllm",
+		Name:         "vLLM Inference Engine",
+		Description:  "High-performance LLM inference with PagedAttention",
+		TimeMinutes:  8,
+		Dependencies: []string{"core", "pytorch"},
+		Script:       "vllm",
+		Category:     "System",
+		Size:         "~2GB",
+	},
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// LLM MODELS - FRONTIER CLASS (Best Quality, Multi-GPU Required)
+	// Ordered by benchmark performance - highest quality first
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:           "deepseek-r1-671b",
+		Name:         "DeepSeek-R1 671B",
+		Description:  "SOTA reasoning, rivals O3/Gemini 2.5 Pro. MoE: 671B total, 37B active",
+		TimeMinutes:  90,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-r1-671b",
+		Category:     "LLM-Frontier",
+		Size:         "~400GB",
+		Cluster: &ClusterConfig{
+			MinGPUs:         4,
+			RecommendedGPUs: 8,
+			MinVRAMPerGPU:   80,
+			TotalVRAM:       480,
+			Parallelism:     "TP4EP2 (4-way tensor, 2-way expert parallelism)",
+			InferenceEngine: "vllm or tensorrt-llm",
+			Notes:           "Use --max-model-len 32768 for stability. Wide-EP recommended for B200 NVL72. Enable FP8 quantization for 30% memory reduction.",
+		},
+	},
+	{
+		ID:           "deepseek-v3-671b",
+		Name:         "DeepSeek-V3 671B",
+		Description:  "Latest V3 architecture. MoE: 671B total + 14B MTP, 37B active per token",
+		TimeMinutes:  90,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-v3-671b",
+		Category:     "LLM-Frontier",
+		Size:         "~400GB",
+		Cluster: &ClusterConfig{
+			MinGPUs:         4,
+			RecommendedGPUs: 8,
+			MinVRAMPerGPU:   80,
+			TotalVRAM:       480,
+			Parallelism:     "TP4EP2 (4-way tensor, 2-way expert parallelism)",
+			InferenceEngine: "vllm or tensorrt-llm",
+			Notes:           "MTP head adds 14B params. Use --trust-remote-code. Achieves 368 tok/s with TensorRT-LLM on 8×B200.",
+		},
+	},
+	{
+		ID:           "qwen3-235b-a22b",
+		Name:         "Qwen3 235B-A22B",
+		Description:  "Flagship Qwen3 MoE. 235B total, 22B active. 119 languages, 36T training tokens",
+		TimeMinutes:  60,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwen3-235b-a22b",
+		Category:     "LLM-Frontier",
+		Size:         "~142GB",
+		Cluster: &ClusterConfig{
+			MinGPUs:         2,
+			RecommendedGPUs: 4,
+			MinVRAMPerGPU:   80,
+			TotalVRAM:       192,
+			Parallelism:     "TP2 or TP4 (tensor parallelism only)",
+			InferenceEngine: "vllm or ollama",
+			Notes:           "Smaller MoE than DeepSeek. Fits on 2×H100/A100. Use BF16 for best quality, INT8 for speed.",
+		},
+	},
+	{
+		ID:           "llama4-maverick",
+		Name:         "Llama 4 Maverick",
+		Description:  "Meta's multimodal MoE. 400B total, 17B active, 128 experts, 512K context",
+		TimeMinutes:  75,
+		Dependencies: []string{"ollama"},
+		Script:       "model-llama4-maverick",
+		Category:     "LLM-Frontier",
+		Size:         "~240GB",
+		Cluster: &ClusterConfig{
+			MinGPUs:         4,
+			RecommendedGPUs: 8,
+			MinVRAMPerGPU:   80,
+			TotalVRAM:       320,
+			Parallelism:     "TP4EP2 (handles 128 experts efficiently)",
+			InferenceEngine: "vllm",
+			Notes:           "128 experts benefit from Wide Expert Parallelism on large clusters. Use --max-model-len 65536 for 64K context, scale up for 512K.",
+		},
+	},
+	{
+		ID:           "llama4-scout",
+		Name:         "Llama 4 Scout",
+		Description:  "Meta's efficient MoE. 109B total, 17B active, 10M context! Fits single H100",
+		TimeMinutes:  45,
+		Dependencies: []string{"ollama"},
+		Script:       "model-llama4-scout",
+		Category:     "LLM-Frontier",
+		Size:         "~65GB",
+		Cluster: &ClusterConfig{
+			MinGPUs:         1,
+			RecommendedGPUs: 2,
+			MinVRAMPerGPU:   80,
+			TotalVRAM:       80,
+			Parallelism:     "TP1 or TP2 (efficient MoE)",
+			InferenceEngine: "vllm or ollama",
+			Notes:           "Most efficient frontier model! Fits single H100/A100 80GB. 10M context requires chunked attention. Use --enable-chunked-prefill.",
+		},
+	},
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// LLM MODELS - LARGE CLASS (70B+, typically needs 2+ GPUs or quantized)
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:           "deepseek-r1-70b",
+		Name:         "DeepSeek-R1 70B",
+		Description:  "Distilled R1, near frontier performance. Strong math/code/logic",
+		TimeMinutes:  35,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-r1-70b",
+		Category:     "LLM-Large",
+		Size:         "~43GB",
+	},
+	{
+		ID:           "llama-3.3-70b",
+		Name:         "Llama 3.3 70B",
+		Description:  "Meta's flagship dense model. Exceptional reasoning & coding",
+		TimeMinutes:  30,
+		Dependencies: []string{"ollama"},
+		Script:       "model-llama-3.3-70b",
+		Category:     "LLM-Large",
+		Size:         "~40GB",
+	},
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// LLM MODELS - MEDIUM CLASS (14-34B, single GPU friendly)
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:           "qwq-32b",
+		Name:         "QwQ 32B",
+		Description:  "Qwen's reasoning specialist. Rivals DeepSeek-R1 & o1-mini at 32B!",
+		TimeMinutes:  18,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwq-32b",
+		Category:     "LLM-Medium",
+		Size:         "~20GB",
+	},
+	{
+		ID:           "deepseek-r1-32b",
+		Name:         "DeepSeek-R1 32B",
+		Description:  "Distilled R1, performs like o1-mini. Excellent reasoning",
+		TimeMinutes:  16,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-r1-32b",
+		Category:     "LLM-Medium",
+		Size:         "~20GB",
+	},
+	{
+		ID:           "qwen3-32b",
+		Name:         "Qwen3 32B",
+		Description:  "Large dense Qwen3. Strong reasoning, coding, multilingual",
+		TimeMinutes:  15,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwen3-32b",
+		Category:     "LLM-Medium",
+		Size:         "~20GB",
+	},
+	{
+		ID:           "qwen3-30b-a3b",
+		Name:         "Qwen3 30B-A3B MoE",
+		Description:  "Small MoE, beats QwQ-32B with only 3B active! Ultra efficient",
+		TimeMinutes:  14,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwen3-30b-a3b",
+		Category:     "LLM-Medium",
+		Size:         "~19GB",
+	},
+	{
+		ID:           "qwen3-coder-30b-a3b",
+		Name:         "Qwen3-Coder 30B-A3B",
+		Description:  "Most agentic code model. MoE 30B/3.3B active, 256K context",
+		TimeMinutes:  14,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwen3-coder-30b-a3b",
+		Category:     "LLM-Medium",
+		Size:         "~19GB",
+	},
+	{
+		ID:           "gemma3-27b",
+		Name:         "Gemma3 27B",
+		Description:  "Google's largest Gemma3. Vision capable, single GPU",
+		TimeMinutes:  14,
+		Dependencies: []string{"ollama"},
+		Script:       "model-gemma3-27b",
+		Category:     "LLM-Medium",
+		Size:         "~17GB",
+	},
+	{
+		ID:           "mixtral-8x7b",
+		Name:         "Mixtral 8x7B",
+		Description:  "Mistral's MoE. 47B total, ~13B active. Multi-task efficient",
+		TimeMinutes:  18,
+		Dependencies: []string{"ollama"},
+		Script:       "model-mixtral-8x7b",
+		Category:     "LLM-Medium",
+		Size:         "~26GB",
+	},
+	{
+		ID:           "deepseek-coder-33b",
+		Name:         "DeepSeek Coder 33B",
+		Description:  "Code specialist. 2T+ training tokens of code",
+		TimeMinutes:  15,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-coder-33b",
+		Category:     "LLM-Medium",
+		Size:         "~18GB",
+	},
+	{
+		ID:           "deepseek-r1-14b",
+		Name:         "DeepSeek-R1 14B",
+		Description:  "Distilled R1 on Qwen2.5. Great reasoning at modest size",
+		TimeMinutes:  10,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-r1-14b",
+		Category:     "LLM-Medium",
+		Size:         "~9GB",
+	},
+	{
+		ID:           "qwen3-14b",
+		Name:         "Qwen3 14B",
+		Description:  "Dense Qwen3. Excellent bilingual Chinese/English",
+		TimeMinutes:  8,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwen3-14b",
+		Category:     "LLM-Medium",
+		Size:         "~9GB",
+	},
+	{
+		ID:           "phi-4",
+		Name:         "Phi-4 14B",
+		Description:  "Microsoft's reasoning model. Punches way above weight class",
+		TimeMinutes:  6,
+		Dependencies: []string{"ollama"},
+		Script:       "model-phi-4",
+		Category:     "LLM-Medium",
+		Size:         "~9GB",
+	},
+	{
+		ID:           "gemma3-12b",
+		Name:         "Gemma3 12B",
+		Description:  "Google's multimodal. Vision + 140 languages",
+		TimeMinutes:  6,
+		Dependencies: []string{"ollama"},
+		Script:       "model-gemma3-12b",
+		Category:     "LLM-Medium",
+		Size:         "~8GB",
+	},
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// LLM MODELS - SMALL CLASS (≤8B, consumer GPU friendly)
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:           "deepseek-r1-8b",
+		Name:         "DeepSeek-R1 8B",
+		Description:  "Distilled R1 on Llama3. Complex reasoning on consumer GPU",
+		TimeMinutes:  4,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-r1-8b",
+		Category:     "LLM-Small",
+		Size:         "~5GB",
+	},
+	{
+		ID:           "llama-3.3-8b",
+		Name:         "Llama 3.3 8B",
+		Description:  "Meta's efficient workhorse. Great all-rounder",
+		TimeMinutes:  4,
+		Dependencies: []string{"ollama"},
+		Script:       "model-llama-3.3-8b",
+		Category:     "LLM-Small",
+		Size:         "~5GB",
+	},
+	{
+		ID:           "qwen3-8b",
+		Name:         "Qwen3 8B",
+		Description:  "Strong multilingual. 119 languages, thinking mode",
+		TimeMinutes:  4,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwen3-8b",
+		Category:     "LLM-Small",
+		Size:         "~5GB",
+	},
+	{
+		ID:           "mistral-7b",
+		Name:         "Mistral 7B",
+		Description:  "Fast & capable. Excellent coding, technical tasks",
+		TimeMinutes:  3,
+		Dependencies: []string{"ollama"},
+		Script:       "model-mistral-7b",
+		Category:     "LLM-Small",
+		Size:         "~4GB",
+	},
+	{
+		ID:           "deepseek-r1-7b",
+		Name:         "DeepSeek-R1 7B",
+		Description:  "Distilled R1 on Qwen2.5. Reasoning at 7B",
+		TimeMinutes:  3,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-r1-7b",
+		Category:     "LLM-Small",
+		Size:         "~4GB",
+	},
+	{
+		ID:           "qwen3-4b",
+		Name:         "Qwen3 4B",
+		Description:  "Compact powerhouse. 256K context, edge-device friendly",
+		TimeMinutes:  2,
+		Dependencies: []string{"ollama"},
+		Script:       "model-qwen3-4b",
+		Category:     "LLM-Small",
+		Size:         "~2.5GB",
+	},
+	{
+		ID:           "llama-3.2-3b",
+		Name:         "Llama 3.2 3B",
+		Description:  "Tiny but capable. 128K context, tool use",
+		TimeMinutes:  2,
+		Dependencies: []string{"ollama"},
+		Script:       "model-llama-3.2-3b",
+		Category:     "LLM-Small",
+		Size:         "~2GB",
+	},
+	{
+		ID:           "deepseek-r1-1.5b",
+		Name:         "DeepSeek-R1 1.5B",
+		Description:  "Smallest R1 distill. Reasoning on 4GB VRAM",
+		TimeMinutes:  1,
+		Dependencies: []string{"ollama"},
+		Script:       "model-deepseek-r1-1.5b",
+		Category:     "LLM-Small",
+		Size:         "~1GB",
+	},
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// IMAGE GENERATION MODELS
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:           "sdxl",
+		Name:         "Stable Diffusion XL",
+		Description:  "High-quality images, great composition",
+		TimeMinutes:  8,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-sdxl",
+		Category:     "Image",
+		Size:         "~7GB",
+	},
+	{
+		ID:           "sd15",
+		Name:         "Stable Diffusion 1.5",
+		Description:  "Classic model, huge LoRA ecosystem",
+		TimeMinutes:  5,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-sd15",
+		Category:     "Image",
+		Size:         "~4GB",
+	},
+	{
+		ID:           "flux-dev",
+		Name:         "Flux.1 Dev",
+		Description:  "Exceptional prompt following & photorealism",
+		TimeMinutes:  12,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-flux-dev",
+		Category:     "Image",
+		Size:         "~12GB",
+	},
+	{
+		ID:           "flux-schnell",
+		Name:         "Flux.1 Schnell",
+		Description:  "Fast Flux variant, rapid iteration",
+		TimeMinutes:  12,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-flux-schnell",
+		Category:     "Image",
+		Size:         "~12GB",
+	},
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// VIDEO GENERATION MODELS
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:           "svd",
+		Name:         "Stable Video Diffusion",
+		Description:  "Image-to-video, smooth animations",
+		TimeMinutes:  10,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-svd",
+		Category:     "Video",
+		Size:         "~10GB",
+	},
+	{
+		ID:           "animatediff",
+		Name:         "AnimateDiff",
+		Description:  "Motion module, animates SD images",
+		TimeMinutes:  6,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-animatediff",
+		Category:     "Video",
+		Size:         "~4GB",
+	},
+	{
+		ID:           "cogvideo",
+		Name:         "CogVideoX-5B",
+		Description:  "Text-to-video with temporal consistency",
+		TimeMinutes:  18,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-cogvideo",
+		Category:     "Video",
+		Size:         "~14GB",
+	},
+	{
+		ID:           "wan2",
+		Name:         "Wan2.2",
+		Description:  "State-of-the-art image-to-video quality",
+		TimeMinutes:  12,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-wan2",
+		Category:     "Video",
+		Size:         "~10GB",
+	},
+	{
+		ID:           "ltxvideo",
+		Name:         "LTXVideo",
+		Description:  "Fast video generation, quick previews",
+		TimeMinutes:  8,
+		Dependencies: []string{"pytorch", "comfyui"},
+		Script:       "model-ltxvideo",
+		Category:     "Video",
+		Size:         "~7GB",
+	},
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// TOOLS
+	// ═══════════════════════════════════════════════════════════════════════
+	{
+		ID:           "comfyui",
+		Name:         "ComfyUI",
+		Description:  "Node-based image/video generation UI",
+		TimeMinutes:  2,
+		Dependencies: []string{"pytorch"},
+		Script:       "comfyui",
+		Category:     "Tools",
+		Size:         "~500MB",
+	},
+	{
+		ID:           "claude",
+		Name:         "Claude Code CLI",
+		Description:  "Anthropic Claude Code CLI assistant",
+		TimeMinutes:  1,
+		Dependencies: []string{"core"},
+		Script:       "claude",
+		Category:     "Tools",
+		Size:         "~100MB",
+	},
+}
 
 // GetModulesByCategory returns modules grouped by category
 func GetModulesByCategory() map[string][]Module {
@@ -914,25 +759,10 @@ func Load() (*Config, error) {
 		cfg.Users = []User{}
 	}
 
-	// Initialize launched apps slice if nil
-	if cfg.LaunchedApps == nil {
-		cfg.LaunchedApps = []LaunchedApp{}
-	}
-
-	// Validate the loaded configuration
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("configuration validation failed: %w", err)
-	}
-
 	return &cfg, nil
 }
 
 func (c *Config) Save() error {
-	// Validate before saving
-	if err := c.Validate(); err != nil {
-		return fmt.Errorf("cannot save invalid configuration: %w", err)
-	}
-
 	path, err := GetConfigPath()
 	if err != nil {
 		return err
@@ -957,37 +787,12 @@ func (c *Config) AddServer(server Server) {
 }
 
 func (c *Config) GetServer(name string) (*Server, error) {
-	// First try direct name match
 	for i := range c.Servers {
 		if c.Servers[i].Name == name {
 			return &c.Servers[i], nil
 		}
 	}
-
-	// Check if name is an alias
-	if target := c.GetAlias(name); target != "" {
-		// Try to find server by alias target (could be server name)
-		for i := range c.Servers {
-			if c.Servers[i].Name == target {
-				return &c.Servers[i], nil
-			}
-		}
-
-		// Extract host from user@host format or use as-is
-		host := target
-		if atIdx := strings.Index(target, "@"); atIdx != -1 {
-			host = target[atIdx+1:]
-		}
-
-		// Try to find server by matching host
-		for i := range c.Servers {
-			if c.Servers[i].Host == host {
-				return &c.Servers[i], nil
-			}
-		}
-	}
-
-	return nil, errors.NewServerNotFoundError(name)
+	return nil, fmt.Errorf("server %s not found", name)
 }
 
 func (c *Config) UpdateServer(name string, server Server) error {
@@ -997,7 +802,7 @@ func (c *Config) UpdateServer(name string, server Server) error {
 			return nil
 		}
 	}
-	return errors.NewServerNotFoundError(name)
+	return fmt.Errorf("server %s not found", name)
 }
 
 func (c *Config) DeleteServer(name string) error {
@@ -1007,7 +812,7 @@ func (c *Config) DeleteServer(name string) error {
 			return nil
 		}
 	}
-	return errors.NewServerNotFoundError(name)
+	return fmt.Errorf("server %s not found", name)
 }
 
 func EstimateCost(modules []string, costPerHour float64) float64 {
@@ -1067,25 +872,14 @@ func (c *Config) SetAlias(alias, target string) {
 	c.Aliases[alias] = target
 }
 
-// GetAlias returns the target for an alias, checking:
-// 1. Embedded database (binary storage - highest priority, travels with push)
-// 2. Runtime config (~/.config/anime/config.yaml)
-// 3. Embedded defaults (compiled-in defaults)
+// GetAlias returns the target for an alias, checking runtime config first, then embedded defaults
 func (c *Config) GetAlias(alias string) string {
-	// First check embedded database (highest priority - travels with binary)
-	if db, err := embeddb.DB(); err == nil {
-		if target := db.GetAlias(alias); target != "" {
-			return target
-		}
-	}
-
-	// Then check runtime config
+	// First check runtime config
 	if c.Aliases != nil {
 		if target, ok := c.Aliases[alias]; ok {
 			return target
 		}
 	}
-
 	// Fall back to embedded defaults
 	return defaults.GetAlias(alias)
 }

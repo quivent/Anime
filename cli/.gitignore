@@ -4,7 +4,6 @@ build/
 *.dll
 *.so
 *.dylib
-anime-linux-*
 
 # Test binary
 *.test
@@ -17,44 +16,17 @@ coverage.html
 cmd/anime-src.tar.gz
 anime-src.tar.gz
 
-# Capsule archives
-cmd/capsules/*.tar.gz
-
-# Embedded binaries
-cmd/embedded/sky/sky
-
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Backup files
-*.bak
-*.bak2
-*.bak3
-*.backup
-*~
-*.orig
-
 # OS files
 .DS_Store
 Thumbs.db
 
-# Environment and secrets
-.env
-.env.*
-
-# Built binary
-anime
-
-# SSH Keys - NEVER commit these
-keys/
-internal/ssh/keys/
-*.pem
-*_internal
-*_internal.pub
-id_*
-*.key
+# Secrets
 .tokens
 .tokens.mk
+internal/ssh/keys/

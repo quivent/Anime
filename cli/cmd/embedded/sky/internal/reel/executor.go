@@ -15,7 +15,7 @@ func Execute(cfg *ReelConfig) {
     if _, err := os.Stat(SkyReelsDir); os.IsNotExist(err) {
         ui.PrintSuggestion("SkyReels-V2 not found", []string{
             "Expected location: " + SkyReelsDir,
-            "Clone: git clone git@github.com:SkyworkAI/SkyReels-V2.git",
+            "Clone: git clone https://github.com/SkyworkAI/SkyReels-V2.git",
         })
         return
     }

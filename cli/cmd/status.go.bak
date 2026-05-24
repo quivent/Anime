@@ -1,0 +1,269 @@
+package cmd
+
+import (
+	"fmt"
+	"os/exec"
+	"strings"
+
+	"github.com/joshkornreich/anime/internal/config"
+	"github.com/joshkornreich/anime/internal/installer"
+	"github.com/joshkornreich/anime/internal/ssh"
+	"github.com/spf13/cobra"
+)
+
+var statusCmd = &cobra.Command{
+	Use:   "status [server-name]",
+	Short: "Check status of a Lambda server",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// FIRST: Check if we're already on a GPU server
+		if isRunningOnGPUServer() {
+			fmt.Println("\n✓ Running on local GPU server")
+			return runLocalStatus()
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			// If config doesn't exist, try to auto-detect
+			cfg = &config.Config{}
+		}
+
+		// Default to lambda if no argument provided
+		serverName := "lambda"
+		if len(args) > 0 {
+			serverName = args[0]
+		}
+
+		// Try to get server from config
+		server, err := cfg.GetServer(serverName)
+		if err != nil {
+			// Server not found in config - try to use it as an alias
+			if alias := cfg.GetAlias(serverName); alias != "" {
+				// Parse alias target
+				var user, host string
+				if strings.Contains(alias, "@") {
+					parts := strings.SplitN(alias, "@", 2)
+					user = parts[0]
+					host = parts[1]
+				} else {
+					user = "ubuntu"
+					host = alias
+				}
+				server = &config.Server{
+					Name:        serverName,
+					Host:        host,
+					User:        user,
+					SSHKey:      "",
+					CostPerHour: 0, // Will be auto-detected
+				}
+			} else {
+				// Server not found - run locally
+				return runLocalStatus()
+			}
+		}
+
+		// Check if server is localhost/local - just run locally
+		if isLocalServer(server.Host) {
+			return runLocalStatus()
+		}
+
+		fmt.Printf("Connecting to %s...\n", server.Name)
+
+		client, err := ssh.NewClient(server.Host, server.User, server.SSHKey)
+		if err != nil {
+			// Connection failed - might be running locally
+			return runLocalStatus()
+		}
+		defer client.Close()
+
+		inst := installer.New(client)
+
+		fmt.Println("\nSystem Information:")
+		info, err := inst.GetSystemInfo()
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("  OS: %s\n", info["os"])
+		fmt.Printf("  Architecture: %s\n", info["arch"])
+		fmt.Printf("  Kernel: %s\n", info["kernel"])
+		fmt.Printf("  GPU: %s\n", info["gpu"])
+		fmt.Printf("  Free Disk: %s\n", info["disk_free"])
+		fmt.Printf("  Free Memory: %s\n", info["mem_free"])
+
+		fmt.Println("\nInstalled Components:")
+
+		// Check for various components
+		checks := map[string]string{
+			"Python":     "python3 --version 2>/dev/null",
+			"Node.js":    "node --version 2>/dev/null",
+			"Docker":     "docker --version 2>/dev/null",
+			"NVIDIA":     "nvidia-smi --version 2>/dev/null | head -1",
+			"CUDA":       "nvcc --version 2>/dev/null | grep release",
+			"PyTorch":    "python3 -c 'import torch; print(torch.__version__)' 2>/dev/null",
+			"Ollama":     "ollama --version 2>/dev/null",
+			"ComfyUI":    "[ -d ~/ComfyUI ] && echo 'Installed' || echo 'Not found'",
+			"Claude Code": "claude-code --version 2>/dev/null",
+		}
+
+		for name, cmd := range checks {
+			output, err := client.RunCommand(cmd)
+			if err != nil || output == "Not found" {
+				fmt.Printf("  %s: ✗ Not installed\n", name)
+			} else {
+				fmt.Printf("  %s: ✓ %s\n", name, output)
+			}
+		}
+
+		// List Ollama models if installed
+		output, err := client.RunCommand("ollama list 2>/dev/null")
+		if err == nil && output != "" {
+			fmt.Println("\nOllama Models:")
+			fmt.Println(output)
+		}
+
+		// Next steps
+		fmt.Println()
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println("💡 What to do next:")
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		fmt.Println()
+		fmt.Printf("  anime metrics\n")
+		fmt.Println("    View GPU metrics and cost tracking")
+		fmt.Println()
+		fmt.Printf("  anime packages status\n")
+		fmt.Println("    Check installation status of all packages")
+		fmt.Println()
+		fmt.Printf("  anime workstation\n")
+		fmt.Println("    Launch interactive monitoring dashboard")
+		fmt.Println()
+		fmt.Printf("  anime install <package-id>\n")
+		fmt.Println("    Install additional packages")
+		fmt.Println()
+
+		return nil
+	},
+}
+
+func runLocalStatus() error {
+	fmt.Println("\nSystem Information:")
+
+	// Run local commands to get system info
+	checks := map[string]struct {
+		cmd  string
+		desc string
+	}{
+		"OS":           {"lsb_release -d 2>/dev/null | cut -f2- || uname -s", "OS"},
+		"Architecture": {"uname -m", "Architecture"},
+		"Kernel":       {"uname -r", "Kernel"},
+		"GPU":          {"nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1", "GPU"},
+		"Free Disk":    {"df -h / | awk 'NR==2 {print $4}'", "Free Disk"},
+		"Free Memory":  {"free -h | awk 'NR==2 {print $4}'", "Free Memory"},
+	}
+
+	for name, check := range checks {
+		output, err := runLocalCommand(check.cmd)
+		if err != nil || output == "" {
+			fmt.Printf("  %s: %s\n", name, "N/A")
+		} else {
+			fmt.Printf("  %s: %s\n", name, strings.TrimSpace(output))
+		}
+	}
+
+	fmt.Println("\nInstalled Components:")
+
+	// Check for various components locally
+	componentChecks := map[string]string{
+		"Python":      "python3 --version 2>/dev/null",
+		"Node.js":     "node --version 2>/dev/null",
+		"Docker":      "docker --version 2>/dev/null",
+		"NVIDIA":      "nvidia-smi --version 2>/dev/null | head -1",
+		"CUDA":        "nvcc --version 2>/dev/null | grep release",
+		"PyTorch":     "python3 -c 'import torch; print(torch.__version__)' 2>/dev/null",
+		"Ollama":      "ollama --version 2>/dev/null",
+		"ComfyUI":     "[ -d ~/ComfyUI ] && echo 'Installed' || echo 'Not found'",
+		"Claude Code": "claude-code --version 2>/dev/null",
+	}
+
+	for name, cmdStr := range componentChecks {
+		output, err := runLocalCommand(cmdStr)
+		if err != nil || output == "Not found" || output == "" {
+			fmt.Printf("  %s: ✗ Not installed\n", name)
+		} else {
+			fmt.Printf("  %s: ✓ %s\n", name, strings.TrimSpace(output))
+		}
+	}
+
+	// List Ollama models if installed
+	output, err := runLocalCommand("ollama list 2>/dev/null")
+	if err == nil && output != "" {
+		fmt.Println("\nOllama Models:")
+		fmt.Println(output)
+	}
+
+	// Next steps
+	fmt.Println()
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println("💡 What to do next:")
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println()
+	fmt.Printf("  anime metrics\n")
+	fmt.Println("    View GPU metrics and cost tracking")
+	fmt.Println()
+	fmt.Printf("  anime packages status\n")
+	fmt.Println("    Check installation status of all packages")
+	fmt.Println()
+	fmt.Printf("  anime workstation\n")
+	fmt.Println("    Launch interactive monitoring dashboard")
+	fmt.Println()
+	fmt.Printf("  anime install <package-id>\n")
+	fmt.Println("    Install additional packages")
+	fmt.Println()
+
+	return nil
+}
+
+func runLocalCommand(cmdStr string) (string, error) {
+	cmd := exec.Command("bash", "-c", cmdStr)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func isLocalServer(host string) bool {
+	// Check if host is localhost, 127.0.0.1, or the current hostname
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "local" {
+		return true
+	}
+
+	// Get current hostname and compare
+	cmd := exec.Command("hostname")
+	output, err := cmd.Output()
+	if err == nil {
+		currentHost := strings.TrimSpace(string(output))
+
+		// Normalize both for comparison (replace periods and dashes with same char)
+		normalizeHost := func(h string) string {
+			h = strings.ReplaceAll(h, ".", "-")
+			h = strings.ReplaceAll(h, "_", "-")
+			return strings.ToLower(h)
+		}
+
+		if normalizeHost(host) == normalizeHost(currentHost) {
+			return true
+		}
+
+		// Also check if they contain each other
+		if strings.Contains(normalizeHost(currentHost), normalizeHost(host)) ||
+		   strings.Contains(normalizeHost(host), normalizeHost(currentHost)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isRunningOnGPUServer() bool {
+	// Check if nvidia-smi is available
+	cmd := exec.Command("bash", "-c", "command -v nvidia-smi >/dev/null 2>&1")
+	return cmd.Run() == nil
+}

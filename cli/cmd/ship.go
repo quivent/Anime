@@ -79,14 +79,16 @@ func runShip(cmd *cobra.Command, args []string) error {
 	fmt.Println(theme.RenderBanner("🚢 ANIME SHIP 🚢"))
 	fmt.Println()
 
-	// Parse destination
-	parts := strings.SplitN(destination, ":", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("destination must be in format 'host:/path' or 'server:/path'")
+	// Parse destination — supports "server:/path" or just "server" (defaults to ~/)
+	var hostPart, remotePath string
+	if strings.Contains(destination, ":") {
+		parts := strings.SplitN(destination, ":", 2)
+		hostPart = parts[0]
+		remotePath = parts[1]
+	} else {
+		hostPart = destination
+		remotePath = "~/"
 	}
-
-	hostPart := parts[0]
-	remotePath := parts[1]
 
 	// Load config to resolve target
 	cfg, err := config.Load()

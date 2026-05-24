@@ -1217,7 +1217,7 @@ func (m serversTabModel) Update(msg tea.Msg) (serversTabModel, tea.Cmd) {
 					tea.ExitAltScreen,
 					func() tea.Msg {
 						sshTarget := fmt.Sprintf("%s@%s", server.User, server.Host)
-						sshCmd := exec.Command("ssh", sshTarget)
+						sshCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", sshTarget)
 						sshCmd.Stdin = os.Stdin
 						sshCmd.Stdout = os.Stdout
 						sshCmd.Stderr = os.Stderr
@@ -2328,7 +2328,7 @@ func (m aliasesTabModel) Update(msg tea.Msg) (aliasesTabModel, tea.Cmd) {
 							if !strings.Contains(target, "@") {
 								sshTarget = "ubuntu@" + target
 							}
-							sshCmd := exec.Command("ssh", sshTarget)
+							sshCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", sshTarget)
 							sshCmd.Stdin = os.Stdin
 							sshCmd.Stdout = os.Stdout
 							sshCmd.Stderr = os.Stderr

@@ -8,8 +8,39 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/config"
-	"github.com/joshkornreich/anime/internal/theme"
+)
+
+var (
+	titleStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FF69B4")).
+		MarginBottom(1)
+
+	selectedStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00FF00")).
+		Bold(true)
+
+	unselectedStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888"))
+
+	checkedStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00FF00"))
+
+	uncheckedStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#444444"))
+
+	infoStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00BFFF")).
+		MarginTop(1)
+
+	errorStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FF0000"))
+
+	helpStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		MarginTop(1)
 )
 
 type screen int
@@ -291,7 +322,7 @@ func (m ConfigModel) View() string {
 
 	var s strings.Builder
 
-	s.WriteString(theme.TitleStyle.Render("🎌 anime - Lambda Configuration"))
+	s.WriteString(titleStyle.Render("🎌 anime - Lambda Configuration"))
 	s.WriteString("\n\n")
 
 	switch m.screen {
@@ -309,7 +340,7 @@ func (m ConfigModel) View() string {
 
 	if m.err != nil {
 		s.WriteString("\n\n")
-		s.WriteString(theme.ErrorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
+		s.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
 		m.err = nil
 	}
 
@@ -329,13 +360,13 @@ func (m ConfigModel) viewMenu() string {
 		cursor := " "
 		if m.cursor == i {
 			cursor = "▶"
-			s.WriteString(theme.SelectedStyle.Render(fmt.Sprintf("%s %s\n", cursor, choice)))
+			s.WriteString(selectedStyle.Render(fmt.Sprintf("%s %s\n", cursor, choice)))
 		} else {
-			s.WriteString(theme.UnselectedStyle.Render(fmt.Sprintf("%s %s\n", cursor, choice)))
+			s.WriteString(unselectedStyle.Render(fmt.Sprintf("%s %s\n", cursor, choice)))
 		}
 	}
 
-	s.WriteString(theme.HelpStyle.Render("\n↑/↓: navigate • enter: select • q: quit"))
+	s.WriteString(helpStyle.Render("\n↑/↓: navigate • enter: select • q: quit"))
 	return s.String()
 }
 
@@ -352,9 +383,9 @@ func (m ConfigModel) viewServerList() string {
 			cursor, server.Name, server.User, server.Host, moduleCount, cost)
 
 		if m.cursor == i {
-			s.WriteString(theme.SelectedStyle.Render(line) + "\n")
+			s.WriteString(selectedStyle.Render(line) + "\n")
 		} else {
-			s.WriteString(theme.UnselectedStyle.Render(line) + "\n")
+			s.WriteString(unselectedStyle.Render(line) + "\n")
 		}
 	}
 
@@ -364,7 +395,7 @@ func (m ConfigModel) viewServerList() string {
 	}
 	s.WriteString(fmt.Sprintf("\n%s Add new server\n", cursor))
 
-	s.WriteString(theme.HelpStyle.Render("\n↑/↓: navigate • enter: select • d: delete • esc: back"))
+	s.WriteString(helpStyle.Render("\n↑/↓: navigate • enter: select • d: delete • esc: back"))
 	return s.String()
 }
 
@@ -378,7 +409,7 @@ func (m ConfigModel) viewServerEdit() string {
 		s.WriteString(input.View() + "\n\n")
 	}
 
-	s.WriteString(theme.HelpStyle.Render("tab: next field • enter: save • esc: cancel"))
+	s.WriteString(helpStyle.Render("tab: next field • enter: save • esc: cancel"))
 	return s.String()
 }
 
@@ -399,9 +430,9 @@ func (m ConfigModel) viewModuleSelect() string {
 		cursor := " "
 		check := "☐"
 		if m.selectedModules[mod.ID] {
-			check = theme.CheckedStyle.Render("☑")
+			check = checkedStyle.Render("☑")
 		} else {
-			check = theme.UncheckedStyle.Render(check)
+			check = uncheckedStyle.Render(check)
 		}
 
 		if m.cursor == i {
@@ -412,14 +443,14 @@ func (m ConfigModel) viewModuleSelect() string {
 			cursor, check, mod.Name, mod.TimeMinutes, mod.Description)
 
 		if m.cursor == i {
-			s.WriteString(theme.SelectedStyle.Render(line) + "\n")
+			s.WriteString(selectedStyle.Render(line) + "\n")
 		} else {
-			s.WriteString(theme.UnselectedStyle.Render(line) + "\n")
+			s.WriteString(unselectedStyle.Render(line) + "\n")
 		}
 	}
 
-	s.WriteString(theme.InfoStyle.Render(fmt.Sprintf("\nEstimated cost: $%.2f @ $20/hr", totalCost)))
-	s.WriteString(theme.HelpStyle.Render("\n\n↑/↓: navigate • space: toggle • enter: save • esc: cancel"))
+	s.WriteString(infoStyle.Render(fmt.Sprintf("\nEstimated cost: $%.2f @ $20/hr", totalCost)))
+	s.WriteString(helpStyle.Render("\n\n↑/↓: navigate • space: toggle • enter: save • esc: cancel"))
 	return s.String()
 }
 
@@ -433,7 +464,7 @@ func (m ConfigModel) viewAPIKeys() string {
 		s.WriteString(input.View() + "\n\n")
 	}
 
-	s.WriteString(theme.HelpStyle.Render("tab: next field • enter: save • esc: cancel"))
+	s.WriteString(helpStyle.Render("tab: next field • enter: save • esc: cancel"))
 	return s.String()
 }
 

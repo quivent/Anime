@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"github.com/joshkornreich/anime/internal/tui"
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
@@ -11,25 +12,15 @@ var workstationCmd = &cobra.Command{
 	Long: `Launch a comprehensive Terminal User Interface (TUI) to monitor your workstation.
 
 The workstation TUI provides real-time monitoring of:
-  • GPU usage and metrics (temperature, power, memory, utilization)
-  • Ollama models (installed models with size and quantization)
-  • Installed software (Python, PyTorch, CUDA, Docker, etc.)
-  • Asset collections (configured in anime.yaml)
-  • Workflows and active tasks
-  • System resources (CPU, RAM, disk, uptime)
+  • GPU usage and metrics
+  • Ollama models
+  • Installed software and packages
+  • Asset collections
+  • Workflows and tasks
+  • Training libraries
+  • System resources
 
-KEYBOARD SHORTCUTS:
-  ↑/↓ or k/j      Scroll within panel
-  ←/→ or h/l      Switch between panels
-  Tab             Next panel
-  Shift+Tab       Previous panel
-  r               Refresh data
-  ?               Toggle help
-  q or Ctrl+C     Quit
-
-EXAMPLE:
-  anime workstation       # Launch the monitoring TUI
-`,
+Navigate using arrow keys, tab to switch panels, and 'q' to quit.`,
 	RunE: runWorkstation,
 }
 
@@ -38,5 +29,7 @@ func init() {
 }
 
 func runWorkstation(cmd *cobra.Command, args []string) error {
-	return tui.RunWorkstation()
+	// TODO: Implement workstation TUI
+	fmt.Println("Workstation TUI coming soon!")
+	return nil
 }

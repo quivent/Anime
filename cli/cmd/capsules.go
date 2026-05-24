@@ -1,3 +1,5 @@
+//go:build ignore
+
 package cmd
 
 import (
@@ -389,7 +391,7 @@ func runCapsulesDeploy(cmd *cobra.Command, args []string) error {
 
 	// Step 1: Create remote capsules directory
 	fmt.Printf("  %s %s", theme.DimTextStyle.Render("[1/3]"), theme.InfoStyle.Render("Preparing remote... "))
-	sshArgs := []string{"-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"}
+	sshArgs := []string{"-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"}
 	if keyPath, cleanup, err := GetEmbeddedSSHKeyPath(); err == nil {
 		sshArgs = append(sshArgs, "-i", keyPath)
 		defer cleanup()
@@ -403,7 +405,7 @@ func runCapsulesDeploy(cmd *cobra.Command, args []string) error {
 
 	// Step 2: Transfer capsule archives
 	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("[2/3]"), theme.InfoStyle.Render("Transferring capsules..."))
-	scpArgs := []string{"-o", "Compression=no", "-o", "StrictHostKeyChecking=accept-new"}
+	scpArgs := []string{"-o", "Compression=no", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"}
 	if keyPath, cleanup, err := GetEmbeddedSSHKeyPath(); err == nil {
 		scpArgs = append(scpArgs, "-i", keyPath)
 		defer cleanup()

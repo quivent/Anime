@@ -54,82 +54,13 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	fmt.Println(theme.InfoStyle.Render(fmt.Sprintf("🔗 Connecting to %s...", resolvedTarget)))
 	fmt.Println()
 
-	// First, test if we can connect without password
-	testCmd := exec.Command("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", resolvedTarget, "echo ok")
-	if err := testCmd.Run(); err != nil {
-		// Connection failed - likely no key. Offer to copy it.
-		fmt.Println(theme.WarningStyle.Render("⚠ SSH key not authorized on server"))
-		fmt.Println()
-		fmt.Print(theme.InfoStyle.Render("Copy SSH key to server? [Y/n] "))
-
-		var response string
-		fmt.Scanln(&response)
-		response = strings.ToLower(strings.TrimSpace(response))
-
-		if response == "" || response == "y" || response == "yes" {
-			if err := copySSHKey(resolvedTarget); err != nil {
-				fmt.Println(theme.WarningStyle.Render("⚠ Could not auto-copy key: " + err.Error()))
-				fmt.Println(theme.DimTextStyle.Render("  You may need to enter your password manually"))
-				fmt.Println()
-			} else {
-				fmt.Println(theme.SuccessStyle.Render("✓ SSH key copied successfully"))
-				fmt.Println()
-			}
-		}
-	}
-
 	// Execute SSH command
-	sshExec := exec.Command("ssh", resolvedTarget)
-	sshExec.Stdin = os.Stdin
-	sshExec.Stdout = os.Stdout
-	sshExec.Stderr = os.Stderr
+	sshCmd := exec.Command("ssh", resolvedTarget)
+	sshCmd.Stdin = os.Stdin
+	sshCmd.Stdout = os.Stdout
+	sshCmd.Stderr = os.Stderr
 
-	return sshExec.Run()
-}
-
-// copySSHKey copies the user's public key to the remote server
-func copySSHKey(target string) error {
-	// Find public key
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	// Check for public keys in order of preference
-	pubKeys := []string{
-		home + "/.ssh/id_ed25519.pub",
-		home + "/.ssh/id_rsa.pub",
-		home + "/.ssh/id_ecdsa.pub",
-	}
-
-	var pubKeyPath string
-	for _, p := range pubKeys {
-		if _, err := os.Stat(p); err == nil {
-			pubKeyPath = p
-			break
-		}
-	}
-
-	if pubKeyPath == "" {
-		return fmt.Errorf("no SSH public key found")
-	}
-
-	// Read public key
-	pubKey, err := os.ReadFile(pubKeyPath)
-	if err != nil {
-		return err
-	}
-
-	// Copy to server using ssh-copy-id style command
-	fmt.Println(theme.DimTextStyle.Render("  Copying " + pubKeyPath + "..."))
-
-	copyCmd := exec.Command("ssh", target,
-		fmt.Sprintf(`mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '%s' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`, strings.TrimSpace(string(pubKey))))
-	copyCmd.Stdin = os.Stdin
-	copyCmd.Stdout = os.Stdout
-	copyCmd.Stderr = os.Stderr
-
-	return copyCmd.Run()
+	return sshCmd.Run()
 }
 
 func resolveSSHTarget(cfg *config.Config, target string) (string, error) {

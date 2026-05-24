@@ -1,0 +1,719 @@
+package cmd
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/joshkornreich/anime/internal/config"
+	"github.com/joshkornreich/anime/internal/theme"
+	"github.com/spf13/cobra"
+)
+
+var (
+	pushArch          string
+	pushIncludeSource bool
+	pushRunConfig     bool
+)
+
+var pushCmd = &cobra.Command{
+	Use:   "push [server]",
+	Short: "Build and push anime binary to remote server",
+	Long: `Build the anime binary with optional source code and rsync to a remote server.
+
+Server formats:
+  - user@IP          (e.g., ubuntu@192.168.1.100)
+  - IP               (defaults to ubuntu@IP)
+  - alias            (from anime config or .ssh/config)
+  - (default: lambda if no server specified)
+
+Examples:
+  anime set lambda 209.20.159.132             # Create alias first
+  anime push                                  # Defaults to 'lambda' alias
+  anime push lambda                           # Use anime alias
+  anime push lambda --config                  # Push and run config on server
+  anime push 192.168.1.100                    # Uses ubuntu@192.168.1.100
+  anime push user@10.0.0.5                    # Uses specified user
+  anime push my-lambda-server                 # Uses SSH config alias
+
+The binary is built for Linux by default (configurable with --arch).
+`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runPush,
+}
+
+func init() {
+	pushCmd.Flags().StringVar(&pushArch, "arch", "arm64", "Target architecture (amd64 or arm64)")
+	pushCmd.Flags().BoolVar(&pushIncludeSource, "source", true, "Include source code in the package")
+	pushCmd.Flags().BoolVarP(&pushRunConfig, "config", "c", false, "Run config on server after push")
+	rootCmd.AddCommand(pushCmd)
+}
+
+func runPush(cmd *cobra.Command, args []string) error {
+	// Default to "lambda" if no server specified
+	server := "lambda"
+	if len(args) > 0 {
+		server = args[0]
+	}
+
+	// Parse server argument
+	target, err := parseServerTarget(server)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(theme.InfoStyle.Render("🚀 Pushing anime to remote server"))
+	fmt.Println()
+
+	// Step 1: Build binary for Linux (do this first - fail fast if build breaks)
+	fmt.Print(theme.DimTextStyle.Render("▶ Building binary... "))
+	binaryPath, version, buildTime, err := buildLinuxBinary()
+	if err != nil {
+		fmt.Println(theme.ErrorStyle.Render("✗"))
+		showBuildSuggestions(err)
+		return fmt.Errorf("build failed")
+	}
+	fmt.Println(theme.SuccessStyle.Render("✓"))
+	defer os.Remove(binaryPath) // Clean up temp binary
+
+	// Show build info
+	fmt.Println()
+	fmt.Printf("  Target:  %s\n", theme.HighlightStyle.Render(target))
+	fmt.Printf("  Version: %s\n", theme.HighlightStyle.Render(version))
+	fmt.Printf("  Built:   %s\n", theme.HighlightStyle.Render(strings.ReplaceAll(buildTime, "_", " ")))
+	fmt.Printf("  Arch:    %s\n", theme.HighlightStyle.Render("linux/"+pushArch))
+	if pushIncludeSource {
+		fmt.Printf("  Source:  %s\n", theme.SuccessStyle.Render("included"))
+	}
+	fmt.Println()
+
+	// Step 2: Test SSH connection
+	fmt.Print(theme.DimTextStyle.Render("▶ Testing connection... "))
+	if err := testConnection(target); err != nil {
+		fmt.Println(theme.ErrorStyle.Render("✗"))
+		showConnectionSuggestions(target, err)
+		return fmt.Errorf("connection test failed")
+	}
+	fmt.Println(theme.SuccessStyle.Render("✓"))
+
+	// Step 3: Create tar.gz package
+	fmt.Print(theme.DimTextStyle.Render("▶ Creating package... "))
+	tarPath, err := createPackage(binaryPath)
+	if err != nil {
+		fmt.Println(theme.ErrorStyle.Render("✗"))
+		showPackagingSuggestions(err)
+		return fmt.Errorf("packaging failed")
+	}
+	fmt.Println(theme.SuccessStyle.Render("✓"))
+	defer os.Remove(tarPath) // Clean up temp tar
+
+	// Step 4: Rsync to remote server
+	fmt.Print(theme.DimTextStyle.Render("▶ Syncing to server... "))
+	if err := rsyncToServer(tarPath, target); err != nil {
+		fmt.Println(theme.ErrorStyle.Render("✗"))
+		showRsyncSuggestions(target, err)
+		return fmt.Errorf("rsync failed")
+	}
+	fmt.Println(theme.SuccessStyle.Render("✓"))
+
+	// Step 5: Extract on remote server
+	fmt.Print(theme.DimTextStyle.Render("▶ Extracting on server... "))
+	if err := extractOnServer(target); err != nil {
+		fmt.Println(theme.ErrorStyle.Render("✗"))
+		showExtractionSuggestions(target, err)
+		return fmt.Errorf("extraction failed")
+	}
+	fmt.Println(theme.SuccessStyle.Render("✓"))
+
+	// Step 6: Verify version on server
+	fmt.Print(theme.DimTextStyle.Render("▶ Verifying version... "))
+	if err := verifyServerVersion(target, version); err != nil {
+		fmt.Println(theme.WarningStyle.Render("⚠"))
+		fmt.Println()
+		fmt.Println(theme.WarningStyle.Render("  Warning: " + err.Error()))
+		fmt.Println()
+	} else {
+		fmt.Println(theme.SuccessStyle.Render("✓"))
+	}
+
+	// Step 7: Auto-configure server in anime config
+	if err := autoConfigureServer(server, target); err != nil {
+		// Don't fail the push if config save fails, just warn
+		fmt.Println()
+		fmt.Println(theme.WarningStyle.Render("⚠ Warning: Could not save server to config: " + err.Error()))
+	}
+
+	fmt.Println()
+	fmt.Println(theme.SuccessStyle.Render("✨ Push complete!"))
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("📍 Installed to: ") + theme.HighlightStyle.Render("~/.local/bin/anime"))
+	fmt.Println()
+
+	// Run config on server if requested
+	if pushRunConfig {
+		fmt.Println(theme.InfoStyle.Render("🔧 Running config on server..."))
+		fmt.Println()
+
+		sshCmd := exec.Command("ssh", "-t", target, "anime config")
+		sshCmd.Stdin = os.Stdin
+		sshCmd.Stdout = os.Stdout
+		sshCmd.Stderr = os.Stderr
+
+		if err := sshCmd.Run(); err != nil {
+			fmt.Println()
+			fmt.Println(theme.WarningStyle.Render("⚠️  Remote config had an issue"))
+			fmt.Println(theme.DimTextStyle.Render("  You can run it manually: ") + theme.HighlightStyle.Render("ssh "+target+" anime config"))
+			fmt.Println()
+		}
+	} else {
+		fmt.Println(theme.DimTextStyle.Render("  Run on server: ") + theme.HighlightStyle.Render("ssh "+target+" anime"))
+		fmt.Println(theme.DimTextStyle.Render("  Or SSH in:     ") + theme.HighlightStyle.Render("ssh "+target))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  💡 Configure server: ") + theme.HighlightStyle.Render("anime push "+server+" --config"))
+	}
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  💡 Note: Make sure ~/.local/bin is in PATH on the server"))
+	fmt.Println()
+
+	return nil
+}
+
+func parseServerTarget(server string) (string, error) {
+	// If it contains @, use as-is
+	if strings.Contains(server, "@") {
+		return server, nil
+	}
+
+	// If it looks like an IP address or hostname, prepend ubuntu@
+	if strings.Contains(server, ".") || strings.Contains(server, ":") {
+		return "ubuntu@" + server, nil
+	}
+
+	// First, check anime config aliases
+	cfg, err := config.Load()
+	if err == nil {
+		if target := cfg.GetAlias(server); target != "" {
+			// Recursively resolve the alias target
+			return parseServerTarget(target)
+		}
+	}
+
+	// Otherwise, try to resolve as SSH alias
+	// First check if ssh -G works to resolve the alias
+	sshCmd := exec.Command("ssh", "-G", server)
+	output, err := sshCmd.CombinedOutput()
+	if err == nil {
+		// Parse output to get hostname and user
+		lines := strings.Split(string(output), "\n")
+		var hostname, user string
+		for _, line := range lines {
+			if strings.HasPrefix(line, "hostname ") {
+				hostname = strings.TrimPrefix(line, "hostname ")
+			}
+			if strings.HasPrefix(line, "user ") {
+				user = strings.TrimPrefix(line, "user ")
+			}
+		}
+		if hostname != "" && user != "" {
+			return user + "@" + hostname, nil
+		}
+		if hostname != "" {
+			return "ubuntu@" + hostname, nil
+		}
+	}
+
+	// If SSH alias resolution fails, assume it's a hostname and use ubuntu@
+	return "ubuntu@" + server, nil
+}
+
+func buildLinuxBinary() (string, string, string, error) {
+	// Bump version first
+	bumpCmd := exec.Command("./scripts/bump-version.sh")
+	if err := bumpCmd.Run(); err != nil {
+		return "", "", "", fmt.Errorf("failed to bump version: %w", err)
+	}
+
+	// Get version info
+	version := getGitVersion()
+	buildTime := time.Now().UTC().Format("2006-01-02_15:04:05")
+	commit := getGitCommit()
+
+	// Build flags
+	ldflags := fmt.Sprintf("-X github.com/joshkornreich/anime/cmd.Version=%s -X github.com/joshkornreich/anime/cmd.BuildTime=%s -X github.com/joshkornreich/anime/cmd.Commit=%s",
+		version, buildTime, commit)
+
+	// Output path
+	outputPath := filepath.Join(os.TempDir(), "anime-linux-"+pushArch)
+
+	// Build command
+	buildCmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", outputPath, "main.go")
+	buildCmd.Env = append(os.Environ(),
+		"GOOS=linux",
+		"GOARCH="+pushArch,
+	)
+
+	output, err := buildCmd.CombinedOutput()
+	if err != nil {
+		return "", "", "", fmt.Errorf("%w: %s", err, string(output))
+	}
+
+	return outputPath, version, buildTime, nil
+}
+
+func createPackage(binaryPath string) (string, error) {
+	// Create tar.gz file
+	tarPath := filepath.Join(os.TempDir(), "anime-package.tar.gz")
+
+	outFile, err := os.Create(tarPath)
+	if err != nil {
+		return "", err
+	}
+	defer outFile.Close()
+
+	gzWriter := gzip.NewWriter(outFile)
+	defer gzWriter.Close()
+
+	tarWriter := tar.NewWriter(gzWriter)
+	defer tarWriter.Close()
+
+	// Add binary to tar
+	if err := addFileToTar(tarWriter, binaryPath, "anime"); err != nil {
+		return "", fmt.Errorf("failed to add binary: %w", err)
+	}
+
+	// Add source code if requested
+	if pushIncludeSource {
+		if err := addSourceToTar(tarWriter); err != nil {
+			return "", fmt.Errorf("failed to add source: %w", err)
+		}
+	}
+
+	return tarPath, nil
+}
+
+func addFileToTar(tw *tar.Writer, srcPath, destName string) error {
+	file, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	header := &tar.Header{
+		Name:    destName,
+		Size:    stat.Size(),
+		Mode:    int64(stat.Mode()),
+		ModTime: stat.ModTime(),
+	}
+
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+
+	_, err = io.Copy(tw, file)
+	return err
+}
+
+func addSourceToTar(tw *tar.Writer) error {
+	// Add main source directories
+	dirs := []string{"cmd", "internal", "main.go", "go.mod", "go.sum"}
+
+	for _, dir := range dirs {
+		if err := addDirToTar(tw, dir, "src/"+dir); err != nil {
+			// Skip if directory doesn't exist
+			if !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func addDirToTar(tw *tar.Writer, srcPath, destPrefix string) error {
+	return filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip .git and other hidden directories
+		if info.IsDir() && strings.HasPrefix(info.Name(), ".") {
+			return filepath.SkipDir
+		}
+
+		// Skip hidden files and build artifacts
+		if strings.HasPrefix(info.Name(), ".") || info.Name() == "build" {
+			return nil
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		// Create tar header
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+
+		// Update name to include destination prefix
+		relPath, err := filepath.Rel(".", path)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.Join(destPrefix, relPath)
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		// Copy file content
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		_, err = io.Copy(tw, file)
+		return err
+	})
+}
+
+func rsyncToServer(localPath, target string) error {
+	// Rsync command
+	rsyncCmd := exec.Command("rsync", "-avz", "--progress", localPath, target+":~/")
+	rsyncCmd.Stdout = os.Stdout
+	rsyncCmd.Stderr = os.Stderr
+
+	return rsyncCmd.Run()
+}
+
+func extractOnServer(target string) error {
+	// SSH command to extract tar.gz on server and install to ~/.local/bin
+	extractCmd := `
+		cd ~/ && \
+		tar -xzf anime-package.tar.gz && \
+		mkdir -p ~/.local/bin && \
+		mv anime ~/.local/bin/anime && \
+		chmod +x ~/.local/bin/anime && \
+		rm anime-package.tar.gz && \
+		echo "Installed to ~/.local/bin/anime"
+	`
+
+	sshCmd := exec.Command("ssh", target, extractCmd)
+	output, err := sshCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(output))
+	}
+
+	return nil
+}
+
+func getGitVersion() string {
+	// Read version from VERSION file
+	versionBytes, err := os.ReadFile("VERSION")
+	if err != nil {
+		return "dev"
+	}
+	return strings.TrimSpace(string(versionBytes))
+}
+
+func getGitCommit() string {
+	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// testConnection tests SSH connection to the target
+func testConnection(target string) error {
+	testCmd := exec.Command("ssh", "-o", "ConnectTimeout=5", target, "echo ok")
+	output, err := testCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(output))
+	}
+	return nil
+}
+
+// showConnectionSuggestions shows helpful suggestions when connection fails
+func showConnectionSuggestions(target string, err error) {
+	fmt.Println()
+	fmt.Println(theme.ErrorStyle.Render("❌ Connection failed"))
+	fmt.Println()
+	fmt.Printf("  Target: %s\n", theme.HighlightStyle.Render(target))
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("💡 Suggestions:"))
+	fmt.Println()
+
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "Permission denied") || strings.Contains(errStr, "publickey") {
+		fmt.Println(theme.DimTextStyle.Render("  • Check your SSH key:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh-add -l"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Add your SSH key if needed:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh-add ~/.ssh/id_rsa"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Test SSH connection manually:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target))
+	} else if strings.Contains(errStr, "Connection refused") {
+		fmt.Println(theme.DimTextStyle.Render("  • Server may be down or SSH service not running"))
+		fmt.Println(theme.DimTextStyle.Render("  • Check if server is accessible:"))
+		fmt.Println(theme.HighlightStyle.Render("    ping " + strings.Split(target, "@")[len(strings.Split(target, "@"))-1]))
+	} else if strings.Contains(errStr, "No route to host") || strings.Contains(errStr, "Network unreachable") {
+		fmt.Println(theme.DimTextStyle.Render("  • Check your network connection"))
+		fmt.Println(theme.DimTextStyle.Render("  • Verify the IP address is correct"))
+		fmt.Println(theme.DimTextStyle.Render("  • Check VPN if required"))
+	} else if strings.Contains(errStr, "Could not resolve hostname") {
+		fmt.Println(theme.DimTextStyle.Render("  • Check if the alias is configured:"))
+		fmt.Println(theme.HighlightStyle.Render("    anime set --list"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Create alias if needed:"))
+		fmt.Println(theme.HighlightStyle.Render("    anime set lambda 209.20.159.132"))
+	} else {
+		fmt.Println(theme.DimTextStyle.Render("  • Test SSH connection:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Check server is running and accessible"))
+		fmt.Println(theme.DimTextStyle.Render("  • Verify SSH key permissions"))
+	}
+	fmt.Println()
+}
+
+// showBuildSuggestions shows helpful suggestions when build fails
+func showBuildSuggestions(err error) {
+	fmt.Println()
+	fmt.Println(theme.ErrorStyle.Render("❌ Build failed"))
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("💡 Suggestions:"))
+	fmt.Println()
+
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "cannot find package") || strings.Contains(errStr, "no required module") {
+		fmt.Println(theme.DimTextStyle.Render("  • Update dependencies:"))
+		fmt.Println(theme.HighlightStyle.Render("    go mod tidy"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Download missing packages:"))
+		fmt.Println(theme.HighlightStyle.Render("    go mod download"))
+	} else if strings.Contains(errStr, "undefined:") {
+		fmt.Println(theme.DimTextStyle.Render("  • Code may have compilation errors"))
+		fmt.Println(theme.DimTextStyle.Render("  • Try building locally first:"))
+		fmt.Println(theme.HighlightStyle.Render("    go build"))
+	} else {
+		fmt.Println(theme.DimTextStyle.Render("  • Check Go installation:"))
+		fmt.Println(theme.HighlightStyle.Render("    go version"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Try building locally:"))
+		fmt.Println(theme.HighlightStyle.Render("    go build"))
+	}
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  Error details:"))
+	fmt.Println(theme.DimTextStyle.Render("  " + err.Error()))
+	fmt.Println()
+}
+
+// showPackagingSuggestions shows helpful suggestions when packaging fails
+func showPackagingSuggestions(err error) {
+	fmt.Println()
+	fmt.Println(theme.ErrorStyle.Render("❌ Packaging failed"))
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("💡 Suggestions:"))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  • Check disk space:"))
+	fmt.Println(theme.HighlightStyle.Render("    df -h"))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  • Check temp directory permissions"))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  Error details:"))
+	fmt.Println(theme.DimTextStyle.Render("  " + err.Error()))
+	fmt.Println()
+}
+
+// showRsyncSuggestions shows helpful suggestions when rsync fails
+func showRsyncSuggestions(target string, err error) {
+	fmt.Println()
+	fmt.Println(theme.ErrorStyle.Render("❌ Rsync failed"))
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("💡 Suggestions:"))
+	fmt.Println()
+
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "rsync: command not found") || strings.Contains(errStr, "executable file not found") {
+		fmt.Println(theme.DimTextStyle.Render("  • Install rsync:"))
+		if strings.Contains(runtime.GOOS, "darwin") {
+			fmt.Println(theme.HighlightStyle.Render("    brew install rsync"))
+		} else {
+			fmt.Println(theme.HighlightStyle.Render("    sudo apt-get install rsync"))
+		}
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Or use scp instead (manual workaround):"))
+		fmt.Println(theme.HighlightStyle.Render("    scp anime-package.tar.gz " + target + ":~/"))
+	} else if strings.Contains(errStr, "Permission denied") {
+		fmt.Println(theme.DimTextStyle.Render("  • Check SSH connection:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Verify write permissions on remote server"))
+	} else {
+		fmt.Println(theme.DimTextStyle.Render("  • Test SSH connection:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Check network connectivity"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  Error details:"))
+		fmt.Println(theme.DimTextStyle.Render("  " + err.Error()))
+	}
+	fmt.Println()
+}
+
+// showExtractionSuggestions shows helpful suggestions when extraction fails
+func showExtractionSuggestions(target string, err error) {
+	fmt.Println()
+	fmt.Println(theme.ErrorStyle.Render("❌ Extraction failed"))
+	fmt.Println()
+	fmt.Println(theme.InfoStyle.Render("💡 Suggestions:"))
+	fmt.Println()
+
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "tar: command not found") {
+		fmt.Println(theme.DimTextStyle.Render("  • tar is not installed on the server"))
+		fmt.Println(theme.DimTextStyle.Render("  • SSH in and install it:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target))
+		fmt.Println(theme.HighlightStyle.Render("    sudo apt-get install tar"))
+	} else if strings.Contains(errStr, "No space left") {
+		fmt.Println(theme.DimTextStyle.Render("  • Server is out of disk space"))
+		fmt.Println(theme.DimTextStyle.Render("  • Check disk usage:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target + " df -h"))
+	} else {
+		fmt.Println(theme.DimTextStyle.Render("  • Check if file was transferred:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target + " ls -lh anime-package.tar.gz"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  • Try extracting manually:"))
+		fmt.Println(theme.HighlightStyle.Render("    ssh " + target))
+		fmt.Println(theme.HighlightStyle.Render("    tar -xzf anime-package.tar.gz"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  Error details:"))
+		fmt.Println(theme.DimTextStyle.Render("  " + err.Error()))
+	}
+	fmt.Println()
+}
+
+
+// verifyServerVersion checks that the version on the server matches the expected version
+func verifyServerVersion(target, expectedVersion string) error {
+	// Run anime --version on the server
+	// Use PATH and explicitly call anime from ~/.local/bin
+	versionCmd := exec.Command("ssh", target, "PATH=$HOME/.local/bin:$PATH anime --version 2>&1 | grep 'Version:' | awk '{print $2}'")
+	output, err := versionCmd.Output()
+	if err != nil {
+		return fmt.Errorf("could not get version from server")
+	}
+
+	serverVersion := strings.TrimSpace(string(output))
+
+	// Compare versions
+	if serverVersion != expectedVersion {
+		return fmt.Errorf("version mismatch - expected %s, got %s on server", expectedVersion, serverVersion)
+	}
+
+	return nil
+}
+// autoConfigureServer saves the pushed server to the anime config
+func autoConfigureServer(serverArg, target string) error {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Parse target to extract user and host
+	parts := strings.Split(target, "@")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid target format: %s", target)
+	}
+	user := parts[0]
+	host := parts[1]
+
+	// Check if this server already exists in config (by host)
+	var existingServer *config.Server
+	for i := range cfg.Servers {
+		if cfg.Servers[i].Host == host {
+			existingServer = &cfg.Servers[i]
+			break
+		}
+	}
+
+	// If using an existing alias, just update the alias mapping
+	if serverArg != host && !strings.Contains(serverArg, "@") && !strings.Contains(serverArg, ".") {
+		// This is an alias name, not an IP/hostname
+		cfg.SetAlias(serverArg, target)
+		if err := cfg.Save(); err != nil {
+			return fmt.Errorf("failed to save alias: %w", err)
+		}
+		fmt.Print(theme.DimTextStyle.Render("▶ Saved alias... "))
+		fmt.Println(theme.SuccessStyle.Render("✓"))
+		return nil
+	}
+
+	// If server exists, update it
+	if existingServer != nil {
+		existingServer.User = user
+		existingServer.Host = host
+		if err := cfg.Save(); err != nil {
+			return fmt.Errorf("failed to update server: %w", err)
+		}
+		fmt.Print(theme.DimTextStyle.Render("▶ Updated server config... "))
+		fmt.Println(theme.SuccessStyle.Render("✓"))
+		return nil
+	}
+
+	// Otherwise, create a new server entry
+	serverName := host
+	if strings.Contains(host, ".") {
+		// If it's an IP, use "server-{last-octet}" or similar
+		octets := strings.Split(host, ".")
+		if len(octets) == 4 {
+			serverName = "server-" + octets[3]
+		}
+	}
+
+	newServer := config.Server{
+		Name:        serverName,
+		Host:        host,
+		User:        user,
+		SSHKey:      "", // Could be detected from SSH config
+		CostPerHour: 0,  // User can configure later
+		Modules:     []string{},
+	}
+
+	cfg.AddServer(newServer)
+
+	// Also create an alias if serverArg was provided
+	if serverArg != "" && serverArg != host {
+		cfg.SetAlias(serverArg, target)
+	}
+
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save server: %w", err)
+	}
+
+	fmt.Print(theme.DimTextStyle.Render("▶ Saved server config... "))
+	fmt.Println(theme.SuccessStyle.Render("✓"))
+
+	return nil
+}

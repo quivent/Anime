@@ -1,3 +1,5 @@
+//go:build ignore
+
 package cmd
 
 import (
@@ -279,7 +281,11 @@ func getPkgTarget() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to load config: %w", err)
 	}
-	return resolveSSHTarget(cfg, getPkgServer())
+	resolved, err := resolveSSHTarget(cfg, getPkgServer())
+	if err != nil {
+		return "", err
+	}
+	return resolved.Destination, nil
 }
 
 func runPkgInit(cmd *cobra.Command, args []string) error {

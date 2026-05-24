@@ -8,15 +8,45 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joshkornreich/anime/internal/theme"
 )
 
-// modelTitleStyle uses BrightMagenta with black background
-var modelTitleStyle = lipgloss.NewStyle().
-	Bold(true).
-	Foreground(theme.BrightMagenta).
-	Background(theme.BgBlack).
-	Padding(0, 1)
+var (
+	modelTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FF00FF")).
+			Background(lipgloss.Color("#1a1a1a")).
+			Padding(0, 1)
+
+	modelCategoryStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#00FFFF")).
+			MarginTop(1).
+			MarginBottom(1)
+
+	modelNameStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFF00"))
+
+	modelDetailStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			MarginLeft(2)
+
+	modelHighlightStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FF00"))
+
+	modelDescStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#CCCCCC")).
+			MarginLeft(2).
+			MarginTop(1)
+
+	modelUseCaseStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#BBBBBB")).
+			MarginLeft(4)
+
+	modelHelpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#666666")).
+			MarginTop(1)
+)
 
 type ModelItem struct {
 	Name     string
@@ -110,25 +140,23 @@ func (m ModelsModel) View() string {
 
 	// Show detailed view of selected model
 	if i, ok := m.list.SelectedItem().(ModelItem); ok {
-		s.WriteString(theme.HeaderStyle.Render(fmt.Sprintf("📦 %s [%s]", i.Type, i.Category)))
+		s.WriteString(modelCategoryStyle.Render(fmt.Sprintf("📦 %s [%s]", i.Type, i.Category)))
 		s.WriteString("\n\n")
 
-		s.WriteString(theme.HighlightStyle.Render("  " + i.Name))
+		s.WriteString(modelNameStyle.Render("  " + i.Name))
 		s.WriteString("\n")
 
-		detailStyle := lipgloss.NewStyle().Foreground(theme.LightGray).MarginLeft(2)
-		s.WriteString(detailStyle.Render("💾 " + i.Size))
+		s.WriteString(modelDetailStyle.Render("💾 " + i.Size))
 		s.WriteString("\n")
 
-		s.WriteString(theme.DescriptionStyle.Render("📝 " + i.Desc))
+		s.WriteString(modelDescStyle.Render("📝 " + i.Desc))
 		s.WriteString("\n\n")
 
 		if len(i.UseCases) > 0 {
-			s.WriteString(theme.DescriptionStyle.Render("🎯 Use Cases:"))
+			s.WriteString(modelDescStyle.Render("🎯 Use Cases:"))
 			s.WriteString("\n")
-			useCaseStyle := lipgloss.NewStyle().Foreground(theme.MediumGray).MarginLeft(4)
 			for _, uc := range i.UseCases {
-				s.WriteString(useCaseStyle.Render("• " + uc))
+				s.WriteString(modelUseCaseStyle.Render("• " + uc))
 				s.WriteString("\n")
 			}
 		}
@@ -137,9 +165,9 @@ func (m ModelsModel) View() string {
 
 	// Help text
 	if m.showingHelp {
-		s.WriteString(theme.HelpStyle.Render("? - toggle help • ↑/↓ - navigate • enter - select • q - quit"))
+		s.WriteString(modelHelpStyle.Render("? - toggle help • ↑/↓ - navigate • enter - select • q - quit"))
 	} else {
-		s.WriteString(theme.HelpStyle.Render("? for help • q to quit"))
+		s.WriteString(modelHelpStyle.Render("? for help • q to quit"))
 	}
 
 	return s.String()
@@ -319,6 +347,252 @@ func getModelCatalog() []ModelItem {
 			UseCases:    []string{"Video upscaling", "Frame interpolation", "Denoising", "Quality enhancement"},
 			Category:    "Enhancement",
 			Type:        "🎬 Video Generation",
+		},
+		{
+			Name:        "Flux 2 (FP8)",
+			Size:        "~8GB",
+			Desc:        "Next-generation video model from Black Forest Labs with superior motion and coherence (FP8 quantized)",
+			UseCases:    []string{"High-quality video generation", "Complex motion", "Long-form content", "Professional production"},
+			Category:    "Next Generation",
+			Type:        "🎬 Video Generation",
+		},
+		{
+			Name:        "CogVideoX 1.5 5B",
+			Size:        "~18GB",
+			Desc:        "Upgraded CogVideoX supporting 10-second videos at higher resolutions",
+			UseCases:    []string{"Long-form video", "High resolution", "Text-to-video", "Research"},
+			Category:    "Text-to-Video",
+			Type:        "🎬 Video Generation",
+		},
+		{
+			Name:        "CogVideoX 1.5 I2V",
+			Size:        "~18GB",
+			Desc:        "Image-to-video variant of CogVideoX 1.5 with any resolution support",
+			UseCases:    []string{"Image animation", "Video from photo", "Any resolution", "Creative content"},
+			Category:    "Image-to-Video",
+			Type:        "🎬 Video Generation",
+		},
+		{
+			Name:        "HunyuanVideo",
+			Size:        "~20GB",
+			Desc:        "Tencent's open-source text-to-video diffusion transformer model",
+			UseCases:    []string{"Text-to-video", "High quality output", "Open source alternative", "Research"},
+			Category:    "Text-to-Video",
+			Type:        "🎬 Video Generation",
+		},
+		{
+			Name:        "Pyramid Flow",
+			Size:        "~12GB",
+			Desc:        "Efficient video generation using pyramidal flow matching (768p, up to 10s)",
+			UseCases:    []string{"Efficient generation", "768p video", "10-second clips", "Fast inference"},
+			Category:    "Text-to-Video",
+			Type:        "🎬 Video Generation",
+		},
+		{
+			Name:        "SVD-XT 1.1",
+			Size:        "~10GB",
+			Desc:        "Extended Stable Video Diffusion with improved temporal consistency",
+			UseCases:    []string{"Image-to-video", "Longer clips", "Smoother motion", "Animation"},
+			Category:    "Image-to-Video",
+			Type:        "🎬 Video Generation",
+		},
+		{
+			Name:        "I2V-Adapter",
+			Size:        "~4GB",
+			Desc:        "General image-to-video adapter for diffusion models (SIGGRAPH 2024)",
+			UseCases:    []string{"Adapter solution", "Any SD model", "Research", "Flexible I2V"},
+			Category:    "Image-to-Video",
+			Type:        "🎬 Video Generation",
+		},
+
+		// Image Generation Models
+		{
+			Name:        "Stable Diffusion 3.5 Large",
+			Size:        "~16GB",
+			Desc:        "8B parameter flagship SD3 model with exceptional quality at 1MP resolution",
+			UseCases:    []string{"Professional images", "High quality", "Complex prompts", "Production work"},
+			Category:    "Flagship",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "SD 3.5 Large Turbo",
+			Size:        "~16GB",
+			Desc:        "Distilled SD3.5 Large generating high-quality images in 4 steps",
+			UseCases:    []string{"Fast generation", "Real-time", "Interactive apps", "Rapid iteration"},
+			Category:    "Fast",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "Stable Diffusion 3.5 Medium",
+			Size:        "~7GB",
+			Desc:        "2.6B parameter SD3 with MMDiT-X architecture, consumer GPU friendly",
+			UseCases:    []string{"Consumer GPUs", "Efficient", "Good quality", "Accessible"},
+			Category:    "Efficient",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "SDXL Turbo",
+			Size:        "~7GB",
+			Desc:        "Real-time SDXL generating photorealistic images in a single step",
+			UseCases:    []string{"Real-time", "Single step", "Interactive", "Fast prototyping"},
+			Category:    "Fast",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "SDXL Lightning",
+			Size:        "~7GB",
+			Desc:        "ByteDance's lightning-fast SDXL generating 1024px images in few steps",
+			UseCases:    []string{"Lightning fast", "Few steps", "High quality", "Production"},
+			Category:    "Fast",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "Playground v2.5",
+			Size:        "~7GB",
+			Desc:        "State-of-the-art aesthetic model outperforming SDXL and DALL-E 3",
+			UseCases:    []string{"Best aesthetics", "Photorealism", "Art generation", "Premium quality"},
+			Category:    "Aesthetic",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "PixArt-Σ",
+			Size:        "~8GB",
+			Desc:        "Efficient DiT-based text-to-image with 4K support and improved text rendering",
+			UseCases:    []string{"4K images", "Text in images", "Efficient", "Typography"},
+			Category:    "DiT",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "Kandinsky 3",
+			Size:        "~8GB",
+			Desc:        "Sber AI's multilingual text-to-image model with strong Russian support",
+			UseCases:    []string{"Multilingual", "Russian support", "International", "Creative"},
+			Category:    "Multilingual",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "Kolors",
+			Size:        "~8GB",
+			Desc:        "KWAI's bilingual Chinese-English text-to-image model",
+			UseCases:    []string{"Chinese-English", "Bilingual", "Asian aesthetics", "Creative"},
+			Category:    "Bilingual",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "SD 1.5 Inpainting",
+			Size:        "~4GB",
+			Desc:        "Stable Diffusion 1.5 fine-tuned for image inpainting and outpainting",
+			UseCases:    []string{"Inpainting", "Outpainting", "Image editing", "Content removal"},
+			Category:    "Editing",
+			Type:        "🎨 Image Generation",
+		},
+		{
+			Name:        "SDXL Inpainting",
+			Size:        "~7GB",
+			Desc:        "SDXL fine-tuned for high-resolution inpainting and outpainting",
+			UseCases:    []string{"HD inpainting", "Professional editing", "Content fill", "Restoration"},
+			Category:    "Editing",
+			Type:        "🎨 Image Generation",
+		},
+
+		// Image Enhancement
+		{
+			Name:        "Real-ESRGAN",
+			Size:        "~200MB",
+			Desc:        "Practical 4x image/video upscaling with artifact removal",
+			UseCases:    []string{"4x upscaling", "Artifact removal", "Video upscale", "Enhancement"},
+			Category:    "Upscaling",
+			Type:        "🔧 Image Enhancement",
+		},
+		{
+			Name:        "GFPGAN",
+			Size:        "~350MB",
+			Desc:        "Practical face restoration algorithm for real-world images",
+			UseCases:    []string{"Face restoration", "Old photos", "Portrait enhancement", "Quality fix"},
+			Category:    "Face Restoration",
+			Type:        "🔧 Image Enhancement",
+		},
+		{
+			Name:        "AuraSR",
+			Size:        "~500MB",
+			Desc:        "GigaGAN-based open-source 4x image upscaler from Fal.ai",
+			UseCases:    []string{"GigaGAN upscale", "4x enhancement", "Detail generation", "Quality boost"},
+			Category:    "Upscaling",
+			Type:        "🔧 Image Enhancement",
+		},
+		{
+			Name:        "SUPIR",
+			Size:        "~12GB",
+			Desc:        "Photo-realistic image restoration using SDXL with text-guided enhancement",
+			UseCases:    []string{"Text-guided restore", "Photo-realistic", "Advanced restoration", "SDXL-based"},
+			Category:    "Restoration",
+			Type:        "🔧 Image Enhancement",
+		},
+		{
+			Name:        "RIFE",
+			Size:        "~200MB",
+			Desc:        "Real-time intermediate flow estimation for video frame interpolation",
+			UseCases:    []string{"Frame interpolation", "Slow motion", "FPS boost", "Smooth video"},
+			Category:    "Interpolation",
+			Type:        "🔧 Video Enhancement",
+		},
+		{
+			Name:        "FILM",
+			Size:        "~400MB",
+			Desc:        "Google's frame interpolation model for large motion between frames",
+			UseCases:    []string{"Large motion", "Frame blending", "Smooth transitions", "Video effects"},
+			Category:    "Interpolation",
+			Type:        "🔧 Video Enhancement",
+		},
+
+		// ControlNet & Adapters
+		{
+			Name:        "ControlNet Canny",
+			Size:        "~1.5GB",
+			Desc:        "Edge detection based image conditioning for Stable Diffusion",
+			UseCases:    []string{"Edge guidance", "Line art", "Structure preservation", "Precise control"},
+			Category:    "Edge Detection",
+			Type:        "🎛️ ControlNet",
+		},
+		{
+			Name:        "ControlNet Depth",
+			Size:        "~1.5GB",
+			Desc:        "Depth map conditioning for 3D-aware image generation",
+			UseCases:    []string{"Depth control", "3D awareness", "Scene composition", "Spatial guidance"},
+			Category:    "Depth",
+			Type:        "🎛️ ControlNet",
+		},
+		{
+			Name:        "ControlNet OpenPose",
+			Size:        "~1.5GB",
+			Desc:        "Human pose estimation conditioning for character generation",
+			UseCases:    []string{"Pose control", "Character posing", "Action scenes", "Figure drawing"},
+			Category:    "Pose",
+			Type:        "🎛️ ControlNet",
+		},
+		{
+			Name:        "IP-Adapter",
+			Size:        "~100MB",
+			Desc:        "Tencent's image prompt adapter for style and content transfer",
+			UseCases:    []string{"Style transfer", "Image prompts", "Content mixing", "Reference images"},
+			Category:    "Adapter",
+			Type:        "🎛️ ControlNet",
+		},
+		{
+			Name:        "IP-Adapter FaceID",
+			Size:        "~200MB",
+			Desc:        "Face-specific IP-Adapter for identity-preserving generation",
+			UseCases:    []string{"Face preservation", "Identity transfer", "Portrait consistency", "Character art"},
+			Category:    "Face Adapter",
+			Type:        "🎛️ ControlNet",
+		},
+		{
+			Name:        "InstantID",
+			Size:        "~2GB",
+			Desc:        "Zero-shot identity-preserving generation with single reference image",
+			UseCases:    []string{"Single image ID", "Zero-shot", "Face swap", "Character creation"},
+			Category:    "Identity",
+			Type:        "🎛️ ControlNet",
 		},
 	}
 }

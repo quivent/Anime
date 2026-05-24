@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/joshkornreich/anime/internal/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -25,20 +24,10 @@ type ClientOptions struct {
 	Interactive           bool
 }
 
-// NewClient creates a new SSH client with the default options (strict host key checking enabled)
 func NewClient(host, user, keyPath string) (*Client, error) {
 	return NewClientWithOptions(host, user, keyPath, ClientOptions{
-		StrictHostKeyChecking: true,
-		Interactive:           true,
-	})
-}
-
-// NewClientInsecure creates a new SSH client with host key checking disabled
-// This function prints a warning about the security implications
-func NewClientInsecure(host, user, keyPath string) (*Client, error) {
-	return NewClientWithOptions(host, user, keyPath, ClientOptions{
 		StrictHostKeyChecking: false,
-		Interactive:           false,
+		Interactive:           true,
 	})
 }
 
@@ -66,12 +55,12 @@ func NewClientWithOptions(host, user, keyPath string, opts ClientOptions) (*Clie
 		// Read private key
 		key, err := os.ReadFile(keyPath)
 		if err != nil {
-			return nil, errors.NewSSHKeyError(keyPath, err)
+			return nil, fmt.Errorf("failed to read private key: %w", err)
 		}
 
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
-			return nil, errors.NewSSHKeyError(keyPath, err)
+			return nil, fmt.Errorf("failed to parse private key: %w", err)
 		}
 
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
@@ -105,22 +94,20 @@ func NewClientWithOptions(host, user, keyPath string, opts ClientOptions) (*Clie
 		}
 
 		if len(authMethods) == 0 {
-			return nil, errors.NewSSHAuthError(user, host, fmt.Errorf("no SSH authentication method available"))
+			return nil, fmt.Errorf("no SSH authentication method available (agent: %v, keys: %v)", os.Getenv("SSH_AUTH_SOCK"), possibleKeys)
 		}
 	}
 
 	// Setup host key verification
 	var hostKeyCallback ssh.HostKeyCallback
 	if opts.StrictHostKeyChecking {
-		// Use proper host key verification
 		hostKeyManager, err := NewHostKeyManager(opts.Interactive)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize host key verification: %w", err)
 		}
 		hostKeyCallback = hostKeyManager.HostKeyCallback()
 	} else {
-		// Insecure mode - show warning
-		hostKeyCallback = InsecureIgnoreHostKeyWithWarning()
+		hostKeyCallback = ssh.InsecureIgnoreHostKey()
 	}
 
 	config := &ssh.ClientConfig{
@@ -136,7 +123,7 @@ func NewClientWithOptions(host, user, keyPath string, opts ClientOptions) (*Clie
 
 	client, err := ssh.Dial("tcp", host, config)
 	if err != nil {
-		return nil, errors.NewSSHConnectionError(host, err)
+		return nil, fmt.Errorf("failed to dial: %w", err)
 	}
 
 	return &Client{

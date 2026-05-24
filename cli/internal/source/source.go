@@ -170,8 +170,8 @@ func Push(target, remotePath string, cfg *Config) error {
 		// Create remote directory
 		mkdirCmd := exec.Command("ssh",
 			"-i", cfg.KeyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("mkdir -p %s", fullRemotePath),
 		)
@@ -181,7 +181,7 @@ func Push(target, remotePath string, cfg *Config) error {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", cfg.KeyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cfg.KeyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cfg.DryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -223,7 +223,7 @@ func Pull(target, remotePath string, cfg *Config) error {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", cfg.KeyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cfg.KeyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cfg.DryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -272,7 +272,7 @@ func Clone(target, remotePath string, cfg *Config) error {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", cfg.KeyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cfg.KeyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cfg.DryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -309,7 +309,7 @@ func GetStatus(target, remotePath string, cfg *Config) (*Status, error) {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", cfg.KeyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cfg.KeyPath)
 
 	status := &Status{
 		LinkedTo: remotePath,
@@ -345,7 +345,7 @@ func Sync(target, remotePath string, cfg *Config) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", cfg.KeyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cfg.KeyPath)
 
 	// Step 1: Pull newer files from remote
 	pullArgs := []string{"-avz", "--progress", "--update"}
@@ -389,8 +389,8 @@ func ListRepos(target, path string, cfg *Config) ([]string, error) {
 
 	sshCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("ls -1 %s/ 2>/dev/null || echo ''", fullPath),
 	)
@@ -415,8 +415,8 @@ func Delete(target, remotePath string, cfg *Config) error {
 
 	sshCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("rm -rf %s", fullRemotePath),
 	)
@@ -435,8 +435,8 @@ func Rename(target, oldPath, newPath string, cfg *Config) error {
 
 	sshCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("mkdir -p $(dirname %s) && mv %s %s", fullNewPath, fullOldPath, fullNewPath),
 	)
@@ -455,8 +455,8 @@ func GetHistory(target, remotePath string, cfg *Config) ([]HistoryEntry, error) 
 
 	sshCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("cat %s 2>/dev/null | tail -20 || echo ''", historyPath),
 	)
@@ -493,8 +493,8 @@ func recordHistory(target, remotePath, keyPath, action string) error {
 
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("echo '%s' >> %s", entry, historyPath),
 	)

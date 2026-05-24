@@ -102,7 +102,7 @@ func runDeployProducer(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	sshCmd := exec.Command("ssh", fmt.Sprintf("%s@%s", deployProducerUser, server),
+	sshCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", fmt.Sprintf("%s@%s", deployProducerUser, server),
 		strings.Join(installCommands, " && "))
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
@@ -115,7 +115,7 @@ func runDeployProducer(cmd *cobra.Command, args []string) error {
 	// Step 4: Verify installation
 	fmt.Printf("  %s Verifying installation...\n", theme.SymbolInfo)
 
-	verifyCmd := exec.Command("ssh", fmt.Sprintf("%s@%s", deployProducerUser, server),
+	verifyCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", fmt.Sprintf("%s@%s", deployProducerUser, server),
 		fmt.Sprintf("%s/producer --help | head -5", deployProducerPath))
 	verifyOutput, err := verifyCmd.CombinedOutput()
 	if err != nil {

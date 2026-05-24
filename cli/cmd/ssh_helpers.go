@@ -4,6 +4,13 @@ import (
 	"github.com/joshkornreich/anime/internal/ssh"
 )
 
+// SSH global flags (registered by root command)
+var (
+	SSHInsecure              bool
+	SSHStrictHostKeyChecking = true
+	SSHNonInteractive        bool
+)
+
 // GetSSHClientOptions returns SSH client options based on global flags
 func GetSSHClientOptions() ssh.ClientOptions {
 	// If --insecure is set, disable host key checking

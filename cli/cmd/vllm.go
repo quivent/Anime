@@ -1232,7 +1232,7 @@ func runVLLMLogsRemote() error {
 	fmt.Println()
 
 	// SSH tail command
-	sshCmd := exec.Command("ssh")
+	sshCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
 	if keyPath != "" {
 		sshCmd.Args = append(sshCmd.Args, "-i", keyPath)
 	}

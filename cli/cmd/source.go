@@ -1,3 +1,5 @@
+//go:build ignore
+
 package cmd
 
 import (
@@ -316,7 +318,11 @@ func getSourceTarget() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to load config: %w", err)
 	}
-	return resolveSSHTarget(cfg, getSourceServer())
+	resolved, err := resolveSSHTarget(cfg, getSourceServer())
+	if err != nil {
+		return "", err
+	}
+	return resolved.Destination, nil
 }
 
 func resolveRemotePathSource(args []string) string {
@@ -379,7 +385,11 @@ func getSourceTargetForServer(server string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to load config: %w", err)
 	}
-	return resolveSSHTarget(cfg, server)
+	resolved, err := resolveSSHTarget(cfg, server)
+	if err != nil {
+		return "", err
+	}
+	return resolved.Destination, nil
 }
 
 func runSourcePush(cmd *cobra.Command, args []string) error {
@@ -775,8 +785,8 @@ func runSourceTree(cmd *cobra.Command, args []string) error {
 
 	sshArgs := []string{
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		treeCmd,
 	}

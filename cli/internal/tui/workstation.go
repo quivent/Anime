@@ -13,7 +13,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/config"
-	"github.com/joshkornreich/anime/internal/theme"
 )
 
 // Panel types
@@ -81,17 +80,56 @@ var keys = keyMap{
 	),
 }
 
-// Workstation-specific styles using centralized theme
+// Workstation-specific styles
 var (
 	workstationTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.BrightPink).
-			Background(theme.BgBlack).
+			Foreground(lipgloss.Color("#FF6AC1")).
+			Background(lipgloss.Color("#1a1a1a")).
 			Padding(0, 1)
 
-	// wsSelectedItemStyle uses BrightPink for consistency
+	activePanelStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#FF6AC1")).
+				Padding(1, 2).
+				Width(58)
+
+	inactivePanelStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#3a3a3a")).
+				Padding(1, 2).
+				Width(58)
+
+	wsHeaderStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#00D9FF")).
+			MarginBottom(1)
+
+	wsLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7D56F4")).
+			Bold(true)
+
+	wsValueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF"))
+
+	wsSuccessStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#04B575"))
+
+	wsWarningStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFAA00"))
+
+	wsErrorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF5555"))
+
+	wsHelpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#626262")).
+			Padding(1, 0, 0, 2)
+
+	wsDimStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#626262"))
+
 	wsSelectedItemStyle = lipgloss.NewStyle().
-				Foreground(theme.BrightPink).
+				Foreground(lipgloss.Color("#FF6AC1")).
 				Bold(true).
 				PaddingLeft(2)
 
@@ -291,7 +329,7 @@ func (m workstationModel) View() string {
 
 	// Title
 	title := workstationTitleStyle.Render("  ANIME WORKSTATION MONITOR  ")
-	lastUpdate := theme.DimTextStyle.Render(fmt.Sprintf("Last update: %s", m.lastUpdate.Format("15:04:05")))
+	lastUpdate := wsDimStyle.Render(fmt.Sprintf("Last update: %s", m.lastUpdate.Format("15:04:05")))
 	titleBar := lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", lastUpdate)
 	s.WriteString(titleBar + "\n\n")
 
@@ -306,7 +344,7 @@ func (m workstationModel) View() string {
 	if m.showHelp {
 		s.WriteString("\n" + m.renderHelp())
 	} else {
-		helpBar := theme.HelpStyle.Render("↑↓ scroll • ←→ switch panel • tab next • r refresh • ? help • q quit")
+		helpBar := wsHelpStyle.Render("↑↓ scroll • ←→ switch panel • tab next • r refresh • ? help • q quit")
 		s.WriteString("\n" + helpBar)
 	}
 
@@ -319,25 +357,25 @@ func (m workstationModel) renderLeftColumn() string {
 	// GPU Panel
 	gpuContent := m.renderGPUPanel()
 	if m.activePanel == panelGPU {
-		panels = append(panels, theme.ActivePanelStyle.Render(gpuContent))
+		panels = append(panels, activePanelStyle.Render(gpuContent))
 	} else {
-		panels = append(panels, theme.InactivePanelStyle.Render(gpuContent))
+		panels = append(panels, inactivePanelStyle.Render(gpuContent))
 	}
 
 	// Ollama Panel
 	ollamaContent := m.renderOllamaPanel()
 	if m.activePanel == panelOllama {
-		panels = append(panels, theme.ActivePanelStyle.Render(ollamaContent))
+		panels = append(panels, activePanelStyle.Render(ollamaContent))
 	} else {
-		panels = append(panels, theme.InactivePanelStyle.Render(ollamaContent))
+		panels = append(panels, inactivePanelStyle.Render(ollamaContent))
 	}
 
 	// Software Panel
 	softwareContent := m.renderSoftwarePanel()
 	if m.activePanel == panelSoftware {
-		panels = append(panels, theme.ActivePanelStyle.Render(softwareContent))
+		panels = append(panels, activePanelStyle.Render(softwareContent))
 	} else {
-		panels = append(panels, theme.InactivePanelStyle.Render(softwareContent))
+		panels = append(panels, inactivePanelStyle.Render(softwareContent))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, panels...)
@@ -349,33 +387,33 @@ func (m workstationModel) renderRightColumn() string {
 	// Collections Panel
 	collectionsContent := m.renderCollectionsPanel()
 	if m.activePanel == panelCollections {
-		panels = append(panels, theme.ActivePanelStyle.Render(collectionsContent))
+		panels = append(panels, activePanelStyle.Render(collectionsContent))
 	} else {
-		panels = append(panels, theme.InactivePanelStyle.Render(collectionsContent))
+		panels = append(panels, inactivePanelStyle.Render(collectionsContent))
 	}
 
 	// Workflows Panel
 	workflowsContent := m.renderWorkflowsPanel()
 	if m.activePanel == panelWorkflows {
-		panels = append(panels, theme.ActivePanelStyle.Render(workflowsContent))
+		panels = append(panels, activePanelStyle.Render(workflowsContent))
 	} else {
-		panels = append(panels, theme.InactivePanelStyle.Render(workflowsContent))
+		panels = append(panels, inactivePanelStyle.Render(workflowsContent))
 	}
 
 	// Tasks Panel
 	tasksContent := m.renderTasksPanel()
 	if m.activePanel == panelTasks {
-		panels = append(panels, theme.ActivePanelStyle.Render(tasksContent))
+		panels = append(panels, activePanelStyle.Render(tasksContent))
 	} else {
-		panels = append(panels, theme.InactivePanelStyle.Render(tasksContent))
+		panels = append(panels, inactivePanelStyle.Render(tasksContent))
 	}
 
 	// System Panel
 	systemContent := m.renderSystemPanel()
 	if m.activePanel == panelSystem {
-		panels = append(panels, theme.ActivePanelStyle.Render(systemContent))
+		panels = append(panels, activePanelStyle.Render(systemContent))
 	} else {
-		panels = append(panels, theme.InactivePanelStyle.Render(systemContent))
+		panels = append(panels, inactivePanelStyle.Render(systemContent))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, panels...)
@@ -383,10 +421,10 @@ func (m workstationModel) renderRightColumn() string {
 
 func (m workstationModel) renderGPUPanel() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("GPU METRICS") + "\n")
+	s.WriteString(wsHeaderStyle.Render("GPU METRICS") + "\n")
 
 	if m.gpuData == nil || len(m.gpuData.GPUs) == 0 {
-		s.WriteString(theme.DimTextStyle.Render("No GPU detected"))
+		s.WriteString(wsDimStyle.Render("No GPU detected"))
 		return s.String()
 	}
 
@@ -396,38 +434,38 @@ func (m workstationModel) renderGPUPanel() string {
 		}
 
 		// GPU name
-		s.WriteString(theme.LabelStyle.Render(fmt.Sprintf("GPU %d: ", gpu.ID)) + theme.ValueStyle.Render(gpu.Name) + "\n")
+		s.WriteString(wsLabelStyle.Render(fmt.Sprintf("GPU %d: ", gpu.ID)) + wsValueStyle.Render(gpu.Name) + "\n")
 
 		// Temperature
-		tempColor := theme.SuccessStyle
+		tempColor := wsSuccessStyle
 		if gpu.Temperature > 80 {
-			tempColor = theme.ErrorStyle
+			tempColor = wsErrorStyle
 		} else if gpu.Temperature > 70 {
-			tempColor = theme.WarningStyle
+			tempColor = wsWarningStyle
 		}
-		s.WriteString(theme.LabelStyle.Render("  Temp: ") + tempColor.Render(fmt.Sprintf("%d°C", gpu.Temperature)) + "\n")
+		s.WriteString(wsLabelStyle.Render("  Temp: ") + tempColor.Render(fmt.Sprintf("%d°C", gpu.Temperature)) + "\n")
 
 		// Power
-		s.WriteString(theme.LabelStyle.Render("  Power: ") + theme.ValueStyle.Render(fmt.Sprintf("%dW / %dW", gpu.PowerUsage, gpu.PowerLimit)) + "\n")
+		s.WriteString(wsLabelStyle.Render("  Power: ") + wsValueStyle.Render(fmt.Sprintf("%dW / %dW", gpu.PowerUsage, gpu.PowerLimit)) + "\n")
 
 		// Memory
 		memPercent := float64(gpu.MemoryUsed) / float64(gpu.MemoryTotal) * 100
 		memBar := renderProgressBar(int(memPercent), 20)
-		s.WriteString(theme.LabelStyle.Render("  Memory: ") + memBar + theme.ValueStyle.Render(fmt.Sprintf(" %dMB / %dMB", gpu.MemoryUsed, gpu.MemoryTotal)) + "\n")
+		s.WriteString(wsLabelStyle.Render("  Memory: ") + memBar + wsValueStyle.Render(fmt.Sprintf(" %dMB / %dMB", gpu.MemoryUsed, gpu.MemoryTotal)) + "\n")
 
 		// Utilization
 		utilBar := renderProgressBar(gpu.Utilization, 20)
-		s.WriteString(theme.LabelStyle.Render("  Util: ") + utilBar + theme.ValueStyle.Render(fmt.Sprintf(" %d%%", gpu.Utilization)) + "\n")
+		s.WriteString(wsLabelStyle.Render("  Util: ") + utilBar + wsValueStyle.Render(fmt.Sprintf(" %d%%", gpu.Utilization)) + "\n")
 
 		// Processes
 		if len(gpu.Processes) > 0 {
-			s.WriteString(theme.LabelStyle.Render("  Processes: ") + theme.DimTextStyle.Render(fmt.Sprintf("(%d)", len(gpu.Processes))) + "\n")
+			s.WriteString(wsLabelStyle.Render("  Processes: ") + wsDimStyle.Render(fmt.Sprintf("(%d)", len(gpu.Processes))) + "\n")
 			for j, proc := range gpu.Processes {
 				if j >= 2 { // Show max 2 processes
-					s.WriteString(theme.DimTextStyle.Render(fmt.Sprintf("    ... and %d more", len(gpu.Processes)-2)) + "\n")
+					s.WriteString(wsDimStyle.Render(fmt.Sprintf("    ... and %d more", len(gpu.Processes)-2)) + "\n")
 					break
 				}
-				s.WriteString(theme.DimTextStyle.Render(fmt.Sprintf("    %s (%dMB)", proc.Name, proc.Memory)) + "\n")
+				s.WriteString(wsDimStyle.Render(fmt.Sprintf("    %s (%dMB)", proc.Name, proc.Memory)) + "\n")
 			}
 		}
 	}
@@ -437,10 +475,10 @@ func (m workstationModel) renderGPUPanel() string {
 
 func (m workstationModel) renderOllamaPanel() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("OLLAMA MODELS") + "\n")
+	s.WriteString(wsHeaderStyle.Render("OLLAMA MODELS") + "\n")
 
 	if len(m.ollamaModels) == 0 {
-		s.WriteString(theme.DimTextStyle.Render("No models found"))
+		s.WriteString(wsDimStyle.Render("No models found"))
 		return s.String()
 	}
 
@@ -461,12 +499,12 @@ func (m workstationModel) renderOllamaPanel() string {
 			prefix = wsSelectedItemStyle.Render("▸ ")
 		}
 
-		s.WriteString(prefix + theme.LabelStyle.Render(model.Name) + "\n")
-		s.WriteString(theme.DimTextStyle.Render(fmt.Sprintf("    %s • %s", model.Size, model.Quantization)) + "\n")
+		s.WriteString(prefix + wsLabelStyle.Render(model.Name) + "\n")
+		s.WriteString(wsDimStyle.Render(fmt.Sprintf("    %s • %s", model.Size, model.Quantization)) + "\n")
 	}
 
 	if len(m.ollamaModels) > 5 {
-		s.WriteString("\n" + theme.DimTextStyle.Render(fmt.Sprintf("    Showing %d-%d of %d", startIdx+1, endIdx, len(m.ollamaModels))))
+		s.WriteString("\n" + wsDimStyle.Render(fmt.Sprintf("    Showing %d-%d of %d", startIdx+1, endIdx, len(m.ollamaModels))))
 	}
 
 	return s.String()
@@ -474,10 +512,10 @@ func (m workstationModel) renderOllamaPanel() string {
 
 func (m workstationModel) renderSoftwarePanel() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("INSTALLED SOFTWARE") + "\n")
+	s.WriteString(wsHeaderStyle.Render("INSTALLED SOFTWARE") + "\n")
 
 	if len(m.software) == 0 {
-		s.WriteString(theme.DimTextStyle.Render("Scanning..."))
+		s.WriteString(wsDimStyle.Render("Scanning..."))
 		return s.String()
 	}
 
@@ -493,11 +531,11 @@ func (m workstationModel) renderSoftwarePanel() string {
 
 	for i := startIdx; i < endIdx; i++ {
 		sw := m.software[i]
-		style := theme.SuccessStyle
+		style := wsSuccessStyle
 		if sw.Status == "inactive" {
-			style = theme.DimTextStyle
+			style = wsDimStyle
 		} else if sw.Status == "error" {
-			style = theme.ErrorStyle
+			style = wsErrorStyle
 		}
 
 		prefix := "  "
@@ -505,11 +543,11 @@ func (m workstationModel) renderSoftwarePanel() string {
 			prefix = wsSelectedItemStyle.Render("▸ ")
 		}
 
-		s.WriteString(prefix + theme.LabelStyle.Render(sw.Name) + " " + theme.DimTextStyle.Render(sw.Version) + " " + style.Render("●") + "\n")
+		s.WriteString(prefix + wsLabelStyle.Render(sw.Name) + " " + wsDimStyle.Render(sw.Version) + " " + style.Render("●") + "\n")
 	}
 
 	if len(m.software) > 5 {
-		s.WriteString("\n" + theme.DimTextStyle.Render(fmt.Sprintf("    Showing %d-%d of %d", startIdx+1, endIdx, len(m.software))))
+		s.WriteString("\n" + wsDimStyle.Render(fmt.Sprintf("    Showing %d-%d of %d", startIdx+1, endIdx, len(m.software))))
 	}
 
 	return s.String()
@@ -517,10 +555,10 @@ func (m workstationModel) renderSoftwarePanel() string {
 
 func (m workstationModel) renderCollectionsPanel() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("ASSET COLLECTIONS") + "\n")
+	s.WriteString(wsHeaderStyle.Render("ASSET COLLECTIONS") + "\n")
 
 	if len(m.collections) == 0 {
-		s.WriteString(theme.DimTextStyle.Render("No collections configured"))
+		s.WriteString(wsDimStyle.Render("No collections configured"))
 		return s.String()
 	}
 
@@ -530,8 +568,8 @@ func (m workstationModel) renderCollectionsPanel() string {
 			prefix = wsSelectedItemStyle.Render("▸ ")
 		}
 
-		s.WriteString(prefix + theme.LabelStyle.Render(coll.Name) + "\n")
-		s.WriteString(theme.DimTextStyle.Render(fmt.Sprintf("    %s", coll.Path)) + "\n")
+		s.WriteString(prefix + wsLabelStyle.Render(coll.Name) + "\n")
+		s.WriteString(wsDimStyle.Render(fmt.Sprintf("    %s", coll.Path)) + "\n")
 
 		if i < len(m.collections)-1 {
 			s.WriteString("\n")
@@ -543,19 +581,19 @@ func (m workstationModel) renderCollectionsPanel() string {
 
 func (m workstationModel) renderWorkflowsPanel() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("WORKFLOWS") + "\n")
+	s.WriteString(wsHeaderStyle.Render("WORKFLOWS") + "\n")
 
 	if len(m.workflows) == 0 {
-		s.WriteString(theme.DimTextStyle.Render("No active workflows"))
+		s.WriteString(wsDimStyle.Render("No active workflows"))
 		return s.String()
 	}
 
 	for i, wf := range m.workflows {
-		style := theme.SuccessStyle
+		style := wsSuccessStyle
 		if wf.Status == "failed" {
-			style = theme.ErrorStyle
+			style = wsErrorStyle
 		} else if wf.Status == "running" {
-			style = theme.WarningStyle
+			style = wsWarningStyle
 		}
 
 		prefix := "  "
@@ -563,8 +601,8 @@ func (m workstationModel) renderWorkflowsPanel() string {
 			prefix = wsSelectedItemStyle.Render("▸ ")
 		}
 
-		s.WriteString(prefix + theme.LabelStyle.Render(wf.Name) + " " + style.Render(wf.Status) + "\n")
-		s.WriteString(theme.DimTextStyle.Render(fmt.Sprintf("    Last: %s", wf.LastRun)) + "\n")
+		s.WriteString(prefix + wsLabelStyle.Render(wf.Name) + " " + style.Render(wf.Status) + "\n")
+		s.WriteString(wsDimStyle.Render(fmt.Sprintf("    Last: %s", wf.LastRun)) + "\n")
 
 		if i < len(m.workflows)-1 {
 			s.WriteString("\n")
@@ -576,19 +614,19 @@ func (m workstationModel) renderWorkflowsPanel() string {
 
 func (m workstationModel) renderTasksPanel() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("TASKS IN PROGRESS") + "\n")
+	s.WriteString(wsHeaderStyle.Render("TASKS IN PROGRESS") + "\n")
 
 	if len(m.tasks) == 0 {
-		s.WriteString(theme.DimTextStyle.Render("No active tasks"))
+		s.WriteString(wsDimStyle.Render("No active tasks"))
 		return s.String()
 	}
 
 	for i, task := range m.tasks {
-		style := theme.WarningStyle
+		style := wsWarningStyle
 		if task.Status == "completed" {
-			style = theme.SuccessStyle
+			style = wsSuccessStyle
 		} else if task.Status == "failed" {
-			style = theme.ErrorStyle
+			style = wsErrorStyle
 		}
 		_ = style // Mark as used
 
@@ -597,13 +635,13 @@ func (m workstationModel) renderTasksPanel() string {
 			prefix = wsSelectedItemStyle.Render("▸ ")
 		}
 
-		s.WriteString(prefix + theme.LabelStyle.Render(task.Name) + "\n")
+		s.WriteString(prefix + wsLabelStyle.Render(task.Name) + "\n")
 
 		progressBar := renderProgressBar(task.Progress, 30)
-		s.WriteString("    " + progressBar + " " + theme.ValueStyle.Render(fmt.Sprintf("%d%%", task.Progress)) + "\n")
+		s.WriteString("    " + progressBar + " " + wsValueStyle.Render(fmt.Sprintf("%d%%", task.Progress)) + "\n")
 
 		if task.ETA != "" {
-			s.WriteString(theme.DimTextStyle.Render(fmt.Sprintf("    ETA: %s", task.ETA)) + "\n")
+			s.WriteString(wsDimStyle.Render(fmt.Sprintf("    ETA: %s", task.ETA)) + "\n")
 		}
 
 		if i < len(m.tasks)-1 {
@@ -616,47 +654,47 @@ func (m workstationModel) renderTasksPanel() string {
 
 func (m workstationModel) renderSystemPanel() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("SYSTEM INFO") + "\n")
+	s.WriteString(wsHeaderStyle.Render("SYSTEM INFO") + "\n")
 
 	if m.systemInfo == nil {
-		s.WriteString(theme.DimTextStyle.Render("Loading..."))
+		s.WriteString(wsDimStyle.Render("Loading..."))
 		return s.String()
 	}
 
 	sys := m.systemInfo
 
-	s.WriteString(theme.LabelStyle.Render("Host: ") + theme.ValueStyle.Render(sys.Hostname) + "\n")
-	s.WriteString(theme.LabelStyle.Render("OS: ") + theme.ValueStyle.Render(fmt.Sprintf("%s %s", sys.OS, sys.Arch)) + "\n")
-	s.WriteString(theme.LabelStyle.Render("Uptime: ") + theme.ValueStyle.Render(sys.Uptime) + "\n\n")
+	s.WriteString(wsLabelStyle.Render("Host: ") + wsValueStyle.Render(sys.Hostname) + "\n")
+	s.WriteString(wsLabelStyle.Render("OS: ") + wsValueStyle.Render(fmt.Sprintf("%s %s", sys.OS, sys.Arch)) + "\n")
+	s.WriteString(wsLabelStyle.Render("Uptime: ") + wsValueStyle.Render(sys.Uptime) + "\n\n")
 
 	// CPU
 	cpuBar := renderProgressBar(int(sys.CPUUsage), 20)
-	s.WriteString(theme.LabelStyle.Render("CPU: ") + cpuBar + theme.ValueStyle.Render(fmt.Sprintf(" %.1f%%", sys.CPUUsage)) + "\n")
+	s.WriteString(wsLabelStyle.Render("CPU: ") + cpuBar + wsValueStyle.Render(fmt.Sprintf(" %.1f%%", sys.CPUUsage)) + "\n")
 
 	// Memory
 	memPercent := float64(sys.MemoryUsed) / float64(sys.MemoryTotal) * 100
 	memBar := renderProgressBar(int(memPercent), 20)
-	s.WriteString(theme.LabelStyle.Render("RAM: ") + memBar + theme.ValueStyle.Render(fmt.Sprintf(" %d/%d GB", sys.MemoryUsed, sys.MemoryTotal)) + "\n")
+	s.WriteString(wsLabelStyle.Render("RAM: ") + memBar + wsValueStyle.Render(fmt.Sprintf(" %d/%d GB", sys.MemoryUsed, sys.MemoryTotal)) + "\n")
 
 	// Disk
 	diskPercent := float64(sys.DiskUsed) / float64(sys.DiskTotal) * 100
 	diskBar := renderProgressBar(int(diskPercent), 20)
-	s.WriteString(theme.LabelStyle.Render("Disk: ") + diskBar + theme.ValueStyle.Render(fmt.Sprintf(" %d/%d GB", sys.DiskUsed, sys.DiskTotal)) + "\n")
+	s.WriteString(wsLabelStyle.Render("Disk: ") + diskBar + wsValueStyle.Render(fmt.Sprintf(" %d/%d GB", sys.DiskUsed, sys.DiskTotal)) + "\n")
 
 	return s.String()
 }
 
 func (m workstationModel) renderHelp() string {
 	var s strings.Builder
-	s.WriteString(theme.HeaderStyle.Render("KEYBOARD SHORTCUTS") + "\n\n")
-	s.WriteString(theme.LabelStyle.Render("  ↑/↓ or k/j") + "    Scroll within panel\n")
-	s.WriteString(theme.LabelStyle.Render("  ←/→ or h/l") + "    Switch between panels\n")
-	s.WriteString(theme.LabelStyle.Render("  Tab") + "           Next panel\n")
-	s.WriteString(theme.LabelStyle.Render("  Shift+Tab") + "     Previous panel\n")
-	s.WriteString(theme.LabelStyle.Render("  r") + "             Refresh data\n")
-	s.WriteString(theme.LabelStyle.Render("  ?") + "             Toggle help\n")
-	s.WriteString(theme.LabelStyle.Render("  q or Ctrl+C") + "   Quit\n")
-	return theme.HelpStyle.Render(s.String())
+	s.WriteString(wsHeaderStyle.Render("KEYBOARD SHORTCUTS") + "\n\n")
+	s.WriteString(wsLabelStyle.Render("  ↑/↓ or k/j") + "    Scroll within panel\n")
+	s.WriteString(wsLabelStyle.Render("  ←/→ or h/l") + "    Switch between panels\n")
+	s.WriteString(wsLabelStyle.Render("  Tab") + "           Next panel\n")
+	s.WriteString(wsLabelStyle.Render("  Shift+Tab") + "     Previous panel\n")
+	s.WriteString(wsLabelStyle.Render("  r") + "             Refresh data\n")
+	s.WriteString(wsLabelStyle.Render("  ?") + "             Toggle help\n")
+	s.WriteString(wsLabelStyle.Render("  q or Ctrl+C") + "   Quit\n")
+	return wsHelpStyle.Render(s.String())
 }
 
 func (m workstationModel) nextPanel() panelType {
@@ -701,15 +739,15 @@ func renderProgressBar(percent int, width int) string {
 	// Color based on percentage
 	var barStyle lipgloss.Style
 	if percent < 60 {
-		barStyle = theme.SuccessStyle
+		barStyle = wsSuccessStyle
 	} else if percent < 85 {
-		barStyle = theme.WarningStyle
+		barStyle = wsWarningStyle
 	} else {
-		barStyle = theme.ErrorStyle
+		barStyle = wsErrorStyle
 	}
 
 	bar.WriteString(barStyle.Render(strings.Repeat("█", filled)))
-	bar.WriteString(theme.DimTextStyle.Render(strings.Repeat("░", empty)))
+	bar.WriteString(wsDimStyle.Render(strings.Repeat("░", empty)))
 	bar.WriteString("]")
 
 	return bar.String()

@@ -36,6 +36,7 @@ From the available minds, select 2-5 that would contribute meaningfully:
 - **Neuroscience**: Santiago Ramón y Cajal, Donald Hebb, Eric Kandel, Michael Hasselmo, Karl Friston
 - **Philosophy**: Socrates, Daniel Dennett, Douglas Hofstadter, Thomas Kuhn
 - **Physics**: Richard Feynman, Albert Einstein, Nikola Tesla, Marie Curie
+- **Cosmos**: Carl Sagan, Stephen Hawking, Edwin Hubble, Vera Rubin, Georges Lemaître, Chandrasekhar, Kip Thorne, Cecilia Payne-Gaposchkin (or use `/cosmos` to convene them all)
 - **Systems/Performance**: Linus Torvalds, John Carmack, Fabrice Bellard, Brendan Gregg
 - **Education**: Paulo Freire, Seymour Papert
 - **Architecture**: Christopher Alexander, Buckminster Fuller

@@ -219,8 +219,8 @@ func Publish(target string, cfg *Config) (*Package, error) {
 	// Check if version already exists
 	checkCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("test -d %s && echo 'exists'", packagePath),
 	)
@@ -233,8 +233,8 @@ func Publish(target string, cfg *Config) (*Package, error) {
 		// Create remote directory
 		mkdirCmd := exec.Command("ssh",
 			"-i", cfg.KeyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("mkdir -p %s", packagePath),
 		)
@@ -244,7 +244,7 @@ func Publish(target string, cfg *Config) (*Package, error) {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", cfg.KeyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cfg.KeyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cfg.DryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -265,8 +265,8 @@ func Publish(target string, cfg *Config) (*Package, error) {
 		latestPath := filepath.Join(PackagesPath, pkg.Name, "latest")
 		symlinkCmd := exec.Command("ssh",
 			"-i", cfg.KeyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("rm -f %s && ln -s %s %s", latestPath, pkg.Version, latestPath),
 		)
@@ -295,8 +295,8 @@ func Install(target, pkgSpec string, cfg *Config) (*InstalledPackage, error) {
 	// Check if package exists
 	checkCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("test -d %s && echo 'exists'", packagePath),
 	)
@@ -316,7 +316,7 @@ func Install(target, pkgSpec string, cfg *Config) (*InstalledPackage, error) {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", cfg.KeyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", cfg.KeyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	rsyncArgs = append(rsyncArgs, getRsyncExcludes()...)
 	rsyncArgs = append(rsyncArgs, "-e", rsyncSSH, target+":"+packagePath+"/", localPath+"/")
@@ -385,8 +385,8 @@ func Search(target, query string, cfg *Config) ([]Package, error) {
 	// List all packages
 	sshCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("ls -1 %s 2>/dev/null || echo ''", PackagesPath),
 	)
@@ -407,8 +407,8 @@ func Search(target, query string, cfg *Config) ([]Package, error) {
 		// Get package info
 		infoCmd := exec.Command("ssh",
 			"-i", cfg.KeyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("cat %s/%s/latest/%s 2>/dev/null || echo '{}'", PackagesPath, pkgName, PackageFile),
 		)
@@ -436,8 +436,8 @@ func GetInfo(target, pkgSpec string, cfg *Config) (*Package, error) {
 
 	sshCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("cat %s/%s 2>/dev/null || echo 'NOT_FOUND'", packagePath, PackageFile),
 	)
@@ -465,8 +465,8 @@ func GetVersions(target, pkgName string, cfg *Config) ([]VersionInfo, error) {
 
 	sshCmd := exec.Command("ssh",
 		"-i", cfg.KeyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("ls -1 %s 2>/dev/null | grep -v latest || echo 'NOT_FOUND'", packagePath),
 	)

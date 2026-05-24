@@ -6,10 +6,21 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/config"
 	"github.com/joshkornreich/anime/internal/installer"
 	"github.com/joshkornreich/anime/internal/ssh"
-	"github.com/joshkornreich/anime/internal/theme"
+)
+
+var (
+	progressStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00FF00"))
+
+	completeStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00BFFF"))
+
+	failedStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FF0000"))
 )
 
 type InstallModel struct {
@@ -148,12 +159,12 @@ func (m InstallModel) waitForProgress() tea.Cmd {
 func (m InstallModel) View() string {
 	var s strings.Builder
 
-	s.WriteString(theme.TitleStyle.Render("🎌 anime - Installing on " + m.server.Name))
+	s.WriteString(titleStyle.Render("🎌 anime - Installing on " + m.server.Name))
 	s.WriteString("\n\n")
 
 	// System info
 	if m.systemInfo != nil {
-		s.WriteString(theme.InfoStyle.Render("System Information:"))
+		s.WriteString(infoStyle.Render("System Information:"))
 		s.WriteString("\n")
 		s.WriteString(fmt.Sprintf("  OS: %s\n", m.systemInfo["os"]))
 		s.WriteString(fmt.Sprintf("  GPU: %s\n", m.systemInfo["gpu"]))
@@ -162,20 +173,20 @@ func (m InstallModel) View() string {
 	}
 
 	// Module progress
-	s.WriteString(theme.InfoStyle.Render("Installation Progress:"))
+	s.WriteString(infoStyle.Render("Installation Progress:"))
 	s.WriteString("\n\n")
 
 	for _, mod := range config.AvailableModules {
 		if status, ok := m.progress[mod.ID]; ok {
 			icon := "⏳"
-			style := theme.ProgressStyle
+			style := progressStyle
 			switch status {
 			case "Complete":
 				icon = "✓"
-				style = theme.CompleteStyle
+				style = completeStyle
 			case "Failed":
 				icon = "✗"
-				style = theme.FailedStyle
+				style = failedStyle
 			case "Starting", "Installing":
 				icon = "▶"
 			}
@@ -187,13 +198,13 @@ func (m InstallModel) View() string {
 
 	// Recent output
 	if len(m.output) > 0 {
-		s.WriteString(theme.HelpStyle.Render("Recent output:"))
+		s.WriteString(helpStyle.Render("Recent output:"))
 		s.WriteString("\n")
 		for _, line := range m.output {
 			if len(line) > 100 {
 				line = line[:100] + "..."
 			}
-			s.WriteString(theme.HelpStyle.Render("  " + line))
+			s.WriteString(helpStyle.Render("  " + line))
 			if !strings.HasSuffix(line, "\n") {
 				s.WriteString("\n")
 			}
@@ -204,24 +215,24 @@ func (m InstallModel) View() string {
 	elapsed := time.Since(m.startTime)
 	cost := (elapsed.Minutes() / 60.0) * m.server.CostPerHour
 	s.WriteString("\n")
-	s.WriteString(theme.InfoStyle.Render(fmt.Sprintf("Elapsed: %s | Cost: $%.2f",
+	s.WriteString(infoStyle.Render(fmt.Sprintf("Elapsed: %s | Cost: $%.2f",
 		elapsed.Round(time.Second), cost)))
 
 	// Error
 	if m.err != nil {
 		s.WriteString("\n\n")
-		s.WriteString(theme.ErrorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
+		s.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
 	}
 
 	// Done
 	if m.done {
 		s.WriteString("\n\n")
 		if m.err == nil {
-			s.WriteString(theme.CompleteStyle.Render("✓ Installation complete!"))
+			s.WriteString(completeStyle.Render("✓ Installation complete!"))
 		}
-		s.WriteString(theme.HelpStyle.Render("\n\nPress q to exit"))
+		s.WriteString(helpStyle.Render("\n\nPress q to exit"))
 	} else {
-		s.WriteString(theme.HelpStyle.Render("\n\nPress Ctrl+C to cancel"))
+		s.WriteString(helpStyle.Render("\n\nPress Ctrl+C to cancel"))
 	}
 
 	return s.String()

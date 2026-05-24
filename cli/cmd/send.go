@@ -1,3 +1,5 @@
+//go:build ignore
+
 package cmd
 
 import (
@@ -231,7 +233,7 @@ func runSend(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Create remote directory first
-	mkdirCmd := exec.Command("ssh", target, fmt.Sprintf("mkdir -p %s", remotePath))
+	mkdirCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, fmt.Sprintf("mkdir -p %s", remotePath))
 	mkdirCmd.Stderr = os.Stderr
 	if err := mkdirCmd.Run(); err != nil {
 		return fmt.Errorf("failed to create remote directory: %w", err)

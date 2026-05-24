@@ -7,7 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/installer"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -39,17 +38,59 @@ type model struct {
 	categoryView bool
 }
 
-// categoryHeaderStyle customizes the header style with specific padding
-var categoryHeaderStyle = lipgloss.NewStyle().
-	Foreground(theme.ElectricBlue).
-	Bold(true).
-	Padding(0, 1)
+var (
+	// Color scheme
+	sakuraPink   = lipgloss.Color("205")
+	electricBlue = lipgloss.Color("39")
+	neonPurple   = lipgloss.Color("141")
+	mintGreen    = lipgloss.Color("86")
+	dimGray      = lipgloss.Color("243")
+
+	// Styles
+	titleStyle = lipgloss.NewStyle().
+			Foreground(sakuraPink).
+			Bold(true).
+			Padding(0, 1).
+			MarginBottom(1)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(dimGray).
+			Padding(0, 1)
+
+	categoryHeaderStyle = lipgloss.NewStyle().
+				Foreground(electricBlue).
+				Bold(true).
+				Padding(0, 1)
+
+	selectedStyle = lipgloss.NewStyle().
+			Foreground(mintGreen).
+			Bold(true)
+
+	cursorStyle = lipgloss.NewStyle().
+			Foreground(sakuraPink).
+			Bold(true)
+
+	dimStyle = lipgloss.NewStyle().
+			Foreground(dimGray)
+
+	boxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(sakuraPink).
+			Padding(1, 2).
+			Margin(1, 0)
+
+	summaryStyle = lipgloss.NewStyle().
+			Foreground(mintGreen).
+			Bold(true).
+			Padding(1, 2).
+			MarginTop(1)
+)
 
 func initialModel() model {
 	packagesMap := installer.GetPackages()
 
 	// Convert map to slice with consistent ordering
-	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Video Generation", "Application"}
+	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Image Generation", "Video Generation", "Image Enhancement", "Video Enhancement", "ControlNet", "Application", "ComfyUI Node"}
 
 	// Group by category first
 	categories := make(map[string][]*installer.Package)
@@ -129,17 +170,17 @@ func (m model) View() string {
 
 	// Title
 	title := "⚡ ANIME PACKAGE INSTALLER ⚡"
-	s.WriteString(theme.TitleStyle.Render(title))
+	s.WriteString(titleStyle.Render(title))
 	s.WriteString("\n\n")
 
 	// Instructions
 	help := "↑/↓: Navigate  |  SPACE: Toggle  |  ENTER: Install  |  Q: Quit"
-	s.WriteString(theme.HelpStyle.Render(help))
+	s.WriteString(helpStyle.Render(help))
 	s.WriteString("\n\n")
 
 	// Group packages by category
 	categories := make(map[string][]*installer.Package)
-	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Video Generation", "Application"}
+	categoryOrder := []string{"Foundation", "ML Framework", "LLM Runtime", "Models", "Image Generation", "Video Generation", "Image Enhancement", "Video Enhancement", "ControlNet", "Application", "ComfyUI Node"}
 
 	for _, pkg := range m.packages {
 		categories[pkg.Category] = append(categories[pkg.Category], pkg)
@@ -164,10 +205,20 @@ func (m model) View() string {
 			emoji = "🔮"
 		case "Models":
 			emoji = "⭐"
+		case "Image Generation":
+			emoji = "🎨"
 		case "Video Generation":
 			emoji = "🎬"
+		case "Image Enhancement":
+			emoji = "🔧"
+		case "Video Enhancement":
+			emoji = "📹"
+		case "ControlNet":
+			emoji = "🎛️"
 		case "Application":
 			emoji = "🎯"
+		case "ComfyUI Node":
+			emoji = "🔌"
 		}
 
 		s.WriteString(categoryHeaderStyle.Render(fmt.Sprintf("%s %s", emoji, category)))
@@ -176,26 +227,26 @@ func (m model) View() string {
 		// Render packages in this category
 		for _, pkg := range pkgs {
 			checkbox := "☐"
-			style := theme.DimTextStyle
+			style := dimStyle
 			cursor := "  "
 
 			if m.selected[pkg.ID] {
 				checkbox = "☑"
-				style = theme.SelectedStyle
+				style = selectedStyle
 			}
 
 			if currentIdx == m.cursor {
 				cursor = "▶ "
-				style = theme.CursorStyle
+				style = cursorStyle
 			}
 
 			// Installation status badge
 			statusBadge := ""
 			if len(m.installed) > 0 {
 				if m.installed[pkg.ID] {
-					statusBadge = " " + theme.SelectedStyle.Render("✓")
+					statusBadge = " " + selectedStyle.Render("✓")
 				} else {
-					statusBadge = " " + theme.DimTextStyle.Render("◯")
+					statusBadge = " " + dimStyle.Render("◯")
 				}
 			}
 
@@ -207,16 +258,16 @@ func (m model) View() string {
 			if len(desc) > 50 {
 				desc = desc[:47] + "..."
 			}
-			s.WriteString(theme.DimTextStyle.Render(desc))
+			s.WriteString(dimStyle.Render(desc))
 			s.WriteString("\n")
 
 			// Show size and time for cursor position
 			if currentIdx == m.cursor {
 				details := fmt.Sprintf("    ⏱️  %s  |  💾 %s", pkg.EstimatedTime, pkg.Size)
 				if len(m.installed) > 0 && m.installed[pkg.ID] {
-					details += "  " + theme.SelectedStyle.Render("(Already installed)")
+					details += "  " + selectedStyle.Render("(Already installed)")
 				}
-				s.WriteString(theme.DimTextStyle.Render(details))
+				s.WriteString(dimStyle.Render(details))
 				s.WriteString("\n")
 			}
 
@@ -251,7 +302,7 @@ func (m model) View() string {
 		}
 
 		s.WriteString("\n")
-		s.WriteString(theme.SummaryStyle.Render(summary))
+		s.WriteString(summaryStyle.Render(summary))
 		s.WriteString("\n")
 	}
 

@@ -7,22 +7,25 @@ import (
 	"time"
 
 	"github.com/joshkornreich/anime/internal/config"
-	"github.com/joshkornreich/anime/internal/interfaces"
+	"github.com/joshkornreich/anime/internal/ssh"
 )
 
-// ProgressUpdate is an alias to the interfaces.ProgressUpdate type.
-// This maintains backward compatibility while ensuring interface satisfaction.
-type ProgressUpdate = interfaces.ProgressUpdate
-
-type Installer struct {
-	client     interfaces.SSHClient
-	progress   chan ProgressUpdate
-	parallel   bool
-	jobs       int
-	serverName string
+type ProgressUpdate struct {
+	Module  string
+	Status  string
+	Output  string
+	Error   error
+	Done    bool
 }
 
-func New(client interfaces.SSHClient) *Installer {
+type Installer struct {
+	client   *ssh.Client
+	progress chan ProgressUpdate
+	parallel bool
+	jobs     int
+}
+
+func New(client *ssh.Client) *Installer {
 	return &Installer{
 		client:   client,
 		progress: make(chan ProgressUpdate, 100),
@@ -362,16 +365,6 @@ func (i *Installer) SetJobs(jobs int) {
 	i.jobs = jobs
 }
 
-// SetServerName sets the server name for error reporting
-func (i *Installer) SetServerName(name string) {
-	i.serverName = name
-}
-
-// GetServerName returns the server name
-func (i *Installer) GetServerName() string {
-	return i.serverName
-}
-
 // getOptimalParallelism calculates the optimal number of parallel installations
 // based on GPU count and CPU cores
 func (i *Installer) getOptimalParallelism() int {
@@ -423,6 +416,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-
-// Compile-time check to ensure Installer implements interfaces.Installer
-var _ interfaces.Installer = (*Installer)(nil)

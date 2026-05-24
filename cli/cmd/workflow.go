@@ -319,8 +319,8 @@ func runWorkflowShow(cmd *cobra.Command, args []string) error {
 				enabledStr = theme.SuccessStyle.Render("enabled")
 			}
 			gpuStr := ""
-			if len(m.GPUs) > 0 {
-				gpuStr = fmt.Sprintf(" GPUs: %v", m.GPUs)
+			if m.GPUs > 0 {
+				gpuStr = fmt.Sprintf(" GPUs: %d", m.GPUs)
 			}
 			fmt.Printf("  - %s [%s]%s\n", m.ID, enabledStr, gpuStr)
 		}
@@ -519,9 +519,7 @@ func createWorkflowInteractive(cfg *config.Config, name string) error {
 	workflow.AutoLoad = strings.ToLower(autoLoad) == "y"
 
 	// Add workflow
-	if err := cfg.AddWorkflow(workflow); err != nil {
-		return err
-	}
+	cfg.AddWorkflow(workflow)
 
 	if err := cfg.Save(); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)

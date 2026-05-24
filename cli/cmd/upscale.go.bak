@@ -1,0 +1,96 @@
+package cmd
+
+import (
+	"fmt"
+
+	"github.com/joshkornreich/anime/internal/config"
+	"github.com/joshkornreich/anime/internal/theme"
+	"github.com/spf13/cobra"
+)
+
+var (
+	upscModel    string
+	upscScale    int
+	upscParallel int
+	upscOutput   string
+)
+
+var upscaleCmd = &cobra.Command{
+	Use:   "upscale [collection] [scale]",
+	Short: "Upscale images to higher resolution",
+	Long: `Upscale images using AI models.
+
+Models:
+  esrgan    - ESRGAN (default, good quality)
+  realesrgan - RealESRGAN (photorealistic)
+  gfpgan    - GFPGAN (faces)
+
+Examples:
+  anime upscale                        # Browse collections
+  anime upscale mar                    # 2x upscale with esrgan
+  anime upscale photos 4               # 4x upscale
+  anime upscale renders --model gfpgan # Face restoration
+  anime upscale mar --parallel 8       # 8 parallel processes`,
+	Args: cobra.RangeArgs(0, 2),
+	RunE: runUpscale,
+}
+
+func init() {
+	rootCmd.AddCommand(upscaleCmd)
+	
+	upscaleCmd.Flags().StringVarP(&upscModel, "model", "m", "esrgan", "Model to use (esrgan, realesrgan, gfpgan)")
+	upscaleCmd.Flags().IntVar(&upscScale, "scale", 2, "Upscale factor (2 or 4)")
+	upscaleCmd.Flags().IntVarP(&upscParallel, "parallel", "p", 4, "Number of parallel processes")
+	upscaleCmd.Flags().StringVarP(&upscOutput, "output", "o", "", "Output directory (default: ./upscaled)")
+}
+
+func runUpscale(cmd *cobra.Command, args []string) error {
+	collectionName := args[0]
+
+	// If scale specified as arg, override flag
+	if len(args) > 1 {
+		fmt.Sscanf(args[1], "%d", &upscScale)
+	}
+
+	// Load collection
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	collection, err := cfg.GetCollection(collectionName)
+	if err != nil {
+		return fmt.Errorf("collection '%s' not found", collectionName)
+	}
+
+	if upscOutput == "" {
+		upscOutput = "./upscaled"
+	}
+
+	// Show configuration
+	fmt.Println()
+	fmt.Println(theme.RenderBanner("⬆️  UPSCALING COLLECTION"))
+	fmt.Println()
+	
+	fmt.Println(theme.SuccessStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
+	fmt.Println(theme.InfoStyle.Render("📋 Configuration"))
+	fmt.Println(theme.SuccessStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
+	fmt.Println()
+	
+	fmt.Printf("  Collection: %s\n", theme.HighlightStyle.Render(collection.Name))
+	fmt.Printf("  Model: %s\n", theme.HighlightStyle.Render(upscModel))
+	fmt.Printf("  Scale: %s\n", theme.InfoStyle.Render(fmt.Sprintf("%dx", upscScale)))
+	fmt.Printf("  Parallel: %s\n", theme.InfoStyle.Render(fmt.Sprintf("%d", upscParallel)))
+	fmt.Printf("  Output: %s\n", theme.DimTextStyle.Render(upscOutput))
+	fmt.Println()
+
+	fileCount, _ := getCollectionStats(collection.Path)
+	fmt.Printf("  Files to process: %s\n", theme.HighlightStyle.Render(fmt.Sprintf("%d", fileCount)))
+	fmt.Println()
+
+	fmt.Println(theme.InfoStyle.Render("🚀 Starting upscale workflow..."))
+	fmt.Println(theme.DimTextStyle.Render("   (This will be implemented with actual execution)"))
+	fmt.Println()
+
+	return nil
+}

@@ -268,7 +268,7 @@ func (p *Procedures) dependencyInstall() Procedure {
                 Title:       "Clone SkyReels-V2",
                 Description: "Get the SkyReel repository",
                 Commands: []string{
-                    "git clone git@github.com:SkyworkAI/SkyReels-V2.git",
+                    "git clone https://github.com/SkyworkAI/SkyReels-V2.git",
                     "cd SkyReels-V2",
                 },
                 Verification: "Directory should contain inference scripts",

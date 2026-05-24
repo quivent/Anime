@@ -5,12 +5,6 @@ var Scripts = map[string]string{
 	"core": `#!/bin/bash
 set -e
 
-# ── idempotency: skip if essential tools already present ──────
-if command -v gcc >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 && command -v cmake >/dev/null 2>&1; then
-    echo "    ✓ Core tools already installed (gcc, git, python3, cmake)"
-    exit 0
-fi
-
 # Wait for dpkg lock
 wait_for_dpkg() {
     local max_wait=300  # 5 minutes max
@@ -49,21 +43,30 @@ wait_for_dpkg
 sudo apt update
 # Removed: apt upgrade -y (too aggressive, causes interrupted installations)
 sudo apt install -y build-essential git curl wget aria2 vim htop tmux cmake pkg-config \
-    libssl-dev libffi-dev python3 python3-pip python3-venv python3-dev
+    libssl-dev libffi-dev python3 python3-pip python3-venv python3-dev \
+    jq unzip ripgrep fd-find rsync sqlite3 net-tools dnsutils \
+    fail2ban ufw nginx certbot python3-certbot-nginx
+
+echo "==> Enabling fail2ban..."
+sudo systemctl enable --now fail2ban
+
+echo "==> Configuring ufw (SSH allowed)..."
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'
+sudo ufw --force enable
 
 echo "==> Core system installed successfully"
-echo "==> Note: NVIDIA drivers, Docker, and Node.js are separate packages"
-echo "==> Install them separately if needed: anime install nvidia docker nodejs"
+echo "==> Includes: build tools, jq, ripgrep, rsync, sqlite3, nginx, certbot, fail2ban, ufw"
 `,
 
 	"python": `#!/bin/bash
 set -e
 echo "==> Setting up Python environment"
 
-# ── idempotency: skip if python3 + pip + numpy already present ─
-if python3 -c "import numpy; import pip; print(f'python3 + pip {pip.__version__} + numpy {numpy.__version__}')" 2>/dev/null; then
-    echo "    ✓ Python environment already set up"
-    exit 0
+# Use --break-system-packages on systems with PEP 668 (externally managed)
+PIP_EXTRA=""
+if pip3 install --help 2>&1 | grep -q "break-system-packages"; then
+    PIP_EXTRA="--break-system-packages"
 fi
 
 # Only upgrade pip if needed (check version)
@@ -72,12 +75,12 @@ MAJOR_VERSION=$(echo $CURRENT_PIP | cut -d. -f1)
 
 if [ "$MAJOR_VERSION" -lt 23 ]; then
     echo "==> Upgrading pip from $CURRENT_PIP to latest"
-    pip3 install --upgrade pip setuptools wheel
+    pip3 install --upgrade pip setuptools wheel $PIP_EXTRA
 else
     echo "==> pip $CURRENT_PIP is already recent, skipping upgrade"
 fi
 
-pip3 install --upgrade-strategy only-if-needed numpy scipy pandas matplotlib pillow
+pip3 install --upgrade-strategy only-if-needed $PIP_EXTRA numpy scipy pandas matplotlib pillow
 echo "==> Python environment ready"
 python3 --version
 pip3 --version
@@ -87,178 +90,28 @@ pip3 --version
 set -e
 echo "==> Installing PyTorch and AI libraries"
 
-# ── idempotency: skip if torch+CUDA already works ────────────
-if python3 -c "import torch; assert torch.cuda.is_available(); print(f'torch {torch.__version__} cuda={torch.version.cuda}')" 2>/dev/null; then
-    TORCH_V=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
-    echo "    ✓ PyTorch $TORCH_V with CUDA already installed"
-    exit 0
-fi
-
-# ============================================================
-# Detect environment type
-# ============================================================
-IS_LAMBDA_STACK=false
-IS_GPU_BASE=false
-ARCH=$(uname -m)
-
-# ARM64/GH200: always use GPU Base path — system torch-cuda has
-# NCCL symbol conflicts with pip torch and causes cascading failures
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    IS_GPU_BASE=true
-    echo "==> ARM64/GH200 detected → pip-managed torch path"
-elif dpkg -l | grep -q "python3-torch-cuda" || dpkg -l | grep -q "python3-tensorflow"; then
-    IS_LAMBDA_STACK=true
-    echo "==> Lambda Stack detected - will clean up conflicts"
-else
-    IS_GPU_BASE=true
-    echo "==> GPU Base / Clean environment detected"
-fi
-
-# ============================================================
-# Pick the right PyTorch wheel index for THIS host.
-# ARM64 + CUDA-13 driver (GH200/H200) → cu130 nightly directly,
-# avoiding the wasteful "install cu128 then have wantorch swap it" flow.
-# Everything else stays on cu128 stable.
-# ============================================================
-TORCH_INDEX="https://download.pytorch.org/whl/cu128"
-TORCH_FLAVOR="cu128 stable"
-PIP_PRE_FLAG=""
-DRIVER_MAJOR=""
-if command -v nvidia-smi >/dev/null 2>&1; then
-    DRIVER_MAJOR=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1 || echo "")
-    CUDA_DRV=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 || echo "")
-fi
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    # GH200/H200 — prefer cu130 nightly so the comfy_kitchen.cuda backend lights up.
-    if [ "${CUDA_DRV%%.*}" = "13" ] || [ -n "${FORCE_CU130:-}" ]; then
-        TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"
-        TORCH_FLAVOR="cu130 nightly (ARM64 + CUDA13 detected)"
-        PIP_PRE_FLAG="--pre"
-    fi
-fi
-echo "==> torch flavor: $TORCH_FLAVOR"
-
-# ============================================================
-# GPU BASE FAST PATH - No TensorFlow to remove
-# ============================================================
-if [ "$IS_GPU_BASE" = true ]; then
-    if python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-        TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
-        TORCH_CUDA=$(python3 -c "import torch; print(torch.version.cuda or '')" 2>/dev/null)
-        echo "==> PyTorch $TORCH_VERSION (cuda=$TORCH_CUDA) already installed"
-    else
-        echo "==> Installing PyTorch ($TORCH_FLAVOR)..."
-        pip3 install $PIP_PRE_FLAG torch torchvision torchaudio --index-url "$TORCH_INDEX"
-    fi
-
-    echo "==> Installing AI libraries..."
-    pip3 install transformers diffusers accelerate safetensors bitsandbytes \
-        numpy scipy pandas matplotlib pillow opencv-python
-
-    python3 -c "import torch; print(f'PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()}')"
-    echo "==> PyTorch installed successfully (GPU Base fast path)"
-    exit 0
-fi
-
-# ============================================================
-# LAMBDA STACK PATH - Requires TensorFlow cleanup
-# ============================================================
-remove_tensorflow() {
-    echo "==> [Pre-flight] Removing TensorFlow to prevent dependency conflicts..."
-
-    # Remove all TensorFlow packages via pip (user installs)
-    pip3 uninstall -y tensorflow tensorflow-cpu tensorflow-gpu tensorflow-intel tensorflow-macos \
-        tensorflow-io tensorflow-io-gcs-filesystem tf-keras keras 2>/dev/null || true
-
-    # Remove system-wide pip installs
-    sudo pip3 uninstall -y tensorflow tensorflow-cpu tensorflow-gpu 2>/dev/null || true
-
-    # Remove apt-installed tensorflow (common on Lambda/Ubuntu)
-    sudo apt-get remove -y python3-tensorflow 2>/dev/null || true
-
-    # Remove broken ml_dtypes compiled against old numpy
-    pip3 uninstall -y ml_dtypes 2>/dev/null || true
-    sudo pip3 uninstall -y ml_dtypes 2>/dev/null || true
-
-    # Set environment variables to prevent TensorFlow from being loaded
-    export TRANSFORMERS_NO_TF=1
-    export USE_TF=0
-    export USE_TORCH=1
-    export TF_CPP_MIN_LOG_LEVEL=3
-
-    # Persist these settings (only add if not already present)
-    if ! grep -q "TRANSFORMERS_NO_TF" ~/.bashrc 2>/dev/null; then
-        cat >> ~/.bashrc << 'TFENV'
-
-# Disable TensorFlow to prevent NumPy conflicts with PyTorch/vLLM
-export TRANSFORMERS_NO_TF=1
-export USE_TF=0
-export USE_TORCH=1
-export TF_CPP_MIN_LOG_LEVEL=3
-TFENV
-    fi
-
-    echo "    ✓ TensorFlow removed"
-}
-
-# Execute TensorFlow removal for Lambda Stack
-remove_tensorflow
-
-# ============================================================
-# Install PyTorch (Lambda Stack path)
-# ============================================================
+# Quick check if PyTorch is installed (without slow CUDA check)
 if python3 -c "import torch" 2>/dev/null; then
-    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
+    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
     echo "==> PyTorch $TORCH_VERSION already installed"
-    echo "==> Installing AI libraries (preserving torch version)..."
-    pip3 install --no-deps accelerate
+    echo "==> Installing/updating AI libraries only..."
+    # Install ALL packages in one command to avoid dependency conflicts
     pip3 install --upgrade-strategy only-if-needed \
-        transformers diffusers safetensors bitsandbytes \
+        transformers diffusers accelerate safetensors xformers bitsandbytes \
         numpy scipy pandas matplotlib pillow opencv-python
 else
-    echo "==> Installing PyTorch ($TORCH_FLAVOR)..."
-    pip3 install $PIP_PRE_FLAG torch torchvision torchaudio --index-url "$TORCH_INDEX"
-    pip3 install transformers diffusers accelerate safetensors bitsandbytes \
+    echo "==> Installing PyTorch with CUDA 12.6 support..."
+    # Install PyTorch with CUDA 12.6 support (latest stable, compatible with modern packages)
+    pip3 install --upgrade-strategy only-if-needed torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu126
+    # Install ALL AI libraries in one command to avoid dependency conflicts
+    pip3 install --upgrade-strategy only-if-needed \
+        transformers diffusers accelerate safetensors bitsandbytes \
         numpy scipy pandas matplotlib pillow opencv-python
 fi
 
-# Install fresh ml_dtypes compatible with current NumPy
-pip3 install --upgrade ml_dtypes 2>/dev/null || true
-
-python3 -c "import torch; print(f'PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()}')"
-`,
-
-	"flash-attn": `#!/bin/bash
-set -e
-echo "==> Installing Flash Attention"
-
-# Verify PyTorch is installed with CUDA
-if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-    echo "Error: PyTorch with CUDA not found. Please install 'pytorch' package first: anime install pytorch"
-    exit 1
-fi
-
-# Check if flash-attn is already installed
-if python3 -c "import flash_attn" 2>/dev/null; then
-    FA_VERSION=$(python3 -c "import flash_attn; print(flash_attn.__version__)" 2>/dev/null || echo "unknown")
-    echo "==> Flash Attention $FA_VERSION already installed"
-    exit 0
-fi
-
-echo "==> Installing Flash Attention (this may take 10+ minutes to compile)..."
-echo "==> Note: Compilation requires significant CPU and memory resources"
-
-# Install flash-attn with --no-build-isolation to use existing torch/cuda
-pip3 install flash-attn --no-build-isolation
-
-# Verify installation
-echo "==> Verifying Flash Attention installation..."
-python3 -c "import flash_attn; print(f'Flash Attention {flash_attn.__version__} installed successfully')"
-
-echo "==> Flash Attention installed successfully"
-echo ""
-echo "Usage: from flash_attn import flash_attn_func, flash_attn_qkvpacked_func"
-echo "Documentation: https://github.com/Dao-AILab/flash-attention"
+echo "==> PyTorch installed successfully"
+# Quick CUDA check without full initialization
+python3 -c "import torch; print(f'PyTorch {torch.__version__} | CUDA available: {torch.cuda.is_available()}')" 2>/dev/null || echo "PyTorch installed"
 `,
 
 	"ollama": `#!/bin/bash
@@ -299,280 +152,37 @@ echo "==> Ollama installed successfully"
 set -e
 echo "==> Installing vLLM Inference Engine"
 
-# ── idempotency: skip if already working ──────────────────────
-if python3 -c "from vllm import LLM; import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-    VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null)
-    TORCH_INFO=$(python3 -c "import torch; print(f'torch {torch.__version__} cuda={torch.version.cuda}')" 2>/dev/null)
-    echo "    ✓ vLLM $VLLM_VERSION already installed and working ($TORCH_INFO)"
-    exit 0
-fi
-
-# ============================================================
-# STEP 1: Detect environment type
-# ============================================================
-echo "==> [1/6] Detecting environment..."
-
-ARCH=$(uname -m)
-IS_LAMBDA_STACK=false
-IS_GPU_BASE=false
-TORCH_VERSION=""
-HAS_SYSTEM_TORCH=false
-HAS_SYSTEM_TF=false
-
-# Check for Lambda Stack indicators
-if dpkg -l | grep -q "python3-torch-cuda"; then
-    HAS_SYSTEM_TORCH=true
-fi
-if dpkg -l | grep -q "python3-tensorflow"; then
-    HAS_SYSTEM_TF=true
-fi
-
-# Determine environment type
-# ARM64/GH200: always use GPU Base fast path — Lambda Stack system torch
-# has .so conflicts with vLLM and the cleanup path makes things worse
-if [ "$ARCH" = "aarch64" ]; then
-    IS_GPU_BASE=true
-    echo "    ✓ ARM64/GH200 detected → using pip-managed torch path"
-elif [ "$HAS_SYSTEM_TORCH" = true ] || [ "$HAS_SYSTEM_TF" = true ]; then
-    IS_LAMBDA_STACK=true
-    echo "    ⚠ Lambda Stack detected (system ML packages present)"
-    echo "    → Will clean up conflicting packages"
-else
-    IS_GPU_BASE=true
-    echo "    ✓ GPU Base / Clean environment detected"
-    echo "    → Using streamlined install path"
-fi
-
-# ============================================================
-# GPU BASE FAST PATH - No conflicts to clean up
-# ============================================================
-if [ "$IS_GPU_BASE" = true ]; then
-    echo "==> [2/6] GPU Base: Checking PyTorch..."
-
-    # Install PyTorch if not present
-    if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-        echo "    → Installing PyTorch with CUDA 12.8..."
-        pip3 install torch --index-url https://download.pytorch.org/whl/cu128
-    fi
-    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
-    echo "    ✓ PyTorch $TORCH_VERSION with CUDA ready"
-
-    echo "==> [3/6] GPU Base: Skipping cleanup (no conflicts)"
-    echo "==> [4/6] GPU Base: Skipping NumPy fix (no system constraints)"
-
-    echo "==> [5/6] GPU Base: Installing vLLM..."
-    pip3 install vllm
-
-    # ARM64 Lambda Stack: system scipy/sklearn/pandas/flash_attn are compiled
-    # against old numpy/torch and break. Upgrade via pip to shadow them.
-    if [ "$ARCH" = "aarch64" ]; then
-        echo "    → ARM64: upgrading system packages for numpy 2.x + torch compat..."
-        pip3 install --upgrade scipy scikit-learn pandas 2>/dev/null || true
-        # System flash_attn has undefined torch symbols — rebuild from pip
-        if ! python3 -c "import flash_attn" 2>/dev/null; then
-            echo "    → Rebuilding flash_attn from source (may take 10+ min)..."
-            pip3 install flash-attn --no-build-isolation 2>/dev/null || echo "    ⚠ flash_attn build failed (will use --enforce-eager)"
-        fi
-    fi
-
-    echo "==> [6/6] Verifying installation..."
-    if python3 -c "from vllm import LLM; print('vLLM OK')" 2>/dev/null; then
-        VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null)
-        echo "    ✓ vLLM $VLLM_VERSION installed successfully"
-        python3 -c "import torch; print(f'    ✓ PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()}')"
-        echo ""
-        echo "==> vLLM installed successfully (GPU Base fast path)"
-        exit 0
-    else
-        echo "    ✗ vLLM verification failed"
-        echo "    Run: anime vllm doctor --fix"
-        exit 1
-    fi
-fi
-
-# ============================================================
-# LAMBDA STACK PATH - Requires cleanup
-# ============================================================
-echo "==> [1/6] Lambda Stack: Continuing with cleanup path..."
-
-# Check PyTorch CUDA
-if python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])" 2>/dev/null)
-    echo "    ✓ PyTorch $TORCH_VERSION with CUDA available"
-else
-    echo "    ✗ PyTorch with CUDA not found"
-    if [ "$HAS_SYSTEM_TORCH" = true ]; then
-        echo ""
-        echo "ERROR: System PyTorch CUDA not working."
-        echo "Try: pip3 uninstall torch && python3 -c 'import torch; print(torch.cuda.is_available())'"
-    else
-        echo ""
-        echo "ERROR: Please install PyTorch first: anime install pytorch"
-    fi
+# Verify PyTorch is installed with CUDA
+if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+    echo "Error: PyTorch with CUDA not found. Please install 'pytorch' package first: anime install pytorch"
     exit 1
 fi
 
-# ============================================================
-# STEP 2: Check if vLLM is already installed and working
-# ============================================================
-echo "==> [2/6] Checking existing vLLM installation..."
-if python3 -c "from vllm import LLM" 2>/dev/null; then
+# Check if vLLM is already installed
+if python3 -c "import vllm" 2>/dev/null; then
     VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "unknown")
-    echo "    ✓ vLLM $VLLM_VERSION already installed and working"
+    echo "==> vLLM $VLLM_VERSION already installed"
     exit 0
 fi
-echo "    → vLLM not found, proceeding with installation"
 
-# ============================================================
-# STEP 3: Remove conflicting packages
-# ============================================================
-echo "==> [3/6] Cleaning up conflicting packages..."
+echo "==> Installing vLLM with CUDA support..."
+# Install vLLM - it will detect CUDA from PyTorch installation
+pip3 install --upgrade-strategy only-if-needed vllm
 
-# Remove TensorFlow (causes NumPy conflicts with vLLM/transformers)
-pip3 uninstall -y tensorflow tensorflow-cpu tensorflow-gpu tensorflow-intel \
-    tensorflow-io tf-keras keras 2>/dev/null || true
-sudo apt-get remove -y python3-tensorflow 2>/dev/null || true
-# Force remove stale TensorFlow directories (apt leaves these behind)
-sudo rm -rf /usr/lib/python3/dist-packages/tensorflow* 2>/dev/null || true
+# Verify installation
+echo "==> Verifying vLLM installation..."
+python3 -c "import vllm; print(f'vLLM {vllm.__version__} installed successfully')"
+echo "==> Testing CUDA availability..."
+python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
-# Remove pip-installed torch if system torch is available (prevents override)
-# (ARM64 never reaches here — it takes the GPU Base path above)
-if [ "$HAS_SYSTEM_TORCH" = true ]; then
-    echo "    → Removing pip torch to use system torch-cuda..."
-    pip3 uninstall -y torch torchvision torchaudio 2>/dev/null || true
-fi
-
-# Set TensorFlow prevention env vars
-export TRANSFORMERS_NO_TF=1
-export USE_TF=0
-export USE_TORCH=1
-
-if ! grep -q "TRANSFORMERS_NO_TF" ~/.bashrc 2>/dev/null; then
-    echo -e "\n# Disable TensorFlow\nexport TRANSFORMERS_NO_TF=1\nexport USE_TF=0\nexport USE_TORCH=1" >> ~/.bashrc
-fi
-echo "    ✓ Conflicting packages removed"
-
-# ============================================================
-# STEP 4: NumPy check (vLLM 0.13.0+ works with NumPy 2.x)
-# ============================================================
-echo "==> [4/6] Checking NumPy..."
-# Note: vLLM 0.13.0+ works with NumPy 2.x, no downgrade needed
-echo "    ✓ NumPy OK (vLLM 0.13.0+ compatible with NumPy 2.x)"
-
-# ============================================================
-# STEP 5: Install vLLM (version depends on environment)
-# ============================================================
-echo "==> [5/6] Installing vLLM..."
-
-# Re-check torch version after cleanup
-TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__.split('+')[0])" 2>/dev/null || echo "2.9.0")
-TORCH_MAJOR_MINOR=$(echo $TORCH_VERSION | cut -d. -f1,2)
-
-echo "    → PyTorch version: $TORCH_VERSION"
-echo "    → Architecture: $ARCH"
-
-if [ "$ARCH" = "aarch64" ]; then
-    # ARM64/GH200: Use cu128 index for CUDA-enabled PyTorch
-    echo "    → ARM64: Installing vLLM + PyTorch 2.9.1+cu128..."
-
-    pip3 install --upgrade pip
-
-    # Install vLLM first (pulls its deps including CPU torch)
-    pip3 install vllm
-
-    # Then reinstall torch with CUDA from cu128 wheel index (overwrites CPU torch)
-    echo "    → Upgrading to CUDA-enabled PyTorch..."
-    pip3 install torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128
-
-    echo "    ✓ vLLM installed with torch+cu128"
-else
-    # x86_64: use latest vLLM
-    echo "    → Using latest vLLM"
-    pip3 install vllm
-fi
-echo "    ✓ vLLM installed"
-
-# ============================================================
-# STEP 6: Verify installation with error recovery
-# ============================================================
-echo "==> [6/6] Verifying vLLM installation..."
-
-# First try: direct import
-if python3 -c "from vllm import LLM, SamplingParams; print('vLLM OK')" 2>/dev/null; then
-    echo "    ✓ vLLM verification passed"
-else
-    echo "    ⚠ Initial verification failed, attempting recovery..."
-
-    # Recovery: Check if TensorFlow snuck back in
-    if python3 -c "import tensorflow" 2>/dev/null; then
-        echo "    → TensorFlow detected again, removing..."
-        pip3 uninstall -y tensorflow tensorflow-cpu tensorflow-gpu 2>/dev/null || true
-    fi
-
-    # Recovery: Try with explicit environment
-    if TRANSFORMERS_NO_TF=1 USE_TF=0 python3 -c "from vllm import LLM, SamplingParams; print('vLLM OK')" 2>/dev/null; then
-        echo "    ✓ vLLM works with TF disabled"
-    else
-        # Last resort: Check the actual error
-        echo "    → Diagnosing issue..."
-        python3 -c "
-import sys
-try:
-    from vllm import LLM
-    print('vLLM imported successfully')
-except ImportError as e:
-    print(f'Import error: {e}')
-    if 'numpy' in str(e).lower():
-        print('DIAGNOSIS: NumPy version conflict')
-        sys.exit(2)
-    elif 'tensorflow' in str(e).lower():
-        print('DIAGNOSIS: TensorFlow conflict')
-        sys.exit(3)
-    else:
-        print(f'DIAGNOSIS: Unknown - {e}')
-        sys.exit(1)
-except Exception as e:
-    print(f'Error: {e}')
-    sys.exit(1)
-" 2>&1 || {
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 2 ]; then
-                echo "    → NumPy conflict detected, reinstalling ml_dtypes..."
-                # vLLM 0.13+ supports NumPy 2.x - don't downgrade, fix ml_dtypes instead
-                pip3 install --upgrade --force-reinstall ml_dtypes 2>/dev/null || true
-            elif [ $EXIT_CODE -eq 3 ]; then
-                echo "    → TensorFlow still causing issues, removing via pip..."
-                # Safe removal via pip instead of rm -rf
-                pip3 uninstall -y tensorflow tensorflow-cpu tensorflow-gpu tensorflow-intel tensorflow-macos 2>/dev/null || true
-                pip3 uninstall -y tensorflow-io tensorflow-io-gcs-filesystem tf-keras keras 2>/dev/null || true
-                # Also try system pip
-                sudo pip3 uninstall -y tensorflow tensorflow-cpu tensorflow-gpu 2>/dev/null || true
-                # Remove apt package if present
-                sudo apt-get remove -y python3-tensorflow 2>/dev/null || true
-            fi
-
-            # Final verification
-            if ! python3 -c "from vllm import LLM; print('vLLM OK')" 2>/dev/null; then
-                echo "    ✗ vLLM installation failed after recovery attempts"
-                echo ""
-                echo "Manual fix options:"
-                echo "  1. sudo apt-get remove python3-tensorflow"
-                echo "  2. pip3 uninstall tensorflow tensorflow-cpu tensorflow-gpu"
-                echo "  3. Create a fresh venv: python3 -m venv ~/vllm-env && source ~/vllm-env/bin/activate && pip install vllm"
-                exit 1
-            fi
-        }
-    fi
-fi
-
-python3 -c "import torch; print(f'torch {torch.__version__} | CUDA: {torch.cuda.is_available()}')"
-
-echo ""
 echo "==> vLLM installed successfully"
 echo ""
-echo "Usage:"
-echo "  vllm serve <model>                    # Start OpenAI-compatible server"
-echo "  python -m vllm.entrypoints.openai.api_server --model <model>"
+echo "Usage examples:"
+echo "  1. Python API: from vllm import LLM, SamplingParams"
+echo "  2. OpenAI-compatible server: python3 -m vllm.entrypoints.openai.api_server --model <model-name>"
+echo "  3. Offline inference: vllm serve <model-name>"
+echo ""
+echo "Documentation: https://docs.vllm.ai/"
 `,
 
 	"models-small": `#!/bin/bash
@@ -617,171 +227,44 @@ echo "==> Large models downloaded"
 ollama list
 `,
 
-	"comfy-cli": `#!/bin/bash
-set -e
-echo "==> Installing comfy-cli (ComfyUI Management CLI)"
-
-# Check if comfy-cli is already installed
-if command -v comfy &> /dev/null; then
-    COMFY_VERSION=$(comfy --version 2>/dev/null || echo "unknown")
-    echo "comfy-cli already installed: $COMFY_VERSION"
-    exit 0
-fi
-
-# Ensure pipx is installed for isolated Python app installation
-if ! command -v pipx &> /dev/null; then
-    echo "==> Installing pipx for isolated Python app management..."
-    pip3 install --user pipx
-    python3 -m pipx ensurepath
-    # Add to current session
-    export PATH="$PATH:$HOME/.local/bin"
-fi
-
-# Install comfy-cli using pipx (creates isolated venv automatically)
-echo "==> Installing comfy-cli via pipx (isolated environment)..."
-pipx install comfy-cli
-
-# Verify installation
-echo "==> Verifying comfy-cli installation..."
-if command -v comfy &> /dev/null; then
-    comfy --version
-    echo "==> comfy-cli installed successfully!"
-else
-    # Try with explicit path
-    if [ -x "$HOME/.local/bin/comfy" ]; then
-        echo "==> comfy-cli installed to ~/.local/bin/comfy"
-        echo "==> Add ~/.local/bin to your PATH if not already present"
-        $HOME/.local/bin/comfy --version
-    else
-        echo "Error: comfy-cli installation failed"
-        exit 1
-    fi
-fi
-
-echo ""
-echo "Quick start commands:"
-echo "  comfy install              - Install ComfyUI"
-echo "  comfy launch               - Start ComfyUI server"
-echo "  comfy node list            - List custom nodes"
-echo "  comfy model list           - List installed models"
-echo "  comfy --help               - Show all commands"
-`,
-
 	"comfyui": `#!/bin/bash
-set -euo pipefail
-echo "==> Installing ComfyUI (manual venv install, host-aware torch)"
+set -e
+echo "==> Installing ComfyUI"
+
+# Verify PyTorch is installed
+if ! python3 -c "import torch" 2>/dev/null; then
+    echo "Error: PyTorch not found. Please install 'pytorch' package first: anime install pytorch"
+    exit 1
+fi
 
 COMFYUI_DIR="$HOME/ComfyUI"
-VENV="$COMFYUI_DIR/venv"
-
-if [ -f "$COMFYUI_DIR/main.py" ] && [ -x "$VENV/bin/python" ]; then
-    echo "==> ComfyUI already at $COMFYUI_DIR (venv at $VENV)"
+if [ -d "$COMFYUI_DIR" ]; then
+    echo "ComfyUI already exists"
     exit 0
 fi
 
-# ─── apt deps the rest of this script depends on ──────────────────
-# A fresh Lambda / GH200 / H100 instance may be missing git, python3-venv,
-# build-essential, or screen — apt-install them up front so cloning the
-# repo, creating the venv, building wheels, and (later) running ComfyUI in
-# a screen session all just work. We intentionally keep this list small.
-need_apt=()
-command -v git           >/dev/null 2>&1 || need_apt+=(git)
-command -v screen        >/dev/null 2>&1 || need_apt+=(screen)
-python3 -c 'import venv' >/dev/null 2>&1 || need_apt+=(python3-venv)
-dpkg -s build-essential  >/dev/null 2>&1 || need_apt+=(build-essential)
-if [ "${#need_apt[@]}" -gt 0 ]; then
-    echo "==> apt-installing: ${need_apt[*]}"
-    if [ "$(id -u)" -eq 0 ]; then
-        DEBIAN_FRONTEND=noninteractive apt-get update -y
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_apt[@]}"
-    else
-        sudo -n true 2>/dev/null || { echo "ERROR: need sudo to apt-install: ${need_apt[*]}"; exit 1; }
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${need_apt[@]}"
-    fi
+echo "Cloning ComfyUI..."
+git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
+
+echo "Installing ComfyUI dependencies (excluding torch/torchvision to preserve CUDA setup)..."
+# Filter out torch/torchvision/torchaudio from requirements to avoid reinstalling and breaking CUDA
+grep -v "^torch" "$COMFYUI_DIR/requirements.txt" > /tmp/comfyui-requirements-filtered.txt || true
+
+# Install filtered requirements
+if [ -s /tmp/comfyui-requirements-filtered.txt ]; then
+    pip3 install -r /tmp/comfyui-requirements-filtered.txt --upgrade-strategy only-if-needed
 fi
+rm -f /tmp/comfyui-requirements-filtered.txt
 
-# ─── pick torch wheel index from driver-supported CUDA (matches wantorch) ───
-# Same logic as the wantorch phase: install the newest pytorch.org index
-# that fits within the driver's max-CUDA. Avoids "install cu128 then have
-# wantorch immediately swap to cu130" wasted-bandwidth path on H100/GH200.
-ARCH=$(uname -m)
-CUDA_DRV=""
-if command -v nvidia-smi >/dev/null 2>&1; then
-    CUDA_DRV=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ' || true)
-fi
-DRV_MAJ="${CUDA_DRV%%.*}"
-DRV_MIN=$(echo "${CUDA_DRV#*.}" | cut -d. -f1)
-[ -z "$DRV_MAJ" ] && DRV_MAJ=12
-[ -z "$DRV_MIN" ] && DRV_MIN=8
-TORCH_INDEX="https://download.pytorch.org/whl/cu128"
-PIP_PRE=""
-TORCH_FLAVOR="cu128 stable"
-case "$DRV_MAJ" in
-    13) TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"; PIP_PRE="--pre"; TORCH_FLAVOR="cu130 nightly" ;;
-    12) if [ "$DRV_MIN" -ge 8 ]; then TORCH_FLAVOR="cu128 stable";
-        elif [ "$DRV_MIN" -ge 4 ]; then TORCH_INDEX="https://download.pytorch.org/whl/cu124"; TORCH_FLAVOR="cu124 stable";
-        else TORCH_INDEX="https://download.pytorch.org/whl/cu121"; TORCH_FLAVOR="cu121 stable"; fi ;;
-    11) TORCH_INDEX="https://download.pytorch.org/whl/cu118"; TORCH_FLAVOR="cu118 stable" ;;
-esac
-[ -n "${FORCE_CU130:-}" ] && { TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"; PIP_PRE="--pre"; TORCH_FLAVOR="cu130 nightly (forced)"; }
-echo "==> torch flavor: $TORCH_FLAVOR  (driver_cuda=${CUDA_DRV:-unknown}, arch=$ARCH)"
+echo "Installing ComfyUI Manager..."
+git clone https://github.com/ltdrdata/ComfyUI-Manager.git "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager"
 
-# ─── clone ComfyUI if missing ───
-if [ ! -f "$COMFYUI_DIR/main.py" ]; then
-    echo "==> Cloning ComfyUI..."
-    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
-fi
-
-# ─── create venv at $COMFYUI_DIR/venv (canonical path used by wantorch) ───
-if [ ! -x "$VENV/bin/python" ]; then
-    echo "==> Creating venv at $VENV..."
-    python3 -m venv "$VENV"
-fi
-
-"$VENV/bin/pip" install --upgrade -q pip wheel setuptools
-
-echo "==> Installing torch ($TORCH_FLAVOR) into venv..."
-"$VENV/bin/pip" install $PIP_PRE torch torchvision torchaudio --index-url "$TORCH_INDEX"
-
-echo "==> Installing ComfyUI requirements..."
-"$VENV/bin/pip" install -r "$COMFYUI_DIR/requirements.txt"
-
-# ─── install ComfyUI Manager (so users can browse/install nodes from UI) ───
-NODES="$COMFYUI_DIR/custom_nodes"
-mkdir -p "$NODES"
-if [ ! -d "$NODES/ComfyUI-Manager" ]; then
-    echo "==> Installing ComfyUI-Manager..."
-    git clone --depth 1 https://github.com/Comfy-Org/ComfyUI-Manager.git "$NODES/ComfyUI-Manager"
-fi
-
-# ─── verify ───
-"$VENV/bin/python" -c "import torch; print(f'torch={torch.__version__} cuda={torch.version.cuda} device={torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"cpu\"}')"
-
-# ─── launch script ───
-cat > "$COMFYUI_DIR/launch.sh" <<'LAUNCH_EOF'
-#!/bin/bash
-cd "$HOME/ComfyUI"
-exec ./venv/bin/python main.py "$@"
-LAUNCH_EOF
-chmod +x "$COMFYUI_DIR/launch.sh"
-
-echo ""
-echo "==> ComfyUI installed at $COMFYUI_DIR (venv: $VENV)"
-echo "==> Start with: screen -dmS comfyui bash -c 'cd $COMFYUI_DIR && ./venv/bin/python main.py --listen'"
-echo "    or: $COMFYUI_DIR/launch.sh --listen"
+echo "==> ComfyUI installed successfully"
+echo "==> PyTorch and CUDA installation preserved"
 `,
 
 	"nvidia": `#!/bin/bash
 set -e
-
-# ── idempotency: skip if nvidia-smi works ─────────────────────
-if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name --format=csv,noheader >/dev/null 2>&1; then
-    GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
-    CUDA=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader | head -1)
-    echo "    ✓ NVIDIA drivers already working ($GPU, CUDA $CUDA)"
-    exit 0
-fi
 
 # Wait for dpkg lock
 wait_for_dpkg() {
@@ -808,22 +291,10 @@ if command -v nvidia-smi &> /dev/null; then
     exit 0
 fi
 
-# Detect architecture
-ARCH=$(dpkg --print-architecture)
-echo "==> Detected architecture: $ARCH"
-
-# Validate architecture is supported
-if [ "$ARCH" != "amd64" ] && [ "$ARCH" != "arm64" ]; then
-    echo "Error: Unsupported architecture: $ARCH"
-    echo "NVIDIA CUDA only supports amd64 (x86_64) and arm64 (aarch64)"
-    exit 1
-fi
-
-echo "==> Downloading CUDA keyring for $ARCH..."
-wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/${ARCH}/cuda-keyring_1.1-1_all.deb" -O /tmp/cuda-keyring.deb
+echo "==> Downloading CUDA keyring..."
+wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb
 wait_for_dpkg
 sudo dpkg -i /tmp/cuda-keyring.deb
-rm -f /tmp/cuda-keyring.deb
 wait_for_dpkg
 sudo apt update
 wait_for_dpkg
@@ -906,140 +377,172 @@ npm --version
 	"go": `#!/bin/bash
 set -e
 
-echo "==> Installing Go (latest stable)"
+echo "==> Installing Go"
+if command -v go &> /dev/null; then
+    echo "Go $(go version) already installed"
+    exit 0
+fi
 
+# Get latest stable Go version (or use a specific version)
+GO_VERSION="1.23.5"
 GO_ARCH="amd64"
+
+# Detect architecture
 if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
     GO_ARCH="arm64"
 fi
 
-GO_OS="linux"
-if [ "$(uname -s)" = "Darwin" ]; then
-    GO_OS="darwin"
-fi
+echo "==> Downloading Go $GO_VERSION for $GO_ARCH"
+wget -q https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz -O /tmp/go.tar.gz
 
-# Skip if already installed and recent (1.23+)
-if command -v go &>/dev/null; then
-    CUR=$(go version | sed 's/.*go1\.\([0-9]*\).*/\1/')
-    if [ "${CUR:-0}" -ge 23 ]; then
-        echo "  ✓ $(go version) — up to date"
-        exit 0
-    fi
-    echo "  → Upgrading from go1.${CUR}"
-fi
-
-# Fetch latest stable
-GO_VERSION=$(curl -sL 'https://go.dev/VERSION?m=text' | head -1)
-echo "  → ${GO_VERSION} ${GO_OS}/${GO_ARCH}"
-
-curl -sLo /tmp/go.tar.gz "https://go.dev/dl/${GO_VERSION}.${GO_OS}-${GO_ARCH}.tar.gz"
+echo "==> Installing Go to /usr/local"
 sudo rm -rf /usr/local/go
 sudo tar -C /usr/local -xzf /tmp/go.tar.gz
-rm -f /tmp/go.tar.gz
+rm /tmp/go.tar.gz
 
-# PATH
-for rc in ~/.bashrc ~/.profile; do
-    if ! grep -q "/usr/local/go/bin" "$rc" 2>/dev/null; then
-        echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> "$rc"
-    fi
-done
-export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+# Add Go to PATH if not already present
+if ! grep -q "/usr/local/go/bin" ~/.profile 2>/dev/null; then
+    echo "==> Adding Go to PATH in ~/.profile"
+    echo "" >> ~/.profile
+    echo "# Go" >> ~/.profile
+    echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+    echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.profile
+fi
 
-echo "  ✓ $(/usr/local/go/bin/go version)"
+if ! grep -q "/usr/local/go/bin" ~/.bashrc 2>/dev/null; then
+    echo "==> Adding Go to PATH in ~/.bashrc"
+    echo "" >> ~/.bashrc
+    echo "# Go" >> ~/.bashrc
+    echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+    echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
+fi
+
+# Also add to current session
+export PATH=$PATH:/usr/local/go/bin
+export PATH=$PATH:$HOME/go/bin
+
+echo "==> Go installed successfully"
+/usr/local/go/bin/go version
+
+echo ""
+echo "Note: Restart your shell or run 'source ~/.profile' to update PATH"
+echo "Go workspace: ~/go"
 `,
 
 	"claude": `#!/bin/bash
 set -e
 echo "==> Installing Claude Code CLI"
-if command -v claude-code &> /dev/null; then
-    echo "Claude Code already installed"
+
+# Check if already installed
+if command -v claude &> /dev/null; then
+    echo "Claude Code already installed: $(which claude)"
     exit 0
 fi
-sudo npm install -g @anthropic-ai/claude-code
 
-# Source shell config to make claude-code available immediately
-if [ -f "$HOME/.zshrc" ]; then
-    echo "==> Sourcing .zshrc..."
-    export PATH="$PATH:/usr/local/bin:$HOME/.npm-global/bin"
-    source "$HOME/.zshrc" 2>/dev/null || true
-elif [ -f "$HOME/.bashrc" ]; then
-    echo "==> Sourcing .bashrc..."
-    export PATH="$PATH:/usr/local/bin:$HOME/.npm-global/bin"
-    source "$HOME/.bashrc" 2>/dev/null || true
+# Find npm — check PATH, homebrew, nvm, common locations
+NPM=""
+for candidate in \
+    npm \
+    /opt/homebrew/bin/npm \
+    /usr/local/bin/npm \
+    ; do
+    if command -v "$candidate" &> /dev/null || [ -x "$candidate" ]; then
+        NPM="$candidate"
+        break
+    fi
+done
+
+# Try nvm
+if [ -z "$NPM" ]; then
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+    command -v npm &> /dev/null && NPM="npm"
 fi
 
+# Try globbing nvm paths
+if [ -z "$NPM" ]; then
+    NPM=$(ls -1 $HOME/.nvm/versions/node/*/bin/npm $HOME/.local/share/nvm/*/bin/npm 2>/dev/null | tail -1)
+fi
+
+if [ -z "$NPM" ]; then
+    echo "Error: npm not found. Install nodejs first: anime install nodejs"
+    exit 1
+fi
+
+echo "==> Using npm at: $NPM"
+
+# Try without sudo first, fall back to sudo
+$NPM install -g @anthropic-ai/claude-code 2>/dev/null || sudo $NPM install -g @anthropic-ai/claude-code
+
 echo "==> Claude Code installed successfully"
-echo "==> Verifying installation..."
-which claude-code || echo "Note: You may need to restart your shell for claude-code to be in PATH"
+command -v claude && echo "==> Verified: $(which claude)" || echo "Note: Restart your shell to pick up claude in PATH"
+`,
+
+	"rust": `#!/bin/bash
+set -e
+echo "==> Installing Rust Toolchain"
+if command -v rustc &> /dev/null; then
+    echo "Rust $(rustc --version) already installed"
+    exit 0
+fi
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+# Source cargo env for current session
+source "$HOME/.cargo/env"
+
+# Common tools
+echo "==> Installing common Rust tools..."
+cargo install sccache cargo-watch cargo-edit
+
+echo "==> Rust installed successfully"
+rustc --version
+cargo --version
+echo ""
+echo "Note: Restart your shell or run 'source ~/.cargo/env' to update PATH"
 `,
 
 	"gh": `#!/bin/bash
 set -e
-echo "==> Installing GitHub CLI (gh)"
-
+echo "==> Installing GitHub CLI"
 if command -v gh &> /dev/null; then
     echo "GitHub CLI $(gh --version | head -1) already installed"
     exit 0
 fi
 
-# Wait for dpkg lock
-wait_for_dpkg() {
-    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-          sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
-          sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
-        echo "Waiting for other package managers to finish..."
-        sleep 5
-    done
-}
-
-echo "==> Adding GitHub CLI repository"
-wait_for_dpkg
-
-# Install prerequisites
-sudo apt install -y curl
-
-# Add GitHub CLI repository
-(type -p wget >/dev/null || (sudo apt update && sudo apt-get install wget -y)) \
-    && sudo mkdir -p -m 755 /etc/apt/keyrings \
-    && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
-    && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-
-echo "==> Installing gh package"
-wait_for_dpkg
-sudo apt update
-sudo apt install gh -y
+# Detect OS
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    if [[ "$ID" == "ubuntu" || "$ID" == "debian" ]]; then
+        (type -p wget >/dev/null || (sudo apt update && sudo apt-get install wget -y)) \
+        && sudo mkdir -p -m 755 /etc/apt/keyrings \
+        && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+        && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+        && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+        && sudo apt update \
+        && sudo apt install gh -y
+    fi
+elif [[ "$(uname)" == "Darwin" ]]; then
+    brew install gh
+fi
 
 echo "==> GitHub CLI installed successfully"
 gh --version
-
-echo ""
-echo "To authenticate, run: gh auth login"
 `,
 
-	"make": `#!/bin/bash
+	"uv": `#!/bin/bash
 set -e
-echo "==> Installing Make & Build Tools"
+echo "==> Installing uv (fast Python package manager)"
+if command -v uv &> /dev/null; then
+    echo "uv $(uv --version) already installed"
+    exit 0
+fi
 
-# Wait for dpkg lock
-wait_for_dpkg() {
-    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-          sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
-          sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
-        echo "Waiting for other package managers to finish..."
-        sleep 5
-    done
-}
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-echo "==> Installing GNU Make, autotools, and build utilities"
-wait_for_dpkg
-sudo apt update
-sudo apt install -y make automake autoconf libtool cmake ninja-build pkg-config
-
-echo "==> Make & Build Tools installed successfully"
-make --version
-cmake --version
+echo "==> uv installed successfully"
+echo "Note: Restart your shell or run 'source $HOME/.local/bin/env' to update PATH"
 `,
 
 	// Video Generation Models
@@ -1087,7 +590,7 @@ if [ -f "requirements.txt" ]; then
     fi
 fi
 echo "==> Downloading Mochi-1 model weights with parallel downloads..."
-hf download genmo/mochi-1-preview --local-dir ./weights --max-workers 8
+huggingface-cli download genmo/mochi-1-preview --local-dir ./weights --max-workers 8
 echo "==> Mochi-1 installed successfully"
 `,
 
@@ -1173,7 +676,7 @@ if [ -f "requirements.txt" ]; then
     fi
 fi
 echo "==> Downloading CogVideoX-5B model with parallel downloads..."
-hf download THUDM/CogVideoX-5b --local-dir ./weights --max-workers 8
+huggingface-cli download THUDM/CogVideoX-5b --local-dir ./weights --max-workers 8
 echo "==> CogVideoX installed successfully"
 `,
 
@@ -1198,7 +701,7 @@ git clone https://github.com/hpcaitech/Open-Sora open-sora
 cd open-sora
 pip3 install -e . --upgrade-strategy only-if-needed
 echo "==> Downloading Open-Sora models with parallel downloads..."
-hf download hpcai-tech/OpenSora-STDiT-v3 --local-dir ./pretrained_models --max-workers 8
+huggingface-cli download hpcai-tech/OpenSora-STDiT-v3 --local-dir ./pretrained_models --max-workers 8
 echo "==> Open-Sora installed successfully"
 `,
 
@@ -1234,7 +737,7 @@ if [ -f "requirements.txt" ]; then
     fi
 fi
 echo "==> Downloading LTXVideo model with parallel downloads..."
-hf download Lightricks/LTX-Video --local-dir ./checkpoints --max-workers 8
+huggingface-cli download Lightricks/LTX-Video --local-dir ./checkpoints --max-workers 8
 echo "==> LTXVideo installed successfully"
 `,
 
@@ -1289,7 +792,7 @@ fi
 
 echo "==> Downloading Wan2.2 model weights with parallel downloads..."
 # Download model from HuggingFace with parallel workers
-hf download Alibaba-PAI/wan2.2 --local-dir ./checkpoints --max-workers 8
+huggingface-cli download Alibaba-PAI/wan2.2 --local-dir ./checkpoints --max-workers 8
 
 echo "==> Wan2.2 installed successfully"
 echo "Model location: ~/video-models/wan2"
@@ -1613,7 +1116,7 @@ if [ -f "flux1-dev.safetensors" ]; then
 fi
 
 echo "==> Downloading Flux.1 Dev model with parallel downloads..."
-hf download black-forest-labs/FLUX.1-dev flux1-dev.safetensors --local-dir . --max-workers 8
+huggingface-cli download black-forest-labs/FLUX.1-dev flux1-dev.safetensors --local-dir . --max-workers 8
 
 echo "==> Flux.1 Dev installed successfully"
 echo "Model location: ~/ComfyUI/models/unet/flux1-dev.safetensors"
@@ -1639,7 +1142,7 @@ if [ -f "flux1-schnell.safetensors" ]; then
 fi
 
 echo "==> Downloading Flux.1 Schnell model with parallel downloads..."
-hf download black-forest-labs/FLUX.1-schnell flux1-schnell.safetensors --local-dir . --max-workers 8
+huggingface-cli download black-forest-labs/FLUX.1-schnell flux1-schnell.safetensors --local-dir . --max-workers 8
 
 echo "==> Flux.1 Schnell installed successfully"
 echo "Model location: ~/ComfyUI/models/unet/flux1-schnell.safetensors"
@@ -1660,7 +1163,7 @@ if [ -f "flux2-fp8.safetensors" ]; then
 fi
 
 echo "==> Downloading Flux 2 FP8 model with parallel downloads..."
-hf download black-forest-labs/FLUX.2-fp8 flux2-fp8.safetensors --local-dir . --max-workers 8
+huggingface-cli download black-forest-labs/FLUX.2-fp8 flux2-fp8.safetensors --local-dir . --max-workers 8
 
 echo "==> Flux 2 (FP8) installed successfully"
 echo "Model location: ~/ComfyUI/models/unet/flux2-fp8.safetensors"
@@ -1668,29 +1171,29 @@ echo "Model location: ~/ComfyUI/models/unet/flux2-fp8.safetensors"
 	"cogvideox-1.5": `#!/bin/bash
 set -e
 echo "==> Installing CogVideoX 1.5 5B"
-pip install --upgrade diffusers transformers accelerate
-python -c "from huggingface_hub import snapshot_download; snapshot_download('THUDM/CogVideoX1.5-5B', local_dir='$HOME/models/cogvideox-1.5')"
+pip3 install --upgrade diffusers transformers accelerate
+python3 -c "from huggingface_hub import snapshot_download; snapshot_download('THUDM/CogVideoX1.5-5B', local_dir='$HOME/models/cogvideox-1.5')"
 echo "==> CogVideoX 1.5 5B installed successfully"
 `,
 	"cogvideox-i2v": `#!/bin/bash
 set -e
 echo "==> Installing CogVideoX 1.5 I2V"
-pip install --upgrade diffusers transformers accelerate
-python -c "from huggingface_hub import snapshot_download; snapshot_download('THUDM/CogVideoX1.5-5B-I2V', local_dir='$HOME/models/cogvideox-i2v')"
+pip3 install --upgrade diffusers transformers accelerate
+python3 -c "from huggingface_hub import snapshot_download; snapshot_download('THUDM/CogVideoX1.5-5B-I2V', local_dir='$HOME/models/cogvideox-i2v')"
 echo "==> CogVideoX 1.5 I2V installed successfully"
 `,
 	"hunyuan-video": `#!/bin/bash
 set -e
 echo "==> Installing HunyuanVideo"
-pip install --upgrade diffusers transformers accelerate
-python -c "from huggingface_hub import snapshot_download; snapshot_download('tencent/HunyuanVideo', local_dir='$HOME/models/hunyuan-video')"
+pip3 install --upgrade diffusers transformers accelerate
+python3 -c "from huggingface_hub import snapshot_download; snapshot_download('tencent/HunyuanVideo', local_dir='$HOME/models/hunyuan-video')"
 echo "==> HunyuanVideo installed successfully"
 `,
 	"pyramid-flow": `#!/bin/bash
 set -e
 echo "==> Installing Pyramid Flow"
-pip install --upgrade diffusers transformers accelerate
-python -c "from huggingface_hub import snapshot_download; snapshot_download('rain1011/pyramid-flow-miniflux', local_dir='$HOME/models/pyramid-flow')"
+pip3 install --upgrade diffusers transformers accelerate
+python3 -c "from huggingface_hub import snapshot_download; snapshot_download('rain1011/pyramid-flow-miniflux', local_dir='$HOME/models/pyramid-flow')"
 echo "==> Pyramid Flow installed successfully"
 `,
 	"svd-xt": `#!/bin/bash
@@ -1698,7 +1201,7 @@ set -e
 echo "==> Installing SVD-XT 1.1 for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download stabilityai/stable-video-diffusion-img2vid-xt-1-1 --local-dir svd-xt --max-workers 8
+huggingface-cli download stabilityai/stable-video-diffusion-img2vid-xt-1-1 --local-dir svd-xt --max-workers 8
 echo "==> SVD-XT 1.1 installed successfully"
 `,
 	"i2v-adapter": `#!/bin/bash
@@ -1709,7 +1212,7 @@ cd ~/ComfyUI/custom_nodes
 if [ ! -d "I2V-Adapter" ]; then
     git clone https://github.com/KlingTeam/I2V-Adapter.git
 fi
-cd I2V-Adapter && pip install -r requirements.txt
+cd I2V-Adapter && pip3 install -r requirements.txt
 echo "==> I2V-Adapter installed successfully"
 `,
 	"sd3.5-large": `#!/bin/bash
@@ -1717,7 +1220,7 @@ set -e
 echo "==> Installing Stable Diffusion 3.5 Large for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download stabilityai/stable-diffusion-3.5-large --local-dir sd3.5-large --max-workers 8
+huggingface-cli download stabilityai/stable-diffusion-3.5-large --local-dir sd3.5-large --max-workers 8
 echo "==> SD 3.5 Large installed successfully"
 `,
 	"sd3.5-large-turbo": `#!/bin/bash
@@ -1725,7 +1228,7 @@ set -e
 echo "==> Installing SD 3.5 Large Turbo for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download stabilityai/stable-diffusion-3.5-large-turbo --local-dir sd3.5-large-turbo --max-workers 8
+huggingface-cli download stabilityai/stable-diffusion-3.5-large-turbo --local-dir sd3.5-large-turbo --max-workers 8
 echo "==> SD 3.5 Large Turbo installed successfully"
 `,
 	"sd3.5-medium": `#!/bin/bash
@@ -1733,7 +1236,7 @@ set -e
 echo "==> Installing Stable Diffusion 3.5 Medium for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download stabilityai/stable-diffusion-3.5-medium --local-dir sd3.5-medium --max-workers 8
+huggingface-cli download stabilityai/stable-diffusion-3.5-medium --local-dir sd3.5-medium --max-workers 8
 echo "==> SD 3.5 Medium installed successfully"
 `,
 	"sdxl-turbo": `#!/bin/bash
@@ -1741,7 +1244,7 @@ set -e
 echo "==> Installing SDXL Turbo for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download stabilityai/sdxl-turbo --local-dir sdxl-turbo --max-workers 8
+huggingface-cli download stabilityai/sdxl-turbo --local-dir sdxl-turbo --max-workers 8
 echo "==> SDXL Turbo installed successfully"
 `,
 	"sdxl-lightning": `#!/bin/bash
@@ -1749,7 +1252,7 @@ set -e
 echo "==> Installing SDXL Lightning for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download ByteDance/SDXL-Lightning --local-dir sdxl-lightning --max-workers 8
+huggingface-cli download ByteDance/SDXL-Lightning --local-dir sdxl-lightning --max-workers 8
 echo "==> SDXL Lightning installed successfully"
 `,
 	"playground-v2.5": `#!/bin/bash
@@ -1757,7 +1260,7 @@ set -e
 echo "==> Installing Playground v2.5 for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download playgroundai/playground-v2.5-1024px-aesthetic --local-dir playground-v2.5 --max-workers 8
+huggingface-cli download playgroundai/playground-v2.5-1024px-aesthetic --local-dir playground-v2.5 --max-workers 8
 echo "==> Playground v2.5 installed successfully"
 `,
 	"pixart-sigma": `#!/bin/bash
@@ -1765,7 +1268,7 @@ set -e
 echo "==> Installing PixArt-Σ for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --local-dir pixart-sigma --max-workers 8
+huggingface-cli download PixArt-alpha/PixArt-Sigma-XL-2-1024-MS --local-dir pixart-sigma --max-workers 8
 echo "==> PixArt-Σ installed successfully"
 `,
 	"kandinsky-3": `#!/bin/bash
@@ -1773,7 +1276,7 @@ set -e
 echo "==> Installing Kandinsky 3"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download ai-forever/Kandinsky3.1 --local-dir kandinsky-3 --max-workers 8
+huggingface-cli download ai-forever/Kandinsky3.1 --local-dir kandinsky-3 --max-workers 8
 echo "==> Kandinsky 3 installed successfully"
 `,
 	"kolors": `#!/bin/bash
@@ -1781,7 +1284,7 @@ set -e
 echo "==> Installing Kolors for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download Kwai-Kolors/Kolors --local-dir kolors --max-workers 8
+huggingface-cli download Kwai-Kolors/Kolors --local-dir kolors --max-workers 8
 echo "==> Kolors installed successfully"
 `,
 	"real-esrgan": `#!/bin/bash
@@ -1806,7 +1309,7 @@ set -e
 echo "==> Installing AuraSR for ComfyUI"
 mkdir -p ~/ComfyUI/models/upscale_models
 cd ~/ComfyUI/models/upscale_models
-hf download fal/AuraSR --local-dir aurasr --max-workers 8
+huggingface-cli download fal/AuraSR --local-dir aurasr --max-workers 8
 echo "==> AuraSR installed successfully"
 `,
 	"supir": `#!/bin/bash
@@ -1814,7 +1317,7 @@ set -e
 echo "==> Installing SUPIR for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download Kijai/SUPIR_pruned --local-dir supir --max-workers 8
+huggingface-cli download Kijai/SUPIR_pruned --local-dir supir --max-workers 8
 echo "==> SUPIR installed successfully"
 `,
 	"rife": `#!/bin/bash
@@ -1825,8 +1328,8 @@ cd ~/ComfyUI/custom_nodes
 if [ ! -d "ComfyUI-Frame-Interpolation" ]; then
     git clone https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git
 fi
-cd ComfyUI-Frame-Interpolation && pip install -r requirements.txt
-python install.py
+cd ComfyUI-Frame-Interpolation && pip3 install -r requirements.txt
+python3 install.py
 echo "==> RIFE installed successfully"
 `,
 	"film": `#!/bin/bash
@@ -1837,8 +1340,8 @@ cd ~/ComfyUI/custom_nodes
 if [ ! -d "ComfyUI-Frame-Interpolation" ]; then
     git clone https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git
 fi
-cd ComfyUI-Frame-Interpolation && pip install -r requirements.txt
-python install.py
+cd ComfyUI-Frame-Interpolation && pip3 install -r requirements.txt
+python3 install.py
 echo "==> FILM installed successfully"
 `,
 	"sd-inpainting": `#!/bin/bash
@@ -1846,7 +1349,7 @@ set -e
 echo "==> Installing SD 1.5 Inpainting for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download runwayml/stable-diffusion-inpainting --local-dir sd-inpainting --max-workers 8
+huggingface-cli download runwayml/stable-diffusion-inpainting --local-dir sd-inpainting --max-workers 8
 echo "==> SD 1.5 Inpainting installed successfully"
 `,
 	"sdxl-inpainting": `#!/bin/bash
@@ -1854,7 +1357,7 @@ set -e
 echo "==> Installing SDXL Inpainting for ComfyUI"
 mkdir -p ~/ComfyUI/models/checkpoints
 cd ~/ComfyUI/models/checkpoints
-hf download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --local-dir sdxl-inpainting --max-workers 8
+huggingface-cli download diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --local-dir sdxl-inpainting --max-workers 8
 echo "==> SDXL Inpainting installed successfully"
 `,
 	"controlnet-canny": `#!/bin/bash
@@ -1862,7 +1365,7 @@ set -e
 echo "==> Installing ControlNet Canny for ComfyUI"
 mkdir -p ~/ComfyUI/models/controlnet
 cd ~/ComfyUI/models/controlnet
-hf download lllyasviel/sd-controlnet-canny --local-dir controlnet-canny --max-workers 8
+huggingface-cli download lllyasviel/sd-controlnet-canny --local-dir controlnet-canny --max-workers 8
 echo "==> ControlNet Canny installed successfully"
 `,
 	"controlnet-depth": `#!/bin/bash
@@ -1870,7 +1373,7 @@ set -e
 echo "==> Installing ControlNet Depth for ComfyUI"
 mkdir -p ~/ComfyUI/models/controlnet
 cd ~/ComfyUI/models/controlnet
-hf download lllyasviel/sd-controlnet-depth --local-dir controlnet-depth --max-workers 8
+huggingface-cli download lllyasviel/sd-controlnet-depth --local-dir controlnet-depth --max-workers 8
 echo "==> ControlNet Depth installed successfully"
 `,
 	"controlnet-openpose": `#!/bin/bash
@@ -1878,7 +1381,7 @@ set -e
 echo "==> Installing ControlNet OpenPose for ComfyUI"
 mkdir -p ~/ComfyUI/models/controlnet
 cd ~/ComfyUI/models/controlnet
-hf download lllyasviel/sd-controlnet-openpose --local-dir controlnet-openpose --max-workers 8
+huggingface-cli download lllyasviel/sd-controlnet-openpose --local-dir controlnet-openpose --max-workers 8
 echo "==> ControlNet OpenPose installed successfully"
 `,
 	"ip-adapter": `#!/bin/bash
@@ -1886,7 +1389,7 @@ set -e
 echo "==> Installing IP-Adapter for ComfyUI"
 mkdir -p ~/ComfyUI/models/ipadapter
 cd ~/ComfyUI/models/ipadapter
-hf download h94/IP-Adapter --local-dir ip-adapter --max-workers 8
+huggingface-cli download h94/IP-Adapter --local-dir ip-adapter --max-workers 8
 echo "==> IP-Adapter installed successfully"
 `,
 	"ip-adapter-faceid": `#!/bin/bash
@@ -1894,7 +1397,7 @@ set -e
 echo "==> Installing IP-Adapter FaceID for ComfyUI"
 mkdir -p ~/ComfyUI/models/ipadapter
 cd ~/ComfyUI/models/ipadapter
-hf download h94/IP-Adapter-FaceID --local-dir ip-adapter-faceid --max-workers 8
+huggingface-cli download h94/IP-Adapter-FaceID --local-dir ip-adapter-faceid --max-workers 8
 echo "==> IP-Adapter FaceID installed successfully"
 `,
 	"instantid": `#!/bin/bash
@@ -1902,913 +1405,8 @@ set -e
 echo "==> Installing InstantID for ComfyUI"
 mkdir -p ~/ComfyUI/models/instantid
 cd ~/ComfyUI/models/instantid
-hf download InstantX/InstantID --local-dir instantid --max-workers 8
+huggingface-cli download InstantX/InstantID --local-dir instantid --max-workers 8
 echo "==> InstantID installed successfully"
-`,
-
-	// =========================================================================
-	// GH200 + Wan 2.2 stack (added — captures tuned May 2026 workflow)
-	// =========================================================================
-
-	"wantorch": `#!/bin/bash
-set -euo pipefail
-echo "==> Installing PyTorch + sage attention into ComfyUI venv (driver-aware)"
-
-VENV="$HOME/ComfyUI/venv"
-if [ ! -x "$VENV/bin/python" ]; then
-    echo "ERROR: $VENV/bin/python not found. Install 'comfyui' first."
-    exit 1
-fi
-
-ARCH=$(uname -m)
-
-# ─── pick torch wheel index from driver-supported CUDA ──────────────
-# We do NOT pin a single CUDA version. Wan 2.2 + sageattention work on
-# any modern PyTorch (>=2.4) with CUDA support; the only constraint is
-# that the wheel must match what the host's NVIDIA driver supports.
-# nvidia-smi reports the maximum CUDA the driver can run; we pick the
-# newest pytorch.org index that fits within it.
-DRIVER_CUDA=""
-if command -v nvidia-smi >/dev/null 2>&1; then
-    DRIVER_CUDA=$(nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ' || true)
-fi
-DRIVER_MAJOR="${DRIVER_CUDA%%.*}"
-DRIVER_MINOR=$(echo "${DRIVER_CUDA#*.}" | cut -d. -f1)
-[ -z "$DRIVER_MAJOR" ] && DRIVER_MAJOR=12
-[ -z "$DRIVER_MINOR" ] && DRIVER_MINOR=8
-
-TORCH_INDEX=""
-PIP_PRE=""
-TORCH_LABEL=""
-case "$DRIVER_MAJOR" in
-    13)
-        TORCH_INDEX="https://download.pytorch.org/whl/nightly/cu130"
-        PIP_PRE="--pre"
-        TORCH_LABEL="cu130 nightly (driver supports CUDA 13.x)"
-        ;;
-    12)
-        if [ "$DRIVER_MINOR" -ge 8 ]; then
-            TORCH_INDEX="https://download.pytorch.org/whl/cu128"
-            TORCH_LABEL="cu128 stable (driver supports CUDA 12.8+)"
-        elif [ "$DRIVER_MINOR" -ge 4 ]; then
-            TORCH_INDEX="https://download.pytorch.org/whl/cu124"
-            TORCH_LABEL="cu124 stable (driver supports CUDA 12.4-12.7)"
-        else
-            TORCH_INDEX="https://download.pytorch.org/whl/cu121"
-            TORCH_LABEL="cu121 stable (driver supports CUDA 12.1-12.3)"
-        fi
-        ;;
-    11)
-        TORCH_INDEX="https://download.pytorch.org/whl/cu118"
-        TORCH_LABEL="cu118 stable (driver supports CUDA 11.x)"
-        ;;
-    *)
-        TORCH_INDEX="https://download.pytorch.org/whl/cu128"
-        TORCH_LABEL="cu128 stable (no driver detected; safe default)"
-        ;;
-esac
-echo "==> arch=$ARCH  driver_cuda=${DRIVER_CUDA:-unknown}  → $TORCH_LABEL"
-
-# Optional override: anyone wanting a specific index can set in env.
-if [ -n "${WAN_TORCH_INDEX:-}" ]; then
-    TORCH_INDEX="$WAN_TORCH_INDEX"
-    PIP_PRE="${WAN_TORCH_PRE:-}"
-    TORCH_LABEL="user-pinned via WAN_TORCH_INDEX=$TORCH_INDEX"
-    echo "==> override: $TORCH_LABEL"
-fi
-
-# ─── skip swap if torch + sage already work ─────────────────────────
-WORKING=$("$VENV/bin/python" - <<'PY' 2>/dev/null || true
-try:
-    import torch, sageattention  # noqa: F401
-    if torch.cuda.is_available():
-        print(f"ok cu{torch.version.cuda}")
-except Exception:
-    pass
-PY
-)
-if [ -n "$WORKING" ] && [ -z "${WAN_TORCH_FORCE:-}" ]; then
-    echo "==> $WORKING — skipping torch swap (set WAN_TORCH_FORCE=1 to override)"
-    "$VENV/bin/pip" show hf_transfer >/dev/null 2>&1 || "$VENV/bin/pip" install -q hf_transfer
-    "$VENV/bin/python" -c "import torch; print(f'torch={torch.__version__}  cuda={torch.version.cuda}  device={torch.cuda.get_device_name(0)}')"
-    exit 0
-fi
-
-echo "==> Installing torch from $TORCH_INDEX (drops in ~3GB of wheels)"
-"$VENV/bin/pip" install $PIP_PRE --upgrade --force-reinstall \
-    torch torchvision torchaudio \
-    --index-url "$TORCH_INDEX"
-
-echo "==> Installing hf_transfer (fast HF downloads) and sageattention"
-"$VENV/bin/pip" install -q hf_transfer sageattention
-
-# Verify
-"$VENV/bin/python" - <<'PY'
-import torch
-assert torch.cuda.is_available(), "CUDA not available after install"
-print(f"torch={torch.__version__}  cuda={torch.version.cuda}  device={torch.cuda.get_device_name(0)}")
-try:
-    from importlib.metadata import version as _v
-    print(f"sageattention={_v('sageattention')}")
-except Exception:
-    import sageattention as _s  # noqa: F401
-    print("sageattention=installed")
-PY
-
-echo ""
-echo "==> Done. Start ComfyUI with sage attention engaged:"
-echo "    cd ~/ComfyUI && ./venv/bin/python main.py --listen --use-sage-attention"
-`,
-
-	"wannodes": `#!/bin/bash
-set -euo pipefail
-echo "==> Installing Kijai's Wan custom-node stack into ComfyUI"
-
-VENV="$HOME/ComfyUI/venv"
-NODES="$HOME/ComfyUI/custom_nodes"
-
-if [ ! -d "$HOME/ComfyUI" ]; then
-    echo "ERROR: ~/ComfyUI not found. Install 'comfyui' first."
-    exit 1
-fi
-mkdir -p "$NODES"
-
-clone_or_pull() {
-    local url=$1 name=$2
-    if [ -d "$NODES/$name/.git" ]; then
-        echo "==> $name already cloned, pulling latest"
-        git -C "$NODES/$name" pull --ff-only
-    else
-        echo "==> Cloning $name"
-        git clone --depth 1 "$url" "$NODES/$name"
-    fi
-}
-
-clone_or_pull https://github.com/kijai/ComfyUI-WanVideoWrapper.git ComfyUI-WanVideoWrapper
-clone_or_pull https://github.com/kijai/ComfyUI-KJNodes.git           ComfyUI-KJNodes
-clone_or_pull https://github.com/Comfy-Org/ComfyUI-Manager.git       ComfyUI-Manager
-
-echo "==> Installing custom-node Python deps (skipping numpy/torchcodec pins to avoid downgrades)"
-"$VENV/bin/pip" install -q \
-    ftfy "accelerate>=1.2.1" einops "diffusers>=0.33.0" "peft>=0.17.0" \
-    "sentencepiece>=0.2.0" protobuf pyloudnorm "gguf>=0.17.1" \
-    opencv-python-headless scipy color-matcher matplotlib mss \
-    GitPython PyGithub typer rich toml uv chardet "transformers>=4.50.3"
-
-# Drop in the no-LoRA max-quality T2V workflow if we have it embedded
-WF_DIR="$HOME/ComfyUI/user/default/workflows"
-mkdir -p "$WF_DIR"
-WF_FILE="$WF_DIR/Wan2.2_14B_T2V_NoLoRA_MaxQuality.json"
-if [ ! -f "$WF_FILE" ]; then
-    cat >"$WF_FILE" <<'WFEOF'
-{"placeholder":true,"note":"Run gh200-wan-full to install the full workflow JSON, or copy from anime/cli/embedded/workflows/."}
-WFEOF
-fi
-
-echo "==> Custom-node stack installed. Restart ComfyUI to load."
-`,
-
-	"wanmodels": `#!/bin/bash
-set -euo pipefail
-
-# WAN_INSTALL_LEVEL controls how much we pull. Set by anime wan studio
-# --minimal | --standard | --full (default: full). Higher levels are supersets.
-LEVEL="${WAN_INSTALL_LEVEL:-full}"
-case "$LEVEL" in
-    minimal)  echo "==> Downloading Wan 2.2 minimal set: 5B TI2V + encoder + VAE  (~20GB, fits 12GB VRAM)" ;;
-    standard) echo "==> Downloading Wan 2.2 standard set: 14B T2V dual-expert + 4-step LoRAs + encoder + VAE  (~35GB, fits 24GB VRAM)" ;;
-    full)     echo "==> Downloading Wan 2.2 full set: T2V+I2V dual-expert + 5B + LoRAs + encoders + VAEs  (~85GB, fits 48GB+ VRAM)" ;;
-    *)        echo "ERROR: unknown WAN_INSTALL_LEVEL=$LEVEL (expected: minimal|standard|full)"; exit 1 ;;
-esac
-
-VENV="$HOME/ComfyUI/venv"
-MODELS="$HOME/ComfyUI/models"
-
-if [ ! -d "$HOME/ComfyUI" ]; then
-    echo "ERROR: ~/ComfyUI not found. Install 'comfyui' first."
-    exit 1
-fi
-mkdir -p "$MODELS/diffusion_models" "$MODELS/text_encoders" "$MODELS/vae" "$MODELS/loras"
-
-# hf_transfer dramatically speeds up large downloads; install if missing
-"$VENV/bin/pip" show hf_transfer >/dev/null 2>&1 || "$VENV/bin/pip" install -q hf_transfer
-
-export HF_HUB_ENABLE_HF_TRANSFER=1
-# Pass HF_TOKEN through if we have one (embedded or env). Auth avoids
-# rate limits and makes downloads more reliable.
-if [ -z "${HF_TOKEN:-}" ] && command -v anime >/dev/null 2>&1; then
-    EMBEDDED_HF=$(anime embed token list 2>/dev/null | grep -i 'hf:' | awk '{print $2}' || true)
-    [ -n "$EMBEDDED_HF" ] && export HF_TOKEN="$EMBEDDED_HF"
-fi
-export HF_TOKEN="${HF_TOKEN:-}"
-
-# Each (repo, file_in_repo, dest_subdir, levels) — flatten to dest_subdir/<basename>.
-# 'levels' is a comma-separated list of which install levels include this file.
-"$VENV/bin/python" - <<'PY'
-import os, shutil, sys, time
-from pathlib import Path
-from huggingface_hub import hf_hub_download
-from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError, HfHubHTTPError
-
-LEVEL = os.environ.get("WAN_INSTALL_LEVEL", "full")
-ROOT = Path(os.path.expanduser("~/ComfyUI/models"))
-TOKEN = os.environ.get("HF_TOKEN") or None
-
-# (repo, file_in_repo, dest_subdir, set_of_levels_that_need_it)
-ITEMS = [
-    # Wan 2.2 dual-expert T2V (standard + full)
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models", {"standard", "full"}),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models", {"standard", "full"}),
-    # Wan 2.2 dual-expert I2V (full only — saves ~30GB on standard)
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", "diffusion_models", {"full"}),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",  "diffusion_models", {"full"}),
-    # Wan 2.2 TI2V 5B (minimal + full — small/fast model for low-VRAM hosts)
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "diffusion_models", {"minimal", "full"}),
-    # 4-step lightx2v LoRAs — required for 14B "fast" preset (standard + full)
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors", "loras", {"standard", "full"}),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",  "loras", {"standard", "full"}),
-    # Text encoder — every level needs it
-    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "text_encoders", {"minimal", "standard", "full"}),
-    # VAEs: 14B uses wan_2.1; 5B uses wan2.2.
-    ("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/vae/wan_2.1_vae.safetensors", "vae", {"standard", "full"}),
-    ("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan2.2_vae.safetensors", "vae", {"minimal", "full"}),
-]
-
-selected = [(r, f, s) for (r, f, s, levels) in ITEMS if LEVEL in levels]
-print(f"==> level={LEVEL}  pulling {len(selected)} files (skips already-on-disk)\n", flush=True)
-
-for repo, fname, sub in selected:
-    dest_dir = ROOT / sub
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    target = dest_dir / Path(fname).name
-    if target.exists() and target.stat().st_size > 0:
-        print(f"SKIP  {target.name} ({target.stat().st_size/1024/1024:.0f}MB)")
-        continue
-    print(f"PULL  {target.name}", flush=True)
-    t0 = time.time()
-    try:
-        p = hf_hub_download(repo_id=repo, filename=fname, local_dir=str(dest_dir), token=TOKEN)
-    except GatedRepoError:
-        print(f"ERROR: {repo} is gated. Run: hf login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
-        sys.exit(2)
-    except RepositoryNotFoundError:
-        print(f"ERROR: {repo} not found (was it renamed?)", file=sys.stderr)
-        sys.exit(2)
-    except HfHubHTTPError as e:
-        if "401" in str(e) or "403" in str(e):
-            print(f"ERROR: HF auth required for {repo}/{fname}. Run: hf login  (or export HF_TOKEN=hf_...)", file=sys.stderr)
-        else:
-            print(f"ERROR: HF download failed for {repo}/{fname}: {e}", file=sys.stderr)
-        sys.exit(2)
-    src = Path(p)
-    if src != target:
-        shutil.move(str(src), str(target))
-        # cleanup nested split_files dir if empty
-        nest = dest_dir / "split_files"
-        if nest.exists():
-            shutil.rmtree(nest, ignore_errors=True)
-    sz = target.stat().st_size / (1024**3)
-    print(f"  done  {sz:.1f}GB in {time.time()-t0:.1f}s")
-
-print("ALL_DONE")
-PY
-
-echo ""
-echo "==> Wan 2.2 $LEVEL set landed in ~/ComfyUI/models/. Restart ComfyUI to see them in node dropdowns."
-`,
-
-	"wan": `#!/bin/bash
-set -euo pipefail
-echo "==> GH200 + Wan 2.2 full setup — meta-package"
-echo ""
-echo "Dependencies (pytorch-gh200, comfyui-wan-stack, wan2.2-full) install first."
-echo "This step just verifies the stack and writes the no-LoRA max-quality workflow."
-echo ""
-
-VENV="$HOME/ComfyUI/venv"
-
-# Sanity check
-"$VENV/bin/python" - <<'PY'
-import torch
-print(f"torch          {torch.__version__}  cuda={torch.version.cuda}")
-try:
-    from importlib.metadata import version as _v
-    print(f"sage attention {_v('sageattention')}")
-except Exception:
-    import sageattention as _s  # noqa: F401
-    print("sage attention installed")
-print(f"device         {torch.cuda.get_device_name(0)}")
-PY
-
-# Drop the canonical no-LoRA max-quality workflow into user workflows
-WF_DIR="$HOME/ComfyUI/user/default/workflows"
-mkdir -p "$WF_DIR"
-WF_FILE="$WF_DIR/Wan2.2_14B_T2V_NoLoRA_MaxQuality.json"
-if [ -f "$WF_FILE" ] && [ "$(wc -c <"$WF_FILE")" -gt 1000 ]; then
-    echo "==> workflow already present at $WF_FILE"
-else
-    echo "==> Note: full workflow JSON ships in anime/cli/embedded/workflows/."
-    echo "    Copy it manually if not auto-installed:"
-    echo "    cp \$ANIME_REPO/cli/embedded/workflows/Wan2.2_14B_T2V_NoLoRA_MaxQuality.json $WF_FILE"
-fi
-
-echo ""
-
-# Verify Comfort is running
-COMFORT_UI="$HOME/Comfort/comfort-ui"
-if [ -d "$COMFORT_UI/dist" ]; then
-    if screen -list 2>/dev/null | grep -q comfort; then
-        echo "==> Comfort running on :3000"
-    else
-        echo "==> Starting Comfort on :3000..."
-        screen -dmS comfort bash -c "cd $COMFORT_UI && npx serve dist -l 3000"
-    fi
-else
-    echo "==> Comfort not found — run: anime install comfort"
-fi
-echo ""
-`,
-
-	"comfort": `#!/bin/bash
-set -euo pipefail
-echo "==> Installing Comfort — Wan T2V Atelier UI"
-
-# ─── ensure node + npm ────────────────────────────────────────────
-# Lambda Stack / GH200 / fresh Ubuntu images do not ship a Node
-# runtime. Rather than fail loud and force the user to discover the
-# 'nodejs' package, we install Node 20 LTS via NodeSource here. The
-# studio bootstrap is meant to be a single command end-to-end.
-if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    echo "==> node/npm missing — installing Node 20 LTS via NodeSource"
-    if [ "$(id -u)" -eq 0 ]; then
-        SUDO=""
-    else
-        sudo -n true 2>/dev/null || { echo "ERROR: need sudo to install nodejs"; exit 1; }
-        SUDO="sudo"
-    fi
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -y
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates
-    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash -
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nodejs
-    echo "==> node $(node --version) / npm $(npm --version) installed"
-fi
-
-REPO="$HOME/Comfort"
-UI="$REPO/comfort-ui"
-GH_REPO="quivent/comfort"
-
-# ─── clone the Comfort repo ───────────────────────────────────────
-# The repo is currently PRIVATE under quivent/, so a bare HTTPS clone
-# fails (and on a TTY git prompts for username/password forever — the
-# "Password authentication is not supported" cul-de-sac). We try
-# multiple credential paths in order and never let git prompt.
-clone_comfort() {
-    local target="$1"
-    # GIT_TERMINAL_PROMPT=0 makes git fail fast instead of asking for
-    # credentials interactively; if our auto-detection is wrong we want
-    # a clean error, not a hang.
-    export GIT_TERMINAL_PROMPT=0
-
-    # 1. SSH key with github.com access (most common dev-box setup).
-    #    Probe with -T to confirm the key authenticates, then clone.
-    if ssh -T -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new git@github.com 2>&1 | grep -q "successfully authenticated"; then
-        echo "==> trying SSH (your ~/.ssh key authenticates against github.com)"
-        if GIT_SSH_COMMAND="ssh -o BatchMode=yes" git clone --depth 1 "git@github.com:${GH_REPO}.git" "$target" 2>&1; then
-            return 0
-        fi
-        echo "    SSH clone failed (key may not have access to ${GH_REPO})"
-    fi
-
-    # 2. gh CLI is logged in (also common — Lambda images often have it).
-    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        local user="$(gh api user --jq .login 2>/dev/null || echo authenticated)"
-        echo "==> trying gh CLI (logged in as $user)"
-        if gh repo clone "$GH_REPO" "$target" -- --depth 1 2>&1; then
-            [ -d "$target/.git" ] && return 0
-        fi
-    fi
-
-    # 3. HTTPS with a personal access token from env (CI-friendly).
-    local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-    if [ -n "$tok" ]; then
-        echo "==> trying HTTPS with GH_TOKEN/GITHUB_TOKEN"
-        if git clone --depth 1 "https://x-access-token:${tok}@github.com/${GH_REPO}.git" "$target" 2>&1; then
-            return 0
-        fi
-    fi
-
-    # 4. Anonymous HTTPS — only succeeds if the repo becomes public.
-    echo "==> trying anonymous HTTPS (works only if ${GH_REPO} is public)"
-    if git clone --depth 1 "https://github.com/${GH_REPO}.git" "$target" 2>&1; then
-        return 0
-    fi
-
-    cat >&2 <<HELP
-
-ERROR: could not clone github.com/${GH_REPO} via any of:
-       SSH key, gh CLI, GH_TOKEN env, anonymous HTTPS.
-
-       quivent/comfort is private. Easiest fix is one command:
-
-           anime gh login
-
-       That walks you through gh auth (web flow), generates an SSH
-       key if you don't have one, uploads it to GitHub, and verifies
-       access. Then re-run:
-
-           anime wan studio --yes
-
-       Alternatives if you'd rather not use anime gh login:
-         • Run gh auth login yourself, then add SSH key:
-             gh auth login --git-protocol ssh --web
-             gh ssh-key add ~/.ssh/id_ed25519.pub --title "\$(hostname)"
-         • Export a PAT with repo scope:
-             export GH_TOKEN=ghp_...
-
-HELP
-    return 1
-}
-
-# Clone or update the Comfort repo
-if [ -d "$REPO/.git" ]; then
-    echo "==> $REPO already cloned, pulling latest"
-    GIT_TERMINAL_PROMPT=0 git -C "$REPO" pull --ff-only 2>&1 || echo "WARN: pull failed, continuing with current tree"
-else
-    echo "==> Cloning github.com/${GH_REPO} to $REPO"
-    clone_comfort "$REPO" || exit 1
-fi
-
-if [ ! -d "$UI" ]; then
-    echo "ERROR: $UI missing — repo layout changed?"
-    exit 1
-fi
-
-cd "$UI"
-
-# Install + build the UI. Prefer ci (lockfile-respecting) when a lock is present.
-if [ -f package-lock.json ]; then
-    echo "==> npm ci"
-    npm ci --no-audit --no-fund
-else
-    echo "==> npm install"
-    npm install --no-audit --no-fund
-fi
-
-echo "==> npm run build"
-npm run build
-
-if [ ! -d dist ]; then
-    echo "ERROR: build did not produce dist/ — check build output above"
-    exit 1
-fi
-
-# Drop a tiny launch hint at ~/.anime/comfort-path so the Go side can find it
-mkdir -p "$HOME/.anime"
-echo "$UI" > "$HOME/.anime/comfort-path"
-
-echo ""
-echo "==> Comfort installed at $UI"
-echo "==> dist/ ready ($(du -sh dist | cut -f1))"
-echo ""
-
-# Start Comfort
-echo "==> Starting Comfort on :3000..."
-if screen -list 2>/dev/null | grep -q comfort; then
-    screen -S comfort -X quit 2>/dev/null || true
-fi
-screen -dmS comfort bash -c "cd $UI && npx serve dist -l 3000"
-echo "    Comfort running on :3000 (screen -r comfort)"
-`,
-
-	"domain": `#!/bin/bash
-set -euo pipefail
-
-DOMAIN="comfort.producer.cafe"
-
-echo "==> Domain + SSL setup for $DOMAIN"
-echo ""
-
-# Step 1: Detect public IP
-echo "==> Detecting public IP..."
-MY_IP=$(curl -s --max-time 10 ifconfig.me || true)
-if [ -z "$MY_IP" ]; then
-    MY_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-fi
-if [ -z "$MY_IP" ]; then
-    echo "ERROR: could not detect public IP"
-    echo "  Run manually: anime dns point $DOMAIN <your-ip> --ssl"
-    exit 1
-fi
-echo "    Public IP: $MY_IP"
-echo ""
-
-# Step 2: Verify Comfort studio is reachable
-echo "==> Checking Comfort studio..."
-if curl -s --max-time 5 http://127.0.0.1:5180 >/dev/null 2>&1; then
-    echo "    Comfort responding on :5180"
-elif curl -s --max-time 5 http://127.0.0.1:5173 >/dev/null 2>&1; then
-    echo "    Comfort dev responding on :5173"
-else
-    echo "    WARNING: Comfort not responding on :5180 or :5173"
-    echo "    Start it first: anime wan studio --public --port 5180"
-fi
-echo ""
-
-# Step 3: Check dns config exists
-echo "==> Checking DNS credentials..."
-if [ ! -f "$HOME/.dns-config.json" ]; then
-    echo "ERROR: ~/.dns-config.json not found"
-    echo ""
-    echo "  Create it with your Vercel API token:"
-    echo "    echo '{\"token\": \"your-vercel-token\", \"teamId\": \"your-team-id\"}' > ~/.dns-config.json"
-    echo ""
-    echo "  Get a token at: https://vercel.com/account/tokens"
-    echo "  Then retry: anime install domain"
-    exit 1
-fi
-echo "    Credentials found"
-echo ""
-
-# Step 4: Point DNS (no SSL yet)
-echo "==> Pointing $DOMAIN → $MY_IP..."
-echo ""
-anime dns point "$DOMAIN" "$MY_IP"
-echo ""
-
-# Step 5: Install nginx + certbot locally (we're already on the server)
-echo "==> Installing nginx + certbot..."
-if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
-$SUDO apt-get update -y -qq
-$SUDO apt-get install -y -qq nginx certbot python3-certbot-nginx
-
-echo "==> Configuring nginx reverse proxy for $DOMAIN → Comfort dev server..."
-
-# Detect Comfort dev port: Vite defaults to 5173, studio defaults to 5180
-COMFORT_PORT=5173
-if curl -s --max-time 2 http://127.0.0.1:5180 >/dev/null 2>&1; then
-    COMFORT_PORT=5180
-fi
-
-cat <<NGINX | $SUDO tee /etc/nginx/sites-available/comfort >/dev/null
-server {
-    listen 80;
-    server_name $DOMAIN;
-
-    location / {
-        proxy_pass http://127.0.0.1:$COMFORT_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-    }
-}
-NGINX
-
-$SUDO ln -sf /etc/nginx/sites-available/comfort /etc/nginx/sites-enabled/comfort
-$SUDO rm -f /etc/nginx/sites-enabled/default
-$SUDO nginx -t && $SUDO systemctl reload nginx
-echo "    nginx configured → :$COMFORT_PORT"
-
-echo "==> Requesting Let's Encrypt certificate..."
-$SUDO certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect
-echo "    SSL certificate issued"
-
-$SUDO systemctl enable certbot.timer 2>/dev/null || true
-
-echo ""
-echo "============================================"
-echo ""
-echo "  https://$DOMAIN"
-echo ""
-echo "============================================"
-`,
-
-	// =========================================================================
-	// Llama inference stack — vLLM + speculative decoding on GH200
-	// =========================================================================
-	"llamamodels": `#!/bin/bash
-set -euo pipefail
-echo "==> Downloading Llama models for vLLM speculative decoding"
-
-# ── idempotency: skip if both models are already cached ───────
-BOTH_CACHED=$(python3 -c "
-from huggingface_hub import snapshot_download
-ok = 0
-for m in ['hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', 'meta-llama/Llama-3.2-1B-Instruct']:
-    try:
-        snapshot_download(m, local_files_only=True)
-        ok += 1
-    except: pass
-print(ok)
-" 2>/dev/null || echo "0")
-
-if [ "$BOTH_CACHED" = "2" ]; then
-    echo "    ✓ Llama 70B AWQ INT4 already cached"
-    echo "    ✓ Llama 3.2 1B-Instruct already cached"
-    exit 0
-fi
-
-# ─── ensure PATH includes ~/.local/bin (pip --user installs go here) ─
-export PATH="$HOME/.local/bin:$PATH"
-
-# ─── ensure hf + hf_transfer ─────────────────────────
-if ! command -v hf >/dev/null 2>&1; then
-    echo "==> Installing hf + hf_transfer..."
-    pip3 install -q huggingface_hub hf_transfer
-fi
-
-# Enable fast multi-connection downloads
-export HF_HUB_ENABLE_HF_TRANSFER=1
-
-# ─── HuggingFace auth ─────────────────────────────────────────────
-# Llama models are gated — a valid HF token with Meta approval is required.
-if [ -z "${HF_TOKEN:-}" ]; then
-    # Check if already logged in
-    if ! hf whoami >/dev/null 2>&1; then
-        echo ""
-        echo "ERROR: Llama models require HuggingFace authentication."
-        echo ""
-        echo "  1. Accept the license at:"
-        echo "     https://huggingface.co/hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
-        echo "     https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct"
-        echo ""
-        echo "  2. Set your token:"
-        echo "     export HF_TOKEN=hf_..."
-        echo "     or: hf login"
-        echo ""
-        echo "  Then retry: anime install llama"
-        exit 1
-    fi
-    echo "==> HuggingFace: logged in (cached credentials)"
-else
-    echo "==> HuggingFace: using HF_TOKEN"
-fi
-
-MODEL_DIR="${HF_HOME:-$HOME/.cache/huggingface}/hub"
-echo "==> Model cache: $MODEL_DIR"
-echo ""
-
-# ─── Download Llama 70B AWQ INT4 (target model, ~36GB) ────────────
-echo "==> [1/2] Downloading hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4..."
-echo "    AWQ INT4 quantized (~36GB) — fits on single GH200 with spec decode"
-echo ""
-python3 -c "
-from huggingface_hub import snapshot_download
-import os
-snapshot_download('hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', token=os.environ.get('HF_TOKEN'))
-print('    done')
-"
-echo "    ✓ Llama 70B AWQ INT4 downloaded"
-echo ""
-
-# ─── Download Llama 3.2 1B-Instruct (spec decode draft) ──────────
-echo "==> [2/2] Downloading meta-llama/Llama-3.2-1B-Instruct..."
-python3 -c "
-from huggingface_hub import snapshot_download
-import os
-snapshot_download('meta-llama/Llama-3.2-1B-Instruct', token=os.environ.get('HF_TOKEN'))
-print('    done')
-"
-echo "    ✓ Llama 3.2 1B-Instruct downloaded"
-echo ""
-
-echo "==> Both models downloaded successfully"
-`,
-
-	"llamaserve": `#!/bin/bash
-set -euo pipefail
-echo "==> Starting vLLM with Llama 3.3 70B + speculative decoding"
-
-# ── idempotency: skip if server is already running and healthy ─
-if curl -s http://localhost:8000/health >/dev/null 2>&1; then
-    echo "    ✓ vLLM server already running on :8000"
-    MODELS=$(curl -s http://localhost:8000/v1/models 2>/dev/null | python3 -c "
-import json, sys
-r = json.load(sys.stdin)
-for m in r.get('data', []): print(f'      {m[\"id\"]}')
-" 2>/dev/null || true)
-    if [ -n "$MODELS" ]; then
-        echo "    Models loaded:"
-        echo "$MODELS"
-    fi
-    exit 0
-fi
-
-# ─── verify vLLM is installed ─────────────────────────────────────
-if ! python3 -c "import vllm" 2>/dev/null; then
-    echo "ERROR: vLLM not installed. Run: anime install vllm"
-    exit 1
-fi
-VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)")
-echo "    vLLM $VLLM_VERSION"
-
-# ─── verify GPU ───────────────────────────────────────────────────
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-    echo "ERROR: nvidia-smi not found. GPU required."
-    exit 1
-fi
-
-GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
-GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
-GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
-echo "    GPU: $GPU_NAME (${GPU_MEM}MB) x${GPU_COUNT}"
-
-# ─── verify models are cached ────────────────────────────────────
-echo "==> Verifying model files..."
-export HF_HUB_ENABLE_HF_TRANSFER=1
-python3 -c "
-from huggingface_hub import snapshot_download
-import os, sys
-
-for model in ['hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', 'meta-llama/Llama-3.2-1B-Instruct']:
-    try:
-        path = snapshot_download(model, local_files_only=True)
-        print(f'    ✓ {model} → {path}')
-    except Exception as e:
-        print(f'    ✗ {model} not cached: {e}')
-        print(f'      Run: anime install llamamodels')
-        sys.exit(1)
-"
-
-# ─── kill existing vllm if running ────────────────────────────────
-if screen -list 2>/dev/null | grep -q vllm-llama; then
-    echo "==> Stopping existing vLLM screen session..."
-    screen -S vllm-llama -X quit 2>/dev/null || true
-    sleep 3
-fi
-
-# ─── determine tensor parallel size ──────────────────────────────
-TP_SIZE=1
-if [ "$GPU_COUNT" -gt 1 ]; then
-    TP_SIZE=$GPU_COUNT
-    echo "    Tensor parallel: $TP_SIZE GPUs"
-fi
-
-# ─── start vLLM with speculative decoding ─────────────────────────
-PORT=8000
-echo ""
-echo "==> Launching vLLM server..."
-echo "    Target model: hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
-echo "    Draft model:  meta-llama/Llama-3.2-1B-Instruct (spec decode)"
-echo "    Port:         $PORT"
-echo ""
-
-# AWQ INT4 model (~36GB) — fits any ≥48GB GPU with room for 32K context
-screen -dmS vllm-llama bash -c "
-    export HF_TOKEN='${HF_TOKEN:-}'
-    export VLLM_USE_DEEP_GEMM=0
-    python3 -m vllm.entrypoints.openai.api_server \
-        --model hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4 \
-        --quantization awq \
-        --tensor-parallel-size $TP_SIZE \
-        --max-model-len 32768 \
-        --gpu-memory-utilization 0.90 \
-        --host 0.0.0.0 \
-        --port $PORT \
-        --trust-remote-code \
-        --enforce-eager \
-        2>&1 | tee /tmp/vllm-llama.log
-"
-
-# ─── wait for server to be ready ──────────────────────────────────
-echo "==> Waiting for vLLM server to start (loading 70B model)..."
-MAX_WAIT=600
-WAITED=0
-while ! curl -s http://localhost:$PORT/health >/dev/null 2>&1; do
-    if [ $WAITED -ge $MAX_WAIT ]; then
-        echo "    ✗ Server did not start within ${MAX_WAIT}s"
-        echo "    Check logs: screen -r vllm-llama"
-        echo "    Or: cat /tmp/vllm-llama.log"
-        exit 1
-    fi
-    # Show loading progress from log
-    if [ -f /tmp/vllm-llama.log ]; then
-        LAST_LINE=$(tail -1 /tmp/vllm-llama.log 2>/dev/null || true)
-        printf "\r    Loading... (%ds) %s" "$WAITED" "${LAST_LINE:0:60}"
-    else
-        printf "\r    Loading... (%ds)" "$WAITED"
-    fi
-    sleep 5
-    WAITED=$((WAITED + 5))
-done
-echo ""
-echo "    ✓ vLLM server ready (${WAITED}s)"
-echo ""
-
-# ─── test inference ───────────────────────────────────────────────
-echo "==> Running inference test..."
-echo ""
-
-RESPONSE=$(curl -s http://localhost:$PORT/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{
-        "model": "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
-        "messages": [{"role": "user", "content": "What is 2+2? Answer in one word."}],
-        "max_tokens": 32,
-        "temperature": 0
-    }')
-
-# Parse and display response
-python3 -c "
-import json, sys
-r = json.loads('''$RESPONSE''')
-if 'choices' in r:
-    msg = r['choices'][0]['message']['content']
-    usage = r.get('usage', {})
-    prompt_tok = usage.get('prompt_tokens', '?')
-    compl_tok = usage.get('completion_tokens', '?')
-    total_tok = usage.get('total_tokens', '?')
-    print(f'    Response: {msg.strip()}')
-    print(f'    Tokens:   {prompt_tok} prompt + {compl_tok} completion = {total_tok} total')
-    print(f'    ✓ Inference test passed')
-elif 'error' in r:
-    print(f'    ✗ Error: {r[\"error\"][\"message\"]}', file=sys.stderr)
-    sys.exit(1)
-else:
-    print(f'    ✗ Unexpected response: {json.dumps(r)[:200]}', file=sys.stderr)
-    sys.exit(1)
-" || {
-    echo "    ✗ Inference test failed"
-    echo "    Response: $RESPONSE"
-    exit 1
-}
-
-echo ""
-echo "==> vLLM Llama server running"
-echo "    API:   http://localhost:$PORT/v1"
-echo "    Logs:  screen -r vllm-llama"
-echo "    Stop:  screen -S vllm-llama -X quit"
-`,
-
-	"llama": `#!/bin/bash
-set -euo pipefail
-echo "==> Llama inference stack — verification"
-echo ""
-
-# ─── verify GPU ───────────────────────────────────────────────────
-GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
-GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "0")
-echo "    GPU:    $GPU_NAME (${GPU_MEM}MB)"
-
-# ─── verify vLLM ──────────────────────────────────────────────────
-VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "NOT INSTALLED")
-echo "    vLLM:   $VLLM_VERSION"
-
-# ─── verify PyTorch CUDA ──────────────────────────────────────────
-TORCH_INFO=$(python3 -c "import torch; print(f'{torch.__version__} cuda={torch.version.cuda} avail={torch.cuda.is_available()}')" 2>/dev/null || echo "NOT INSTALLED")
-echo "    torch:  $TORCH_INFO"
-
-# ─── verify models ────────────────────────────────────────────────
-python3 -c "
-from huggingface_hub import snapshot_download
-for m in ['hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4', 'meta-llama/Llama-3.2-1B-Instruct']:
-    try:
-        p = snapshot_download(m, local_files_only=True)
-        print(f'    model:  {m.split(\"/\")[1]} ✓')
-    except:
-        print(f'    model:  {m.split(\"/\")[1]} ✗ (not cached)')
-" 2>/dev/null || echo "    models: could not verify"
-
-# ─── verify server ────────────────────────────────────────────────
-if curl -s http://localhost:8000/health >/dev/null 2>&1; then
-    echo "    server: running on :8000 ✓"
-
-    # Quick model info
-    MODELS=$(curl -s http://localhost:8000/v1/models | python3 -c "
-import json, sys
-r = json.load(sys.stdin)
-for m in r.get('data', []):
-    print(f'            {m[\"id\"]}')
-" 2>/dev/null || true)
-    if [ -n "$MODELS" ]; then
-        echo "    models loaded:"
-        echo "$MODELS"
-    fi
-else
-    echo "    server: not running"
-    echo ""
-    echo "    Start with:"
-    echo "      screen -r vllm-llama   # if screen exists"
-    echo "      anime vllm start llama-70b --spec-model meta-llama/Llama-3.2-1B-Instruct"
-fi
-
-echo ""
-echo "============================================"
-echo ""
-echo "  Llama 3.3 70B + 1B spec decode on vLLM"
-echo "  API: http://localhost:8000/v1"
-echo ""
-echo "  Test:"
-echo "    curl http://localhost:8000/v1/chat/completions \\"
-echo "      -H 'Content-Type: application/json' \\"
-echo "      -d '{\"model\":\"hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}'"
-echo ""
-echo "============================================"
 `,
 }
 

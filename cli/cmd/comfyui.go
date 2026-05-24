@@ -9,43 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joshkornreich/anime/internal/gpu"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
 var comfyuiCmd = &cobra.Command{
 	Use:   "comfyui <start|stop|status|logs>",
-	Short: "Manage the ComfyUI render engine (used by anime wan studio)",
-	Long: `Manage the ComfyUI render engine — the Python service on :8188 that
-actually executes Wan 2.2 workflows. The Comfort web studio (anime wan studio)
-talks to this engine over /api and /ws; you usually don't run anime comfyui
-directly unless you're debugging.`,
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) != 1 {
-			fmt.Println()
-			fmt.Println(theme.ErrorStyle.Render("Action required"))
-			fmt.Println()
-			fmt.Println(theme.InfoStyle.Render("Usage:"))
-			fmt.Println(theme.HighlightStyle.Render("  anime comfyui <action>"))
-			fmt.Println()
-			fmt.Println(theme.InfoStyle.Render("Available Actions:"))
-			fmt.Println(theme.DimTextStyle.Render("  start   - Start render engine in background"))
-			fmt.Println(theme.DimTextStyle.Render("  stop    - Stop render engine"))
-			fmt.Println(theme.DimTextStyle.Render("  status  - Show engine status and health"))
-			fmt.Println(theme.DimTextStyle.Render("  logs    - View engine logs"))
-			fmt.Println()
-			fmt.Println(theme.InfoStyle.Render("Examples:"))
-			fmt.Println(theme.HighlightStyle.Render("  anime comfyui start"))
-			fmt.Println(theme.HighlightStyle.Render("  anime comfyui status"))
-			fmt.Println()
-			fmt.Println(theme.DimTextStyle.Render("Most users want: anime wan studio  (the Comfort web UI)"))
-			fmt.Println()
-			return fmt.Errorf("comfyui requires an action (start|stop|status|logs)")
-		}
-		return nil
-	},
-	RunE: runComfyUICommand,
+	Short: "Manage ComfyUI server",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runComfyUICommand,
 }
 
 func init() {
@@ -70,64 +42,11 @@ func runComfyUICommand(cmd *cobra.Command, args []string) error {
 }
 
 func startComfyUIServer() error {
-	fmt.Println(theme.InfoStyle.Render("🚀 Starting render engine in background..."))
+	fmt.Println(theme.InfoStyle.Render("🚀 Starting ComfyUI in background..."))
 
-	// Pick the venv python (where torch cu130 + sageattention live) when it
-	// exists; fall back to system python3 only if the venv is missing — that
-	// case will probably crash on `import torch`, but at least we don't
-	// silently mask the user's broken install behind a system python that
-	// happens to have a different (wrong) torch.
-	home, _ := os.UserHomeDir()
-	venvPy := filepath.Join(home, "ComfyUI", "venv", "bin", "python")
-	pyCmd := "python3"
-	sageInstalled := false
-	if _, err := os.Stat(venvPy); err == nil {
-		pyCmd = "./venv/bin/python"
-		sageInstalled = detectSageInstalled()
-	}
-	// AutoTune adds the right env + flags for this host (sage backend if
-	// installed, --reserve-vram on big iron, --lowvram on tight boxes,
-	// PYTORCH_CUDA_ALLOC_CONF / TF32 / lazy CUDA module loading).
-	tuning := AutoTuneComfyUI(gpu.GetSystemInfo(), sageInstalled)
-
-	// Ensure ~/.anime exists before tee writes into it. tee creates the file
-	// but not the parent dir, so a fresh box that hits `anime comfyui start`
-	// before any other CLI command would otherwise fail the log pipe.
-	animeDir := filepath.Join(home, ".anime")
-	_ = os.MkdirAll(animeDir, 0o755)
-	logPath := filepath.Join(animeDir, "comfyui.log")
-
-	// Build a tiny launch script: env vars exported, then exec the python.
-	// We export inside the screen-launched bash so the env actually applies
-	// to ComfyUI rather than just our orchestrator.
-	var sb strings.Builder
-	sb.WriteString("cd ~/ComfyUI && ")
-	for _, kv := range tuning.EnvLines() {
-		sb.WriteString("export ")
-		sb.WriteString(kv)
-		sb.WriteString(" && ")
-	}
-	sb.WriteString("exec ")
-	sb.WriteString(pyCmd)
-	sb.WriteString(" main.py --listen")
-	for _, f := range tuning.Flags {
-		sb.WriteString(" ")
-		sb.WriteString(f)
-	}
-	sb.WriteString(" 2>&1 | tee -a ")
-	sb.WriteString(logPath)
-	launch := sb.String()
-
-	// Show the user what we just decided. The studio's --check view dumps
-	// the same info — this is the inline "I'm starting it now" version.
-	fmt.Println(theme.DimTextStyle.Render("  Tuning:"))
-	for _, n := range tuning.Notes {
-		fmt.Println(theme.DimTextStyle.Render("    · " + n))
-	}
-
-	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", launch)
+	cmd := exec.Command("screen", "-dmS", "comfyui", "bash", "-c", "cd ~/ComfyUI && python3 main.py --listen")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start render engine: %w", err)
+		return fmt.Errorf("failed to start ComfyUI: %w", err)
 	}
 
 	// Wait a moment and check if it started
@@ -139,27 +58,32 @@ func startComfyUIServer() error {
 	fmt.Println()
 	fmt.Println()
 
-	fmt.Println(theme.SuccessStyle.Render("✓ Render engine started"))
+	publicIP := getPublicIPForComfyUI()
+	fmt.Println(theme.SuccessStyle.Render(fmt.Sprintf("✓ ComfyUI started at http://%s:8188", publicIP)))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("View logs:    anime comfyui logs"))
+	fmt.Println(theme.DimTextStyle.Render("Check status: anime comfyui status"))
+	fmt.Println(theme.DimTextStyle.Render("Stop server:  anime comfyui stop"))
 	fmt.Println()
 
 	return nil
 }
 
 func stopComfyUIServer() error {
-	fmt.Println(theme.InfoStyle.Render("🛑 Stopping render engine..."))
+	fmt.Println(theme.InfoStyle.Render("🛑 Stopping ComfyUI..."))
 
 	cmd := exec.Command("screen", "-S", "comfyui", "-X", "quit")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to stop render engine: %w", err)
+		return fmt.Errorf("failed to stop ComfyUI: %w", err)
 	}
 
-	fmt.Println(theme.SuccessStyle.Render("✓ Render engine stopped"))
+	fmt.Println(theme.SuccessStyle.Render("✓ ComfyUI stopped"))
 	return nil
 }
 
 func statusComfyUIServer() error {
 	fmt.Println()
-	fmt.Println(theme.RenderBanner("🎨 RENDER ENGINE STATUS"))
+	fmt.Println(theme.RenderBanner("🎨 COMFYUI STATUS"))
 	fmt.Println()
 
 	// 1. Check if ComfyUI directory exists
@@ -338,22 +262,19 @@ func statusComfyUIServer() error {
 }
 
 func logsComfyUIServer() error {
-	fmt.Println(theme.InfoStyle.Render("📋 Render engine logs (Ctrl+C to exit)"))
+	fmt.Println(theme.InfoStyle.Render("📋 ComfyUI logs (Ctrl+C to exit)"))
 	fmt.Println()
 
-	home, _ := os.UserHomeDir()
-	logFile := filepath.Join(home, ".anime", "comfyui.log")
-	if _, err := os.Stat(logFile); err == nil {
-		cmd := exec.Command("tail", "-n", "200", "-F", logFile)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
-	}
+	cmd := exec.Command("screen", "-r", "comfyui")
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 
-	fmt.Println(theme.WarningStyle.Render("No log file at " + logFile))
-	fmt.Println(theme.DimTextStyle.Render("ComfyUI may not have been started by this CLI yet."))
-	fmt.Println(theme.DimTextStyle.Render("Attach to the running screen session instead:"))
-	fmt.Println(theme.HighlightStyle.Render("  screen -r comfyui   (Ctrl+A D to detach)"))
+	fmt.Println(theme.DimTextStyle.Render("To view logs, run:"))
+	fmt.Println(theme.HighlightStyle.Render("  screen -r comfyui"))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("(Press Ctrl+A then D to detach)"))
+
 	return nil
 }
 
@@ -384,9 +305,8 @@ func getPublicIPForComfyUI() string {
 		return hostname
 	}
 
-	// Fallback: try to get public IP from external service. Hard-cap the curl
-	// at 3s so a flaky network can't stall studio bootstrap.
-	cmd = exec.Command("curl", "-s", "--max-time", "3", "ifconfig.me")
+	// Fallback: try to get public IP from external service
+	cmd = exec.Command("curl", "-s", "ifconfig.me")
 	if output, err := cmd.Output(); err == nil {
 		ip := strings.TrimSpace(string(output))
 		if ip != "" {

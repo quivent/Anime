@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/joshkornreich/anime/internal/config"
 	"github.com/joshkornreich/anime/internal/theme"
@@ -288,8 +288,10 @@ func runAliasesInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	shellConfigFile := filepath.Join(home, ".bashrc")
+	shellName := "bash"
 	if shell := os.Getenv("SHELL"); strings.Contains(shell, "zsh") {
 		shellConfigFile = filepath.Join(home, ".zshrc")
+		shellName = "zsh"
 	}
 
 	// Check if file exists
@@ -385,25 +387,18 @@ func runAliasesInstall(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	// Automatically reload shell config by exec'ing into a new shell
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/zsh"
-	}
-
-	fmt.Println(theme.SuccessStyle.Render("Reloading shell to activate aliases..."))
-	fmt.Println()
-
-	// Exec replaces the current process with a new shell
-	err = syscall.Exec(shell, []string{shell}, os.Environ())
-	if err != nil {
-		// If exec fails, fall back to manual instructions
-		fmt.Println(theme.WarningStyle.Render("Could not auto-reload shell"))
-		fmt.Println()
-		fmt.Println(theme.InfoStyle.Render("To activate aliases manually:"))
+	// Source the shell config to activate aliases in the current shell
+	sourceCmd := exec.Command(shellName, "-c", fmt.Sprintf("source %s", shellConfigFile))
+	sourceCmd.Stdout = os.Stdout
+	sourceCmd.Stderr = os.Stderr
+	if err := sourceCmd.Run(); err != nil {
+		fmt.Println(theme.WarningStyle.Render(fmt.Sprintf("  Could not auto-source %s: %s", shellConfigFile, err)))
+		fmt.Println(theme.InfoStyle.Render("  Run manually:"))
 		fmt.Printf("  %s\n", theme.HighlightStyle.Render(fmt.Sprintf("source %s", shellConfigFile)))
-		fmt.Println()
+	} else {
+		fmt.Println(theme.SuccessStyle.Render("  Aliases activated in current shell"))
 	}
+	fmt.Println()
 
 	return nil
 }

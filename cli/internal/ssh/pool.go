@@ -33,7 +33,7 @@ func poolKey(host, user string) string {
 // Get retrieves or creates a connection for the given target
 func (p *Pool) Get(host, user, keyPath string) (*Client, error) {
 	return p.GetWithOptions(host, user, keyPath, ClientOptions{
-		StrictHostKeyChecking: true,
+		StrictHostKeyChecking: false,
 		Interactive:           true,
 	})
 }

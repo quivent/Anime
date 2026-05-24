@@ -470,7 +470,7 @@ func (l *Loader) executeLoad(cfg LoadConfig) {
 	if _, err := os.Stat(SkyReelsDir); os.IsNotExist(err) {
 		ui.PrintStatus("error", "SkyReels-V2 not found at "+SkyReelsDir)
 		ui.PrintSuggestion("SkyReels not installed", []string{
-			"Clone: git clone git@github.com:SkyworkAI/SkyReels-V2.git",
+			"Clone: git clone https://github.com/SkyworkAI/SkyReels-V2.git",
 			"Or update SkyReelsDir path in config",
 		})
 		return

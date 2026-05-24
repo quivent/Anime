@@ -1,3 +1,5 @@
+//go:build ignore
+
 package cmd
 
 import (
@@ -147,10 +149,11 @@ func requestAccessRemote(server, pubKey string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	target, err := resolveSSHTarget(cfg, server)
+	resolved, err := resolveSSHTarget(cfg, server)
 	if err != nil {
 		return err
 	}
+	target := resolved.Destination
 
 	fmt.Println()
 	fmt.Println(theme.InfoStyle.Render("🔑 Requesting access..."))
@@ -169,7 +172,7 @@ func requestAccessRemote(server, pubKey string) error {
 	fmt.Println()
 
 	sshCmd := exec.Command("ssh",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=10",
 		"-o", "PreferredAuthentications=password,keyboard-interactive",
 		target,

@@ -1,3 +1,5 @@
+//go:build ignore
+
 package cmd
 
 import (
@@ -484,7 +486,11 @@ func getCpmTarget() (string, error) {
 		return "", fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return resolveSSHTarget(cfg, getEffectiveServer())
+	resolved, err := resolveSSHTarget(cfg, getEffectiveServer())
+	if err != nil {
+		return "", err
+	}
+	return resolved.Destination, nil
 }
 
 // getLinkedPath reads the linked remote path from .cpm-link file
@@ -541,8 +547,8 @@ func recordHistory(target, remotePath, keyPath string) error {
 
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("echo '%s' >> %s", entry, historyPath),
 	)
@@ -667,8 +673,8 @@ func runCpmPush(cmd *cobra.Command, args []string) error {
 		// Create remote directory
 		mkdirCmd := exec.Command("ssh",
 			"-i", keyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("mkdir -p %s", fullRemotePath),
 		)
@@ -681,7 +687,7 @@ func runCpmPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cpmDryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -757,7 +763,7 @@ func runCpmPull(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cpmDryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -846,7 +852,7 @@ func runCpmClone(cmd *cobra.Command, args []string) error {
 	defer cleanup()
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cpmDryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -919,7 +925,7 @@ func runCpmStatus(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 
 	// Check what would be pushed (local -> remote)
 	fmt.Println(theme.DimTextStyle.Render("  Files that would be pushed (local → remote):"))
@@ -1015,7 +1021,7 @@ func runCpmDiff(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 
 	// Use rsync with itemize-changes to show detailed diff
 	rsyncArgs := []string{"-avzin", "--itemize-changes"}
@@ -1093,8 +1099,8 @@ func runCpmDelete(cmd *cobra.Command, args []string) error {
 
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("rm -rf %s", fullRemotePath),
 	)
@@ -1143,8 +1149,8 @@ func runCpmRename(cmd *cobra.Command, args []string) error {
 	// Create parent directory if needed, then move
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("mkdir -p $(dirname %s) && mv %s %s", fullNewPath, fullOldPath, fullNewPath),
 	)
@@ -1193,8 +1199,8 @@ func runCpmTree(cmd *cobra.Command, args []string) error {
 	// Try tree command, fall back to find if not available
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("tree -L 3 %s 2>/dev/null || find %s -maxdepth 3 -type d 2>/dev/null | head -50", fullRemotePath, fullRemotePath),
 	)
@@ -1269,7 +1275,7 @@ func runCpmSync(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 
 	// Step 1: Pull newer files from remote (--update flag keeps newer local files)
 	fmt.Println(theme.DimTextStyle.Render("  Step 1: Pulling newer remote files..."))
@@ -1342,8 +1348,8 @@ func runCpmHistory(cmd *cobra.Command, args []string) error {
 
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("cat %s 2>/dev/null | tail -20 || echo '(no history)'", historyPath),
 	)
@@ -1452,8 +1458,8 @@ func runCpmList(cmd *cobra.Command, args []string) error {
 
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("ls -la %s/ 2>/dev/null || echo '(not found)'", fullRemotePath),
 	)
@@ -1517,8 +1523,8 @@ func runCpmPublish(cmd *cobra.Command, args []string) error {
 	// Check if version already exists
 	checkCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("test -d %s && echo 'exists'", packagePath),
 	)
@@ -1531,8 +1537,8 @@ func runCpmPublish(cmd *cobra.Command, args []string) error {
 		// Create remote directory
 		mkdirCmd := exec.Command("ssh",
 			"-i", keyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("mkdir -p %s", packagePath),
 		)
@@ -1545,7 +1551,7 @@ func runCpmPublish(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	if cpmDryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -1566,8 +1572,8 @@ func runCpmPublish(cmd *cobra.Command, args []string) error {
 		latestPath := filepath.Join(cpmPackagesPath, pkg.Name, "latest")
 		symlinkCmd := exec.Command("ssh",
 			"-i", keyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("rm -f %s && ln -s %s %s", latestPath, pkg.Version, latestPath),
 		)
@@ -1626,8 +1632,8 @@ func runCpmRepublish(cmd *cobra.Command, args []string) error {
 		// Create remote directory (in case it doesn't exist)
 		mkdirCmd := exec.Command("ssh",
 			"-i", keyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("mkdir -p %s", packagePath),
 		)
@@ -1640,7 +1646,7 @@ func runCpmRepublish(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rsync with delete to ensure clean update
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 	rsyncArgs := []string{"-avz", "--progress", "--delete"}
 	if cpmDryRun {
 		rsyncArgs = append(rsyncArgs, "--dry-run")
@@ -1710,8 +1716,8 @@ func runCpmInstall(cmd *cobra.Command, args []string) error {
 	// Check if package exists
 	checkCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("test -d %s && echo 'exists'", packagePath),
 	)
@@ -1731,7 +1737,7 @@ func runCpmInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Rsync
-	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new", keyPath)
+	rsyncSSH := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=no -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", keyPath)
 	rsyncArgs := []string{"-avz", "--progress"}
 	rsyncArgs = append(rsyncArgs, getRsyncExcludes()...)
 	rsyncArgs = append(rsyncArgs, "-e", rsyncSSH, target+":"+packagePath+"/", localPath+"/")
@@ -1849,8 +1855,8 @@ func runCpmSearch(cmd *cobra.Command, args []string) error {
 	// List all packages
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("ls -1 %s 2>/dev/null || echo ''", cpmPackagesPath),
 	)
@@ -1881,8 +1887,8 @@ func runCpmSearch(cmd *cobra.Command, args []string) error {
 			// Try to get latest version info
 			infoCmd := exec.Command("ssh",
 				"-i", keyPath,
-				"-o", "IdentitiesOnly=yes",
-				"-o", "StrictHostKeyChecking=accept-new",
+				"-o", "IdentitiesOnly=no",
+				"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 				target,
 				fmt.Sprintf("cat %s/%s/latest/%s 2>/dev/null || echo '{}'", cpmPackagesPath, pkg, cpmPackageFile),
 			)
@@ -1935,8 +1941,8 @@ func runCpmInfo(cmd *cobra.Command, args []string) error {
 	// Get package.json
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("cat %s/%s 2>/dev/null || echo 'NOT_FOUND'", packagePath, cpmPackageFile),
 	)
@@ -2005,8 +2011,8 @@ func runCpmVersions(cmd *cobra.Command, args []string) error {
 	// List versions
 	sshCmd := exec.Command("ssh",
 		"-i", keyPath,
-		"-o", "IdentitiesOnly=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "IdentitiesOnly=no",
+		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 		target,
 		fmt.Sprintf("ls -1 %s 2>/dev/null | grep -v latest || echo 'NOT_FOUND'", packagePath),
 	)
@@ -2089,8 +2095,8 @@ func runCpmUpdate(cmd *cobra.Command, args []string) error {
 		latestPath := filepath.Join(cpmPackagesPath, pkgName, "latest", cpmPackageFile)
 		sshCmd := exec.Command("ssh",
 			"-i", keyPath,
-			"-o", "IdentitiesOnly=yes",
-			"-o", "StrictHostKeyChecking=accept-new",
+			"-o", "IdentitiesOnly=no",
+			"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
 			target,
 			fmt.Sprintf("cat %s 2>/dev/null || echo '{}'", latestPath),
 		)

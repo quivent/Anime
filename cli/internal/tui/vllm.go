@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joshkornreich/anime/internal/gpu"
+	"github.com/joshkornreich/anime/internal/installer"
 	"github.com/joshkornreich/anime/internal/theme"
 )
 
@@ -593,39 +594,32 @@ func (m VLLMSetupModel) startInstallation() tea.Cmd {
 		}
 		tea.Println(installStepMsg{index: 1, status: "done", message: strings.TrimSpace(string(output))})
 
-		// Step 3: Check/Install PyTorch with CUDA
-		tea.Println(installStepMsg{index: 2, status: "running", message: ""})
-		cmd = exec.Command("python3", "-c", "import torch; assert torch.cuda.is_available(), 'CUDA not available'")
-		_, err = cmd.CombinedOutput()
-		if err != nil {
-			// PyTorch not installed or CUDA not available - install it
-			tea.Println(installStepMsg{index: 2, status: "running", message: "Installing PyTorch with CUDA..."})
-			cmd = exec.Command("pip3", "install", "torch", "torchvision", "torchaudio",
-				"--index-url", "https://download.pytorch.org/whl/cu126")
-			output, err = cmd.CombinedOutput()
-			if err != nil {
-				return installStepMsg{index: 2, status: "failed", message: "Failed to install PyTorch. Run: anime install pytorch"}
-			}
-			// Verify PyTorch installation
-			cmd = exec.Command("python3", "-c", "import torch; print(f'PyTorch {torch.__version__}')")
-			output, err = cmd.CombinedOutput()
-			if err != nil {
-				return installStepMsg{index: 2, status: "failed", message: "PyTorch installed but import failed"}
-			}
-			tea.Println(installStepMsg{index: 2, status: "done", message: strings.TrimSpace(string(output)) + " (newly installed)"})
-		} else {
-			// PyTorch already installed with CUDA
-			cmd = exec.Command("python3", "-c", "import torch; print(f'PyTorch {torch.__version__} (CUDA {torch.version.cuda})')")
-			output, _ = cmd.CombinedOutput()
-			tea.Println(installStepMsg{index: 2, status: "done", message: strings.TrimSpace(string(output))})
+		// Steps 3 & 4: Install PyTorch + vLLM via canonical scripts.
+		// Single source of truth: internal/installer/scripts.go. This TUI used
+		// to have its own pip-install code that bypassed all the GH200/aarch64
+		// defenses (PIP_CONSTRAINT, --no-deps, --no-build-isolation, cu13 wheel
+		// detection). Routing through scripts.go means one fix covers both paths.
+		tea.Println(installStepMsg{index: 2, status: "running", message: "Installing PyTorch via canonical script..."})
+		pytorchScript, ok := installer.GetScript("pytorch")
+		if !ok {
+			return installStepMsg{index: 2, status: "failed", message: "pytorch install script not registered"}
 		}
-
-		// Step 4: Install vLLM
-		tea.Println(installStepMsg{index: 3, status: "running", message: ""})
-		cmd = exec.Command("pip3", "install", "vllm")
+		cmd = exec.Command("bash", "-c", pytorchScript)
 		output, err = cmd.CombinedOutput()
 		if err != nil {
-			return installStepMsg{index: 3, status: "failed", message: string(output)}
+			return installStepMsg{index: 2, status: "failed", message: "PyTorch install failed: " + string(output)}
+		}
+		tea.Println(installStepMsg{index: 2, status: "done", message: "PyTorch ready"})
+
+		tea.Println(installStepMsg{index: 3, status: "running", message: "Installing vLLM via canonical script..."})
+		vllmScript, ok := installer.GetScript("vllm")
+		if !ok {
+			return installStepMsg{index: 3, status: "failed", message: "vllm install script not registered"}
+		}
+		cmd = exec.Command("bash", "-c", vllmScript)
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			return installStepMsg{index: 3, status: "failed", message: "vLLM install failed: " + string(output)}
 		}
 		tea.Println(installStepMsg{index: 3, status: "done", message: "vLLM installed"})
 

@@ -733,7 +733,10 @@ except Exception as e:
 		result.Status = "fail"
 		result.Message = "vLLM not installed"
 		result.Details = append(result.Details, errMsg)
-		result.FixCommand = "pip install vllm"
+		// --no-deps: vllm declares torch as a hard dep; without --no-deps pip will
+		// pull a torch wheel built for the wrong CUDA and break the install.
+		// PIP_CONSTRAINT (set by ensurePipConstraint) is a belt-and-suspenders guard.
+		result.FixCommand = "pip install --no-deps vllm"
 		return result
 	}
 
@@ -742,15 +745,16 @@ except Exception as e:
 		result.Status = "fail"
 		result.Message = fmt.Sprintf("vLLM import error: %s", errMsg)
 
-		// Diagnose specific errors
+		// Diagnose specific errors. All reinstalls use --no-deps to leave the
+		// working torch alone; otherwise vllm's transitive deps replace it.
 		if strings.Contains(errMsg, "numpy") {
-			result.FixCommand = "pip install 'numpy<2.0' --force-reinstall && pip install vllm --force-reinstall"
+			result.FixCommand = "pip install 'numpy<2.0' --force-reinstall && pip install --no-deps --force-reinstall vllm"
 			result.Details = append(result.Details, "NumPy compatibility issue detected")
 		} else if strings.Contains(errMsg, "torch") {
-			result.FixCommand = "pip install torch && pip install vllm --force-reinstall"
-			result.Details = append(result.Details, "PyTorch issue detected")
+			result.FixCommand = "pip install --no-deps --force-reinstall vllm"
+			result.Details = append(result.Details, "PyTorch issue detected — reinstalling vllm without touching torch")
 		} else {
-			result.FixCommand = "pip install vllm --force-reinstall --no-cache-dir"
+			result.FixCommand = "pip install --no-deps --force-reinstall --no-cache-dir vllm"
 		}
 		return result
 	}
@@ -802,7 +806,7 @@ except:
 	if minor < 4 {
 		result.Status = "warn"
 		result.Message = fmt.Sprintf("vLLM %s is outdated, recommend 0.6+", version)
-		result.FixCommand = "pip install --upgrade vllm"
+		result.FixCommand = "pip install --no-deps --upgrade vllm"
 		return result
 	}
 

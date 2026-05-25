@@ -90,27 +90,56 @@ pip3 --version
 set -e
 echo "==> Installing PyTorch and AI libraries"
 
-# Quick check if PyTorch is installed (without slow CUDA check)
 if python3 -c "import torch" 2>/dev/null; then
     TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
-    echo "==> PyTorch $TORCH_VERSION already installed"
-    echo "==> Installing/updating AI libraries only..."
-    # Install ALL packages in one command to avoid dependency conflicts
+
+    # Refuse to touch a torch install whose CUDA is already broken — adding more
+    # packages on top will only mask the root cause.
+    if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+        echo "==> ERROR: PyTorch $TORCH_VERSION is installed but CUDA is unavailable."
+        echo "==> A prior pip install likely replaced torch with a wheel built for the wrong CUDA."
+        echo "==> Recovery:"
+        echo "==>   pip uninstall -y torch torchvision torchaudio xformers"
+        echo "==>   anime install pytorch"
+        exit 1
+    fi
+
+    echo "==> PyTorch $TORCH_VERSION already installed (CUDA OK)"
+
+    # Pin torch via PIP_CONSTRAINT so transitive deps (xformers, bitsandbytes, etc.)
+    # cannot silently upgrade it onto a wheel built for the wrong CUDA.
+    CONSTRAINT_FILE="$HOME/.config/anime/torch-constraints.txt"
+    mkdir -p "$(dirname "$CONSTRAINT_FILE")"
+    {
+        echo "torch==$TORCH_VERSION"
+        echo "torchvision"
+        echo "torchaudio"
+    } > "$CONSTRAINT_FILE"
+    export PIP_CONSTRAINT="$CONSTRAINT_FILE"
+    echo "==> Pinned torch via $CONSTRAINT_FILE"
+
+    # xformers declares torch>=N which will trip the constraint. --no-deps bypasses
+    # its torch requirement and reuses the working torch already present.
+    pip3 install --upgrade-strategy only-if-needed --no-deps xformers
     pip3 install --upgrade-strategy only-if-needed \
-        transformers diffusers accelerate safetensors xformers bitsandbytes \
+        transformers diffusers accelerate safetensors bitsandbytes \
         numpy scipy pandas matplotlib pillow opencv-python
+
+    # Verify nothing snuck past the constraint.
+    if ! python3 -c "import torch; assert torch.cuda.is_available(), 'replaced'" 2>/dev/null; then
+        echo "==> FATAL: torch was replaced despite PIP_CONSTRAINT. CUDA broken."
+        echo "==> Recovery: pip uninstall -y torch torchvision torchaudio xformers && anime install pytorch"
+        exit 1
+    fi
 else
     echo "==> Installing PyTorch with CUDA 12.6 support..."
-    # Install PyTorch with CUDA 12.6 support (latest stable, compatible with modern packages)
     pip3 install --upgrade-strategy only-if-needed torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu126
-    # Install ALL AI libraries in one command to avoid dependency conflicts
     pip3 install --upgrade-strategy only-if-needed \
         transformers diffusers accelerate safetensors bitsandbytes \
         numpy scipy pandas matplotlib pillow opencv-python
 fi
 
 echo "==> PyTorch installed successfully"
-# Quick CUDA check without full initialization
 python3 -c "import torch; print(f'PyTorch {torch.__version__} | CUDA available: {torch.cuda.is_available()}')" 2>/dev/null || echo "PyTorch installed"
 `,
 
@@ -152,28 +181,137 @@ echo "==> Ollama installed successfully"
 set -e
 echo "==> Installing vLLM Inference Engine"
 
-# Verify PyTorch is installed with CUDA
 if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
     echo "Error: PyTorch with CUDA not found. Please install 'pytorch' package first: anime install pytorch"
     exit 1
 fi
 
-# Check if vLLM is already installed
 if python3 -c "import vllm" 2>/dev/null; then
     VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "unknown")
     echo "==> vLLM $VLLM_VERSION already installed"
     exit 0
 fi
 
-echo "==> Installing vLLM with CUDA support..."
-# Install vLLM - it will detect CUDA from PyTorch installation
-pip3 install --upgrade-strategy only-if-needed vllm
+# Pin torch BEFORE vllm install. vllm declares torch as a hard dep, and without
+# this guard pip will silently pull a torch wheel built for a different CUDA
+# version (e.g. cu130 wheels on a cu128 driver -> CUDA unavailable).
+TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+TORCH_CUDA=$(python3 -c "import torch; print(torch.version.cuda)")
+ARCH=$(uname -m)
+CONSTRAINT_FILE="$HOME/.config/anime/torch-constraints.txt"
+mkdir -p "$(dirname "$CONSTRAINT_FILE")"
+{
+    echo "torch==$TORCH_VERSION"
+    echo "torchvision"
+    echo "torchaudio"
+    echo "numpy<2"
+} > "$CONSTRAINT_FILE"
+export PIP_CONSTRAINT="$CONSTRAINT_FILE"
+echo "==> Pinned torch==$TORCH_VERSION (CUDA $TORCH_CUDA) via $CONSTRAINT_FILE"
 
-# Verify installation
+# aarch64 + CUDA 12 path:
+# - All prebuilt aarch64 vllm wheels from vllm 0.20+ are cu13; they fail on
+#   driver <580 with "libcudart.so.13: cannot open shared object file".
+# - vllm 0.10.1.1 is the last release whose source-build can target cu12 cleanly
+#   (pins torch==2.7.1 which matches the cu128 PyTorch wheel index).
+# - GH200 is sm_90 (Hopper); TORCH_CUDA_ARCH_LIST="9.0" keeps the build small
+#   and ensures the resulting .so is loadable on this card.
+NEEDS_SOURCE_BUILD=false
+VLLM_PIN=""
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    TORCH_CUDA_MAJOR=$(echo "$TORCH_CUDA" | cut -d. -f1)
+    if [ "$TORCH_CUDA_MAJOR" = "12" ]; then
+        NEEDS_SOURCE_BUILD=true
+        VLLM_PIN="==0.10.1.1"
+        echo "==> aarch64 + CUDA 12 detected — source-building vllm 0.10.1.1 (last cu12-compatible release)"
+
+        # vllm 0.10.1.1 needs torch==2.7.1. If current torch is older/different,
+        # install the cu128 wheel to user-site (shadows system torch).
+        TORCH_MAJOR_MINOR=$(echo "$TORCH_VERSION" | cut -d. -f1,2)
+        if [ "$TORCH_MAJOR_MINOR" != "2.7" ]; then
+            echo "==> Installing cu128 torch==2.7.1 for vllm 0.10.x compatibility..."
+            pip3 install --upgrade-strategy only-if-needed \
+                --index-url https://download.pytorch.org/whl/cu128 \
+                torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1
+            # Refresh constraint file to the new torch version we just pinned.
+            {
+                echo "torch==2.7.1+cu128"
+                echo "torchvision"
+                echo "torchaudio"
+                echo "numpy<2"
+            } > "$CONSTRAINT_FILE"
+            TORCH_VERSION="2.7.1"
+        fi
+    fi
+fi
+
+echo "==> Installing vLLM build prerequisites..."
+pip3 install --upgrade-strategy only-if-needed \
+    'numpy<2' pybind11 setuptools setuptools_scm wheel cmake ninja \
+    'huggingface_hub[cli]' hf_transfer
+
+if [ "$NEEDS_SOURCE_BUILD" = true ]; then
+    # --no-binary=vllm: refuse the cu13 prebuilt wheel; build from sdist
+    # --no-build-isolation: use the EXISTING torch instead of pip downloading
+    #     a different torch version (likely cu13 wheel) for the build
+    # --no-deps: vllm's METADATA pins one torch version per release;
+    #     manual runtime-dep install below avoids the version conflict
+    # TORCH_CUDA_ARCH_LIST=9.0a (not "9.0"): enables Hopper-only WGMMA, TMA, FA3,
+    # Marlin-FP8 kernels — worth +31% prefill throughput per agent research
+    # (docs/research/SOTA_GH200_INFERENCE_2026.md, Agent 9). Plain "9.0" silently
+    # disables these via __CUDA_ARCH_FEAT_SM90_ALL__ guards → FA2 fallback.
+    # VLLM_FA_CMAKE_GPU_ARCHES=90a-real pairs with above to actually build FA3.
+    echo "==> Building vLLM 0.10.1.1 from source for sm_90a (Hopper WGMMA/TMA/FA3) — ~25 min on GH200..."
+    SCCACHE_LAUNCHER=""
+    if command -v sccache >/dev/null 2>&1; then
+        SCCACHE_LAUNCHER="CMAKE_CUDA_COMPILER_LAUNCHER=sccache CMAKE_CXX_COMPILER_LAUNCHER=sccache"
+        echo "==> sccache detected — cache hits cut rebuild time ~90%"
+    fi
+    env $SCCACHE_LAUNCHER \
+        TORCH_CUDA_ARCH_LIST="9.0a" \
+        VLLM_FA_CMAKE_GPU_ARCHES="90a-real" \
+        CUDA_HOME=/usr/lib/cuda \
+        MAX_JOBS=32 NVCC_THREADS=4 \
+        pip3 install --no-binary=vllm --no-build-isolation --no-deps "vllm${VLLM_PIN}"
+else
+    echo "==> Installing vLLM prebuilt wheel..."
+    pip3 install --no-deps "vllm${VLLM_PIN}"
+fi
+
+echo "==> Installing vLLM runtime dependencies (torch left alone)..."
+pip3 install --upgrade-strategy only-if-needed \
+    'transformers>=4.40' 'tokenizers>=0.19' sentencepiece 'accelerate>=0.26' \
+    fastapi 'uvicorn[standard]' 'pydantic>=2.0' \
+    prometheus-client py-cpuinfo msgspec gguf \
+    aiohttp openai pyzmq cloudpickle \
+    blake3 cbor2 cachetools diskcache ijson lark numba \
+    opencv-python-headless outlines_core partial-json-parser \
+    pybase64 python-json-logger setproctitle tiktoken \
+    watchfiles tqdm regex pillow protobuf psutil pyyaml \
+    fastsafetensors lm-format-enforcer xgrammar mistral_common \
+    openai-harmony compressed-tensors flashinfer-python \
+    apache-tvm-ffi prometheus-fastapi-instrumentator
+
+# Verify torch survived.
+if ! python3 -c "import torch; assert torch.cuda.is_available(), 'replaced'" 2>/dev/null; then
+    echo "==> FATAL: torch was replaced despite PIP_CONSTRAINT. CUDA broken."
+    echo "==> Recovery:"
+    echo "==>   rm -rf ~/.local/lib/python3.10/site-packages/{torch*,torchvision*,torchaudio*,nvidia*,triton*,cuda_*,xformers*,vllm*}"
+    echo "==>   anime install pytorch && anime install vllm"
+    exit 1
+fi
+
+# Verify vllm._C loads (catches the libcudart.so.13 trap before runtime).
+echo "==> Verifying vLLM C extension links against the installed CUDA..."
+if ! python3 -c "import vllm._C" 2>/dev/null; then
+    echo "==> FATAL: vllm._C failed to load. Likely a CUDA runtime mismatch."
+    echo "==> Driver supports CUDA $TORCH_CUDA; vllm wheel may target a different CUDA."
+    python3 -c "import vllm._C" 2>&1 | tail -5
+    exit 1
+fi
+
 echo "==> Verifying vLLM installation..."
-python3 -c "import vllm; print(f'vLLM {vllm.__version__} installed successfully')"
-echo "==> Testing CUDA availability..."
-python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+python3 -c "import vllm, torch; print(f'vLLM {vllm.__version__} | torch {torch.__version__} | CUDA {torch.cuda.is_available()}')"
 
 echo "==> vLLM installed successfully"
 echo ""

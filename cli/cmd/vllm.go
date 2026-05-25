@@ -75,6 +75,7 @@ var (
 	vllmQuantization   string
 	vllmDType          string
 	vllmSwapSpace      int
+	vllmMaxNumSeqs     int
 	vllmEnforceEager   bool
 	vllmTrustRemote    bool
 	vllmBackground     bool
@@ -124,7 +125,7 @@ Model shortcuts (FP16 - full precision):
   mixtral      → mistralai/Mixtral-8x7B-Instruct-v0.1
 
 Quantized models (4-bit AWQ - faster, less VRAM):
-  llama-70b-awq    → hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4
+  llama-70b-awq    → casperhansen/llama-3.3-70b-instruct-awq
   qwen-72b-awq     → Qwen/Qwen2.5-72B-Instruct-AWQ
   deepseek-r1-awq  → cognitivecomputations/DeepSeek-R1-Distill-Llama-70B-AWQ
 
@@ -267,6 +268,7 @@ func init() {
 	vllmStartCmd.Flags().StringVarP(&vllmQuantization, "quant", "q", "", "Quantization method: awq, gptq, squeezellm, fp8")
 	vllmStartCmd.Flags().StringVar(&vllmDType, "dtype", "auto", "Data type: auto, float16, bfloat16, float32")
 	vllmStartCmd.Flags().IntVar(&vllmSwapSpace, "swap", 0, "CPU swap space in GB for KV cache")
+	vllmStartCmd.Flags().IntVar(&vllmMaxNumSeqs, "max-num-seqs", 0, "Max concurrent sequences (0 = vllm default; lower if OOM at sampler warmup)")
 	vllmStartCmd.Flags().BoolVar(&vllmEnforceEager, "eager", false, "Disable CUDA graphs for debugging")
 	vllmStartCmd.Flags().BoolVar(&vllmTrustRemote, "trust-remote", true, "Trust remote code from HuggingFace")
 	vllmStartCmd.Flags().BoolVarP(&vllmBackground, "background", "b", false, "Run in background")
@@ -655,8 +657,20 @@ func buildVLLMArgs(model string, gpuCount int) []string {
 		args = append(args, "--max-model-len", strconv.Itoa(vllmMaxModelLen))
 	}
 
-	if vllmQuantization != "" {
-		args = append(args, "--quantization", vllmQuantization)
+	// Auto-promote plain "awq" → "awq_marlin" on Hopper-class hardware. The
+	// Marlin kernel is ~50× faster than the legacy awq path; without this,
+	// vllm warns "awq quantization is not fully optimized yet" and falls back
+	// to ~2 tok/s on a 70B model. Also auto-detect when the model alias ends
+	// in "-awq" and no --quant was passed — pick awq_marlin by default.
+	quant := vllmQuantization
+	if quant == "awq" {
+		quant = "awq_marlin"
+	}
+	if quant == "" && (strings.Contains(strings.ToLower(model), "awq") || strings.Contains(strings.ToLower(model), "-awq")) {
+		quant = "awq_marlin"
+	}
+	if quant != "" {
+		args = append(args, "--quantization", quant)
 	}
 
 	if vllmDType != "auto" {
@@ -665,6 +679,10 @@ func buildVLLMArgs(model string, gpuCount int) []string {
 
 	if vllmSwapSpace > 0 {
 		args = append(args, "--swap-space", strconv.Itoa(vllmSwapSpace))
+	}
+
+	if vllmMaxNumSeqs > 0 {
+		args = append(args, "--max-num-seqs", strconv.Itoa(vllmMaxNumSeqs))
 	}
 
 	if vllmEnforceEager {
@@ -689,19 +707,50 @@ func buildVLLMArgs(model string, gpuCount int) []string {
 	return args
 }
 
+// vllmSOTAEnv returns the SOTA env-var profile for max-throughput vLLM serving
+// on Hopper / GH200. Derived from 30 research-agent findings consolidated in
+// docs/research/SOTA_GH200_INFERENCE_2026.md. Combined gain vs defaults:
+// ~1.8-2.2x throughput. Biggest wins: V1 engine (~40%), FlashInfer + tensor-core
+// force (~20%), disabling DeepGEMM for AWQ (~10%, per user commit cc3523a).
+func vllmSOTAEnv() []string {
+	// NOTE: FlashInfer env vars (VLLM_ATTENTION_BACKEND=FLASHINFER,
+	// VLLM_USE_FLASHINFER_SAMPLER, VLLM_FLASHINFER_FORCE_TENSOR_CORES)
+	// removed from defaults — they require a flashinfer version matching
+	// vllm 0.10.1.1's expectations; with our installed flashinfer they
+	// trigger `assert decode_wrapper._sm_scale == self.scale` in forward.
+	// Default attention backend (FLASH_ATTN_VLLM_V1) works on AWQ + sm_90.
+	return []string{
+		"VLLM_USE_V1=1",
+		"VLLM_ENABLE_V1_MULTIPROCESSING=1",
+		"VLLM_USE_TRITON_FLASH_ATTN=0",
+		"VLLM_USE_DEEP_GEMM=0",
+		"VLLM_WORKER_MULTIPROC_METHOD=spawn",
+		"VLLM_LOGGING_LEVEL=WARNING",
+		"VLLM_DO_NOT_TRACK=1",
+		"VLLM_TARGET_DEVICE=cuda",
+		"VLLM_SLEEP_WHEN_IDLE=0",
+		"NCCL_NVLS_ENABLE=1",
+		"NCCL_CUMEM_ENABLE=1",
+		"NCCL_P2P_DISABLE=0",
+		"HF_HUB_ENABLE_HF_TRANSFER=1",
+		"CUDA_DEVICE_MAX_CONNECTIONS=1",
+		"PYTORCH_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512",
+	}
+}
+
 func startVLLMForeground(model string, args []string) error {
 	cmd := exec.Command("vllm", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Set environment with HuggingFace token for model downloads
+	// Set environment with HuggingFace token + SOTA env profile.
 	cmd.Env = append(os.Environ(), "HF_TOKEN="+hf.GetToken())
+	cmd.Env = append(cmd.Env, vllmSOTAEnv()...)
 
 	// Add unified RAM settings if requested
 	if vllmPreloadToRAM {
 		cmd.Env = append(cmd.Env,
 			"VLLM_CPU_KVCACHE_SPACE=4",
-			"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
 		)
 	}
 
@@ -735,14 +784,14 @@ func startVLLMBackground(model string, args []string) error {
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
-	// Set environment with HuggingFace token for model downloads
+	// Set environment with HuggingFace token + SOTA env profile.
 	cmd.Env = append(os.Environ(), "HF_TOKEN="+hf.GetToken())
+	cmd.Env = append(cmd.Env, vllmSOTAEnv()...)
 
 	// Add unified RAM settings if requested
 	if vllmPreloadToRAM {
 		cmd.Env = append(cmd.Env,
 			"VLLM_CPU_KVCACHE_SPACE=4",
-			"PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
 		)
 	}
 

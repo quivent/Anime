@@ -28,7 +28,7 @@ aliases:
   codellama: codellama/CodeLlama-34b-Instruct-hf
 
   # AWQ quantized models (4-bit) - significantly smaller, faster inference
-  llama-70b-awq: hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4
+  llama-70b-awq: casperhansen/llama-3.3-70b-instruct-awq
   qwen-72b-awq: Qwen/Qwen2.5-72B-Instruct-AWQ
   qwen-32b-awq: Qwen/Qwen2.5-32B-Instruct-AWQ
   deepseek-r1-awq: cognitivecomputations/DeepSeek-R1-Distill-Llama-70B-AWQ

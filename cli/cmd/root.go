@@ -30,6 +30,9 @@ var (
 
 Configure servers, select installation modules, and deploy with ease.
 No more shell scripts!`,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			ensurePipConstraint()
+		},
 		Run:                showAnimeWelcome,
 		DisableSuggestions: false, // We'll handle suggestions ourselves with better formatting
 		SuggestionsMinimumDistance: 2,

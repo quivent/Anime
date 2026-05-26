@@ -132,3 +132,13 @@ func (a *AdminClient) ListRooms(from int, limit int) (*RoomListResponse, error) 
 	}
 	return &resp, nil
 }
+
+// SearchUsers searches users by name.
+func (a *AdminClient) SearchUsers(term string, limit int) (*UserListResponse, error) {
+	path := fmt.Sprintf("/_synapse/admin/v2/users?from=0&limit=%d&name=%s", limit, term)
+	var resp UserListResponse
+	if err := a.get(path, &resp); err != nil {
+		return nil, fmt.Errorf("search users failed: %w", err)
+	}
+	return &resp, nil
+}

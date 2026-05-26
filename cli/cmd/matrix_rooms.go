@@ -128,6 +128,53 @@ var matrixRoomsInviteCmd = &cobra.Command{
 	},
 }
 
+var matrixRoomsAliasCmd = &cobra.Command{
+	Use:   "alias <room-id> <alias>",
+	Short: "Set a room alias (e.g. #general:localhost)",
+	Example: `  anime matrix rooms alias '!abc:localhost' '#general:localhost'`,
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, _ := matrixcfg.Load()
+		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
+		if err := client.SetRoomAlias(args[1], args[0]); err != nil {
+			return err
+		}
+		fmt.Printf("  %s %s -> %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render(args[1]), theme.DimTextStyle.Render(args[0]))
+		return nil
+	},
+}
+
+var matrixRoomsUnaliasCmd = &cobra.Command{
+	Use:   "unalias <alias>",
+	Short: "Remove a room alias",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, _ := matrixcfg.Load()
+		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
+		if err := client.DeleteRoomAlias(args[0]); err != nil {
+			return err
+		}
+		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Removed "+args[0]))
+		return nil
+	},
+}
+
+var matrixRoomsResolveCmd = &cobra.Command{
+	Use:   "resolve <alias>",
+	Short: "Resolve a room alias to a room ID",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, _ := matrixcfg.Load()
+		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
+		roomID, err := client.ResolveAlias(args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("  %s -> %s\n", theme.HighlightStyle.Render(args[0]), theme.DimTextStyle.Render(roomID))
+		return nil
+	},
+}
+
 func init() {
 	matrixRoomsCreateCmd.Flags().StringVarP(&mxRoomTopic, "topic", "t", "", "Room topic")
 	matrixRoomsCreateCmd.Flags().StringSliceVarP(&mxRoomInvite, "invite", "i", nil, "Users to invite")
@@ -138,5 +185,8 @@ func init() {
 	matrixRoomsCmd.AddCommand(matrixRoomsJoinCmd)
 	matrixRoomsCmd.AddCommand(matrixRoomsLeaveCmd)
 	matrixRoomsCmd.AddCommand(matrixRoomsInviteCmd)
+	matrixRoomsCmd.AddCommand(matrixRoomsAliasCmd)
+	matrixRoomsCmd.AddCommand(matrixRoomsUnaliasCmd)
+	matrixRoomsCmd.AddCommand(matrixRoomsResolveCmd)
 	matrixCmd.AddCommand(matrixRoomsCmd)
 }

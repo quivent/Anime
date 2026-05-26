@@ -15,6 +15,7 @@ var (
 	mxUserDisplayName string
 	mxUserAdmin       bool
 	mxRevokeAdmin     bool
+	mxUserSearch      string
 )
 
 var matrixUsersCmd = &cobra.Command{
@@ -61,7 +62,13 @@ var matrixUsersListCmd = &cobra.Command{
 		fmt.Println(theme.RenderBanner("MATRIX USERS"))
 		fmt.Println()
 		admin := matrixapi.NewAdminClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken, cfg.Homeserver.Domain)
-		users, err := admin.ListUsers(0, 100)
+		var users *matrixapi.UserListResponse
+		var err error
+		if mxUserSearch != "" {
+			users, err = admin.SearchUsers(mxUserSearch, 100)
+		} else {
+			users, err = admin.ListUsers(0, 100)
+		}
 		if err != nil {
 			return err
 		}
@@ -151,6 +158,7 @@ func init() {
 	matrixUsersAddCmd.Flags().StringVarP(&mxUserPassword, "password", "p", "", "Password (generated if empty)")
 	matrixUsersAddCmd.Flags().StringVarP(&mxUserDisplayName, "display-name", "n", "", "Display name")
 	matrixUsersAddCmd.Flags().BoolVarP(&mxUserAdmin, "admin", "a", false, "Make admin")
+	matrixUsersListCmd.Flags().StringVarP(&mxUserSearch, "search", "s", "", "Search users by name")
 	matrixUsersAdminCmd.Flags().BoolVar(&mxRevokeAdmin, "revoke", false, "Revoke admin")
 	matrixUsersResetCmd.Flags().StringVarP(&mxUserPassword, "password", "p", "", "New password")
 

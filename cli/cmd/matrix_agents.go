@@ -98,6 +98,29 @@ var matrixAgentsStopCmd = &cobra.Command{
 	},
 }
 
+var matrixAgentsRestartCmd = &cobra.Command{
+	Use:   "restart <name>",
+	Short: "Restart an agent (stop + respawn)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, _ := matrixcfg.Load()
+		agent := cfg.GetAgent(args[0])
+		if agent == nil {
+			return fmt.Errorf("agent %q not found", args[0])
+		}
+		// Stop
+		if agent.PID > 0 {
+			syscall.Kill(-agent.PID, syscall.SIGTERM)
+		}
+		// Re-spawn with saved config
+		mxAgentModel = agent.Model
+		mxAgentRooms = agent.Rooms
+		mxAgentRoom = ""
+		mxAgentPassword = "" // will re-login with saved token
+		return runMatrixAgentsSpawn(cmd, args)
+	},
+}
+
 var matrixAgentsLogsCmd = &cobra.Command{
 	Use:   "logs <name>",
 	Short: "Show agent logs",
@@ -125,6 +148,7 @@ func init() {
 	matrixAgentsCmd.AddCommand(matrixAgentsSpawnCmd)
 	matrixAgentsCmd.AddCommand(matrixAgentsListCmd)
 	matrixAgentsCmd.AddCommand(matrixAgentsStopCmd)
+	matrixAgentsCmd.AddCommand(matrixAgentsRestartCmd)
 	matrixAgentsCmd.AddCommand(matrixAgentsLogsCmd)
 	matrixCmd.AddCommand(matrixAgentsCmd)
 }

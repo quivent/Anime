@@ -9,16 +9,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joshkornreich/anime/internal/matrixapi"
-	"github.com/joshkornreich/anime/internal/matrixcfg"
+	"github.com/joshkornreich/anime/internal/mmcfg"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
 var (
 	mxAgentModel    string
-	mxAgentRoom     string
-	mxAgentRooms    []string
+	mxAgentChannels []string
+	mxAgentChannel  string
 	mxAgentPassword string
 	mxAgentPrompt   string
 )
@@ -26,16 +25,16 @@ var (
 var matrixAgentsCmd = &cobra.Command{
 	Use:     "agents",
 	Aliases: []string{"agent", "a"},
-	Short:   "Manage Claude Code agents as Matrix bot users",
+	Short:   "Manage Claude Code agents as Mattermost bot users",
 	Run:     func(cmd *cobra.Command, args []string) { cmd.Help() },
 }
 
 var matrixAgentsSpawnCmd = &cobra.Command{
 	Use:   "spawn <name>",
-	Short: "Spawn a new Claude Code agent",
-	Example: `  anime matrix agents spawn helper --room '!abc:localhost'
-  anime matrix agents spawn coder --rooms general,dev
-  anime matrix agents spawn reviewer --room '!abc:localhost' --prompt "You review code"`,
+	Short: "Spawn a new Claude Code agent bot",
+	Example: `  anime matrix agents spawn helper --channel <channel-id>
+  anime matrix agents spawn coder --channels <id1>,<id2>
+  anime matrix agents spawn reviewer --channel <id> --prompt "You review code"`,
 	Args: cobra.ExactArgs(1),
 	RunE: runMatrixAgentsSpawn,
 }
@@ -45,13 +44,13 @@ var matrixAgentsListCmd = &cobra.Command{
 	Aliases: []string{"ls"},
 	Short:   "List all agents",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		fmt.Println()
-		fmt.Println(theme.RenderBanner("MATRIX AGENTS"))
+		fmt.Println(theme.RenderBanner("AGENTS"))
 		fmt.Println()
 		if len(cfg.Agents) == 0 {
 			fmt.Println(theme.DimTextStyle.Render("  No agents"))
-			fmt.Printf("  %s\n\n", theme.HighlightStyle.Render("anime matrix agents spawn <name> --room <room>"))
+			fmt.Printf("  %s\n\n", theme.HighlightStyle.Render("anime matrix agents spawn <name> --channel <channel-id>"))
 			return nil
 		}
 		for _, a := range cfg.Agents {
@@ -66,9 +65,11 @@ var matrixAgentsListCmd = &cobra.Command{
 			}
 			fmt.Printf("  %s %s\n", theme.SymbolStar, theme.HighlightStyle.Render(a.Name))
 			fmt.Printf("    User: %s  Model: %s  %s  PID %d\n",
-				theme.DimTextStyle.Render(a.UserID), theme.DimTextStyle.Render(a.Model), stStr, a.PID)
-			if len(a.Rooms) > 0 {
-				fmt.Printf("    Rooms: %s\n", theme.DimTextStyle.Render(strings.Join(a.Rooms, ", ")))
+				theme.DimTextStyle.Render(a.UserID),
+				theme.DimTextStyle.Render(a.Model),
+				stStr, a.PID)
+			if len(a.Channels) > 0 {
+				fmt.Printf("    Channels: %s\n", theme.DimTextStyle.Render(strings.Join(a.Channels, ", ")))
 			}
 			fmt.Println()
 		}
@@ -81,7 +82,7 @@ var matrixAgentsStopCmd = &cobra.Command{
 	Short: "Stop a running agent",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		agent := cfg.GetAgent(args[0])
 		if agent == nil {
 			return fmt.Errorf("agent %q not found", args[0])
@@ -103,20 +104,18 @@ var matrixAgentsRestartCmd = &cobra.Command{
 	Short: "Restart an agent (stop + respawn)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		agent := cfg.GetAgent(args[0])
 		if agent == nil {
 			return fmt.Errorf("agent %q not found", args[0])
 		}
-		// Stop
 		if agent.PID > 0 {
 			syscall.Kill(-agent.PID, syscall.SIGTERM)
 		}
-		// Re-spawn with saved config
 		mxAgentModel = agent.Model
-		mxAgentRooms = agent.Rooms
-		mxAgentRoom = ""
-		mxAgentPassword = "" // will re-login with saved token
+		mxAgentChannels = agent.Channels
+		mxAgentChannel = ""
+		mxAgentPassword = ""
 		return runMatrixAgentsSpawn(cmd, args)
 	},
 }
@@ -126,7 +125,7 @@ var matrixAgentsLogsCmd = &cobra.Command{
 	Short: "Show agent logs",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		agent := cfg.GetAgent(args[0])
 		if agent == nil {
 			return fmt.Errorf("agent %q not found", args[0])
@@ -140,9 +139,9 @@ var matrixAgentsLogsCmd = &cobra.Command{
 
 func init() {
 	matrixAgentsSpawnCmd.Flags().StringVarP(&mxAgentModel, "model", "m", "claude-sonnet-4-20250514", "Claude model")
-	matrixAgentsSpawnCmd.Flags().StringVarP(&mxAgentRoom, "room", "r", "", "Room to join")
-	matrixAgentsSpawnCmd.Flags().StringSliceVar(&mxAgentRooms, "rooms", nil, "Multiple rooms")
-	matrixAgentsSpawnCmd.Flags().StringVar(&mxAgentPassword, "password", "", "Agent password")
+	matrixAgentsSpawnCmd.Flags().StringVarP(&mxAgentChannel, "channel", "c", "", "Channel ID to join")
+	matrixAgentsSpawnCmd.Flags().StringSliceVar(&mxAgentChannels, "channels", nil, "Multiple channel IDs")
+	matrixAgentsSpawnCmd.Flags().StringVar(&mxAgentPassword, "password", "", "Agent account password")
 	matrixAgentsSpawnCmd.Flags().StringVar(&mxAgentPrompt, "prompt", "", "System prompt")
 
 	matrixAgentsCmd.AddCommand(matrixAgentsSpawnCmd)
@@ -155,11 +154,11 @@ func init() {
 
 func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	cfg, _ := matrixcfg.Load()
+	cfg, _ := mmcfg.Load()
 
-	rooms := mxAgentRooms
-	if mxAgentRoom != "" {
-		rooms = append(rooms, mxAgentRoom)
+	channels := mxAgentChannels
+	if mxAgentChannel != "" {
+		channels = append(channels, mxAgentChannel)
 	}
 	if mxAgentPassword == "" {
 		mxAgentPassword = matrixGeneratePassword(24)
@@ -169,50 +168,66 @@ func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 	fmt.Println(theme.RenderBanner("SPAWN AGENT"))
 	fmt.Println()
 
-	// Create Matrix user
+	client := mmClient(cfg.Server.URL, cfg.Server.Token)
+
+	// Create or reuse user
 	agentUsername := "agent-" + name
-	admin := matrixapi.NewAdminClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken, cfg.Homeserver.Domain)
-	if err := admin.CreateUser(agentUsername, mxAgentPassword, fmt.Sprintf("[Bot] %s", name), false); err != nil {
-		if !strings.Contains(err.Error(), "User ID already taken") {
-			return err
+	agentEmail := agentUsername + "@chat.local"
+	var agentUserID string
+
+	u, err := client.GetUserByUsername(agentUsername)
+	if err != nil {
+		// Create new user
+		u, err = client.CreateUser(agentUsername, agentEmail, mxAgentPassword)
+		if err != nil {
+			return fmt.Errorf("create user: %w", err)
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolInfo, theme.DimTextStyle.Render("User exists, reusing"))
+		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("User created: @"+agentUsername))
 	} else {
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("User created: "+agentUsername))
+		fmt.Printf("  %s %s\n", theme.SymbolInfo, theme.DimTextStyle.Render("User exists, reusing @"+agentUsername))
+		// Reset password so we can log in
+		if err := client.ResetPassword(u.ID, mxAgentPassword); err != nil {
+			return fmt.Errorf("reset password: %w", err)
+		}
+	}
+	agentUserID = u.ID
+
+	// Add to team
+	if cfg.Server.TeamID != "" {
+		_ = client.AddTeamMember(cfg.Server.TeamID, agentUserID)
 	}
 
-	// Login
-	agentClient := matrixapi.NewClient(cfg.Homeserver.URL, "")
-	token, err := agentClient.Login(agentUsername, mxAgentPassword)
+	// Login as agent to get token
+	fmt.Printf("  %s %s\n", theme.SymbolLoading, theme.InfoStyle.Render("Authenticating agent..."))
+	agentToken, err := mmClient(cfg.Server.URL, "").Login(agentUsername, mxAgentPassword)
 	if err != nil {
-		return fmt.Errorf("login failed: %w", err)
+		return fmt.Errorf("agent login: %w", err)
 	}
-	agentClient.AccessToken = token
 	fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Authenticated"))
 
-	// Join rooms
-	userID := fmt.Sprintf("@%s:%s", agentUsername, cfg.Homeserver.Domain)
-	adminClient := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-	for _, room := range rooms {
-		adminClient.InviteUser(room, userID)
-		if _, err := agentClient.JoinRoom(room); err != nil {
-			fmt.Printf("  %s %s\n", theme.SymbolWarning, theme.WarningStyle.Render("Join "+room+": "+err.Error()))
+	// Join channels
+	agentClient := mmClient(cfg.Server.URL, agentToken)
+	for _, chID := range channels {
+		if err := agentClient.AddChannelMember(chID, agentUserID); err != nil {
+			fmt.Printf("  %s %s\n", theme.SymbolWarning,
+				theme.WarningStyle.Render("Join "+chID+": "+err.Error()))
 		} else {
-			fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Joined "+room))
+			fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Joined "+chID))
 		}
 	}
 
-	// Spawn daemon
-	logDir := filepath.Join(matrixcfg.Dir(), "logs")
+	// Write runner script
+	logDir := filepath.Join(mmcfg.Dir(), "logs")
 	os.MkdirAll(logDir, 0755)
 	logFile := filepath.Join(logDir, "agent-"+name+".log")
 
-	runnerScript := matrixAgentRunner(name, cfg.Homeserver.URL, token, mxAgentModel, mxAgentPrompt)
-	runnerDir := filepath.Join(matrixcfg.Dir(), "runners")
+	runnerScript := mmAgentRunner(name, cfg.Server.URL, agentToken, agentUserID, mxAgentModel, mxAgentPrompt, channels)
+	runnerDir := filepath.Join(mmcfg.Dir(), "runners")
 	os.MkdirAll(runnerDir, 0755)
 	runnerPath := filepath.Join(runnerDir, "agent-"+name+".sh")
 	os.WriteFile(runnerPath, []byte(runnerScript), 0755)
 
+	// Start daemon
 	logF, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
@@ -232,12 +247,12 @@ func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %s %s PID %d\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Daemon started"), pid)
 
 	// Save
-	cfg.AddAgent(matrixcfg.AgentConfig{
-		Name: name, UserID: userID, AccessToken: token,
-		Rooms: rooms, Model: mxAgentModel, Status: "running",
+	cfg.AddAgent(mmcfg.AgentConfig{
+		Name: name, UserID: agentUserID, Token: agentToken,
+		Channels: channels, Model: mxAgentModel, Status: "running",
 		PID: pid, LogFile: logFile,
 	})
-	cfg.AddDaemon(matrixcfg.DaemonConfig{
+	cfg.AddDaemon(mmcfg.DaemonConfig{
 		Name: "agent-" + name, PID: pid, Status: "running",
 		StartedAt: time.Now().Format(time.RFC3339), Type: "agent", LogFile: logFile,
 	})
@@ -245,26 +260,29 @@ func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Agent:"), theme.InfoStyle.Render(name))
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("User:"), theme.DimTextStyle.Render(userID))
+	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("User:"), theme.DimTextStyle.Render("@"+agentUsername))
 	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Model:"), theme.DimTextStyle.Render(mxAgentModel))
 	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Logs:"), theme.DimTextStyle.Render(logFile))
 	fmt.Println()
 	return nil
 }
 
-func matrixAgentRunner(name, homeserverURL, token, model, systemPrompt string) string {
+func mmAgentRunner(name, mmURL, token, botUserID, model, systemPrompt string, channels []string) string {
 	prompt := systemPrompt
 	if prompt == "" {
-		prompt = fmt.Sprintf("You are %s, a helpful AI assistant in a Matrix chat. Be concise.", name)
+		prompt = fmt.Sprintf("You are %s, a helpful AI assistant in a team chat. Be concise and helpful.", name)
 	}
 	escapedPrompt := strings.ReplaceAll(prompt, "'", "'\\''")
+	channelList := strings.Join(channels, " ")
 
 	return fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
-HOMESERVER="%s"
+MM_URL="%s"
 TOKEN="%s"
+BOT_USER_ID="%s"
 MODEL="%s"
 AGENT_NAME="%s"
+CHANNELS=(%s)
 SYSTEM_PROMPT='%s'
 BACKOFF=1
 MAX_BACKOFF=60
@@ -274,66 +292,53 @@ command -v curl >/dev/null || { log "curl not found"; exit 1; }
 command -v jq >/dev/null || { log "jq not found"; exit 1; }
 command -v claude >/dev/null || { log "claude not found"; exit 1; }
 
-send_message() {
-    local room_id="$1" body="$2"
-    curl -sf -X PUT \
+send_post() {
+    local channel_id="$1" message="$2"
+    curl -sf -X POST \
         -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
-        -d "$(jq -n --arg b "$body" '{msgtype:"m.text", body:$b}')" \
-        "$HOMESERVER/_matrix/client/v3/rooms/$room_id/send/m.room.message/$(date +%%s%%N)" \
-        >/dev/null 2>&1
+        -d "$(jq -n --arg c "$channel_id" --arg m "$message" '{channel_id:$c,message:$m}')" \
+        "$MM_URL/api/v4/posts" >/dev/null 2>&1
 }
 
-log "Starting"
-SINCE=$(curl -sf -H "Authorization: Bearer $TOKEN" \
-    "$HOMESERVER/_matrix/client/v3/sync?timeout=0" \
-    | jq -r '.next_batch // empty' 2>/dev/null) || true
-log "Initial sync (since=${SINCE:-none})"
+log "Starting. Channels: ${CHANNELS[*]:-none}"
+SINCE=$(date +%%s%%3N)
 
 while true; do
-    SYNC_URL="$HOMESERVER/_matrix/client/v3/sync?timeout=30000"
-    [ -n "${SINCE:-}" ] && SYNC_URL="$SYNC_URL&since=$SINCE"
-    RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$SYNC_URL" 2>/dev/null) || {
-        log "Sync failed, backoff ${BACKOFF}s"
-        sleep "$BACKOFF"
-        BACKOFF=$(( BACKOFF * 2 > MAX_BACKOFF ? MAX_BACKOFF : BACKOFF * 2 ))
-        continue
-    }
-    BACKOFF=1
-    NEW_SINCE=$(echo "$RESP" | jq -r '.next_batch // empty' 2>/dev/null)
-    [ -n "$NEW_SINCE" ] && SINCE="$NEW_SINCE"
+    for channel_id in "${CHANNELS[@]:-}"; do
+        [ -z "$channel_id" ] && continue
+        RESP=$(curl -sf \
+            -H "Authorization: Bearer $TOKEN" \
+            "$MM_URL/api/v4/channels/$channel_id/posts?since=$SINCE&per_page=50" 2>/dev/null) || {
+            log "Poll failed for $channel_id, backoff ${BACKOFF}s"
+            sleep "$BACKOFF"
+            BACKOFF=$(( BACKOFF * 2 > MAX_BACKOFF ? MAX_BACKOFF : BACKOFF * 2 ))
+            continue
+        }
+        BACKOFF=1
 
-    echo "$RESP" | jq -r '
-        .rooms.join // {} | to_entries[] |
-        .key as $room |
-        .value.timeline.events[]? |
-        select(.type == "m.room.message") |
-        select(.sender | test("agent-'"$AGENT_NAME"'") | not) |
-        select(.content.body // "" | length > 0) |
-        [$room, .sender, .content.body] | @tsv
-    ' 2>/dev/null | while IFS=$'\t' read -r room_id sender body; do
-        log "MSG from $sender in $room_id: ${body:0:80}"
-        response=$(claude -p \
-            --model "$MODEL" \
-            --system-prompt "$SYSTEM_PROMPT" \
-            --no-session-persistence \
-            "$body" 2>/dev/null) || response="Sorry, I encountered an error."
-        [ -z "$response" ] && response="(empty response)"
-        send_message "$room_id" "$response"
-        log "REPLIED in $room_id (${#response} chars)"
+        echo "$RESP" | jq -r --arg bot "$BOT_USER_ID" '
+            .order[] as $id |
+            .posts[$id] |
+            select(.user_id != $bot) |
+            select(.type == "") |
+            select(.message | length > 0) |
+            [.channel_id, .user_id, .message] | @tsv
+        ' 2>/dev/null | while IFS=$'\t' read -r ch_id user_id message; do
+            log "MSG from $user_id in $ch_id: ${message:0:80}"
+            response=$(claude -p \
+                --model "$MODEL" \
+                --system-prompt "$SYSTEM_PROMPT" \
+                --no-session-persistence \
+                "$message" 2>/dev/null) || response="Sorry, I encountered an error."
+            [ -z "$response" ] && response="(empty response)"
+            send_post "$ch_id" "$response"
+            log "REPLIED in $ch_id (${#response} chars)"
+        done
     done
-    sleep 1
-done
-`, homeserverURL, token, model, name, escapedPrompt)
-}
 
-func matrixIsAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(syscall.Signal(0)) == nil
+    SINCE=$(date +%%s%%3N)
+    sleep 2
+done
+`, mmURL, token, botUserID, model, name, channelList, escapedPrompt)
 }

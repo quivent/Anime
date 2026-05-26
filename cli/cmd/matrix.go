@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 
-	"github.com/joshkornreich/anime/internal/matrixcfg"
-	"github.com/joshkornreich/anime/internal/matrixapi"
-	"github.com/joshkornreich/anime/internal/synapse"
+	"github.com/joshkornreich/anime/internal/mmapi"
+	"github.com/joshkornreich/anime/internal/mmcfg"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -19,34 +19,35 @@ import (
 
 var matrixCmd = &cobra.Command{
 	Use:   "matrix",
-	Short: "Matrix/Element homeserver management",
-	Long: `Full-featured Matrix homeserver management — setup, connect, users, rooms,
+	Short: "Mattermost team chat management",
+	Long: `Full-featured Mattermost management — setup, connect, users, channels,
 agents, daemons, messaging.`,
 	Run: matrixWelcome,
 }
 
 func matrixWelcome(cmd *cobra.Command, args []string) {
 	fmt.Println()
-	fmt.Println(theme.RenderBanner("MATRIX"))
+	fmt.Println(theme.RenderBanner("MATTERMOST"))
 	fmt.Println()
-	fmt.Println(theme.InfoStyle.Render("  Matrix/Element Homeserver Management"))
-	fmt.Println(theme.DimTextStyle.Render("  Setup / Users / Rooms / Agents / Daemons"))
+	fmt.Println(theme.InfoStyle.Render("  Mattermost Team Chat Management"))
+	fmt.Println(theme.DimTextStyle.Render("  Setup / Users / Channels / Agents / Daemons"))
 	fmt.Println()
 
 	quick := []struct{ cmd, desc string }{
-		{"anime matrix setup", "Deploy a native Synapse homeserver"},
+		{"anime matrix setup", "Deploy a Mattermost server"},
 		{"anime matrix connect --url <url>", "Connect to an existing server"},
 		{"anime matrix status", "Check server health"},
 		{"anime matrix users add <name>", "Create a user"},
-		{"anime matrix rooms create <name>", "Create a room"},
+		{"anime matrix channels create <name>", "Create a channel"},
 		{"anime matrix agents spawn <name>", "Spawn a Claude Code bot"},
-		{"anime matrix send <room> \"msg\"", "Send a message"},
+		{"anime matrix send <channel> \"msg\"", "Send a message"},
+		{"anime matrix watch <channel>", "Live-tail channel messages"},
 	}
 	fmt.Println(theme.GlowStyle.Render("Quick Start:"))
 	fmt.Println()
 	for _, q := range quick {
 		fmt.Printf("  %s  %s\n",
-			theme.HighlightStyle.Render(fmt.Sprintf("%-40s", q.cmd)),
+			theme.HighlightStyle.Render(fmt.Sprintf("%-44s", q.cmd)),
 			theme.DimTextStyle.Render(q.desc))
 	}
 	fmt.Println()
@@ -56,7 +57,7 @@ func matrixWelcome(cmd *cobra.Command, args []string) {
 
 var matrixConfigCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Manage Matrix CLI configuration",
+	Short: "Manage CLI configuration",
 	Run:   func(cmd *cobra.Command, args []string) { cmd.Help() },
 }
 
@@ -64,14 +65,14 @@ var matrixConfigShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := matrixcfg.Load()
+		cfg, err := mmcfg.Load()
 		if err != nil {
 			return err
 		}
 		fmt.Println()
-		fmt.Println(theme.RenderBanner("MATRIX CONFIG"))
+		fmt.Println(theme.RenderBanner("CONFIG"))
 		fmt.Println()
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("File:"), theme.DimTextStyle.Render(matrixcfg.Path()))
+		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("File:"), theme.DimTextStyle.Render(mmcfg.Path()))
 		fmt.Println()
 		data, _ := yaml.Marshal(cfg)
 		fmt.Println(theme.DimTextStyle.Render(string(data)))
@@ -84,28 +85,31 @@ var matrixConfigSetCmd = &cobra.Command{
 	Short: "Set a configuration value",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := matrixcfg.Load()
+		cfg, err := mmcfg.Load()
 		if err != nil {
 			return err
 		}
 		switch args[0] {
-		case "homeserver.url":
-			cfg.Homeserver.URL = args[1]
-		case "homeserver.domain":
-			cfg.Homeserver.Domain = args[1]
-		case "homeserver.admin_token":
-			cfg.Homeserver.AdminToken = args[1]
-		case "homeserver.admin_user":
-			cfg.Homeserver.AdminUser = args[1]
-		case "synapse.data_dir":
-			cfg.Synapse.DataDir = args[1]
+		case "server.url":
+			cfg.Server.URL = args[1]
+		case "server.token":
+			cfg.Server.Token = args[1]
+		case "server.username":
+			cfg.Server.Username = args[1]
+		case "server.team_id":
+			cfg.Server.TeamID = args[1]
+		case "server.team_name":
+			cfg.Server.TeamName = args[1]
+		case "install.data_dir":
+			cfg.Install.DataDir = args[1]
 		default:
 			return fmt.Errorf("unknown key: %s", args[0])
 		}
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s = %s\n", theme.SymbolSuccess, theme.HighlightStyle.Render(args[0]), theme.DimTextStyle.Render(args[1]))
+		fmt.Printf("  %s %s = %s\n", theme.SymbolSuccess,
+			theme.HighlightStyle.Render(args[0]), theme.DimTextStyle.Render(args[1]))
 		return nil
 	},
 }
@@ -114,18 +118,18 @@ var matrixConfigInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize a fresh configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if _, err := os.Stat(matrixcfg.Path()); err == nil {
-			fmt.Printf("  %s\n", theme.WarningStyle.Render("Config already exists: "+matrixcfg.Path()))
+		if _, err := os.Stat(mmcfg.Path()); err == nil {
+			fmt.Printf("  %s\n", theme.WarningStyle.Render("Config already exists: "+mmcfg.Path()))
 			return nil
 		}
-		cfg := &matrixcfg.Config{
-			Homeserver: matrixcfg.HomeserverConfig{URL: "http://localhost:8008", Domain: "localhost"},
-			Synapse:    matrixcfg.SynapseConfig{DataDir: matrixcfg.Dir() + "/data"},
+		cfg := &mmcfg.Config{
+			Server: mmcfg.ServerConfig{URL: "http://localhost:8065"},
 		}
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Config initialized: "+matrixcfg.Path()))
+		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
+			theme.SuccessStyle.Render("Config initialized: "+mmcfg.Path()))
 		return nil
 	},
 }
@@ -135,35 +139,32 @@ var matrixConfigInitCmd = &cobra.Command{
 var matrixSendAsUser string
 
 var matrixSendCmd = &cobra.Command{
-	Use:   "send <room-id> <message>",
-	Short: "Send a message to a room",
+	Use:   "send <channel-id> <message>",
+	Short: "Send a message to a channel",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		roomID := args[0]
+		channelID := args[0]
 		message := strings.Join(args[1:], " ")
-		cfg, err := matrixcfg.Load()
+		cfg, err := mmcfg.Load()
 		if err != nil {
 			return err
 		}
-		token := cfg.Homeserver.AdminToken
-		sender := cfg.Homeserver.AdminUser
+		token := cfg.Server.Token
 		if matrixSendAsUser != "" {
 			agent := cfg.GetAgent(matrixSendAsUser)
 			if agent == nil {
 				return fmt.Errorf("agent %q not found", matrixSendAsUser)
 			}
-			token = agent.AccessToken
-			sender = agent.UserID
+			token = agent.Token
 		}
-		client := matrixapi.NewClient(cfg.Homeserver.URL, token)
-		eventID, err := client.SendMessage(roomID, message)
+		client := mmClient(cfg.Server.URL, token)
+		post, err := client.CreatePost(channelID, message, nil)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s  %s -> %s  %s\n",
+		fmt.Printf("  %s %s  %s\n",
 			theme.SymbolStar, theme.SuccessStyle.Render("Sent"),
-			theme.DimTextStyle.Render(sender), theme.DimTextStyle.Render(roomID),
-			theme.DimTextStyle.Render(eventID))
+			theme.DimTextStyle.Render(post.ID))
 		return nil
 	},
 }
@@ -190,26 +191,24 @@ func matrixRunBash(command string) error {
 	return cmd.Run()
 }
 
-func matrixSplitUserID(userID string) (string, string) {
-	if len(userID) < 2 || userID[0] != '@' {
-		return userID, ""
-	}
-	userID = userID[1:]
-	for i, c := range userID {
-		if c == ':' {
-			return userID[:i], userID[i+1:]
-		}
-	}
-	return userID, ""
-}
-
 func matrixSeparator() string {
 	return theme.SuccessStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 }
 
-// keep imports used
-var _ = synapse.IsHealthy
-var _ = matrixapi.NewClient
+func matrixIsAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+func mmClient(url, token string) *mmapi.Client {
+	return mmapi.NewClient(url, token)
+}
 
 // ─── init ───────────────────────────────────────────────────────────────────
 

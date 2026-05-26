@@ -4,48 +4,80 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/joshkornreich/anime/internal/matrixapi"
-	"github.com/joshkornreich/anime/internal/matrixcfg"
+	"github.com/joshkornreich/anime/internal/mmcfg"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
 var (
-	mxRoomTopic  string
-	mxRoomInvite []string
-	mxRoomDirect bool
+	mxChannelPurpose string
+	mxChannelPrivate bool
+	mxChannelInvite  []string
 )
 
 var matrixRoomsCmd = &cobra.Command{
-	Use:     "rooms",
-	Aliases: []string{"room", "r"},
-	Short:   "Manage Matrix rooms",
+	Use:     "channels",
+	Aliases: []string{"channel", "rooms", "room", "r"},
+	Short:   "Manage Mattermost channels",
 	Run:     func(cmd *cobra.Command, args []string) { cmd.Help() },
 }
 
 var matrixRoomsCreateCmd = &cobra.Command{
 	Use:   "create <name>",
-	Short: "Create a new room",
+	Short: "Create a new channel",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		cfg, _ := matrixcfg.Load()
-		invite := make([]string, len(mxRoomInvite))
-		for i, u := range mxRoomInvite {
-			if !strings.HasPrefix(u, "@") {
-				invite[i] = fmt.Sprintf("@%s:%s", u, cfg.Homeserver.Domain)
-			} else {
-				invite[i] = u
+		cfg, _ := mmcfg.Load()
+		client := mmClient(cfg.Server.URL, cfg.Server.Token)
+
+		teamID := cfg.Server.TeamID
+		if teamID == "" {
+			teams, err := client.GetTeams(0, 1)
+			if err != nil || len(teams) == 0 {
+				return fmt.Errorf("no team configured — run anime matrix connect first")
 			}
+			teamID = teams[0].ID
 		}
-		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-		roomID, err := client.CreateRoom(name, mxRoomTopic, invite, mxRoomDirect)
+
+		channelType := "O"
+		if mxChannelPrivate {
+			channelType = "P"
+		}
+
+		// Sanitize name: lowercase, no spaces
+		slug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+
+		ch, err := client.CreateChannel(teamID, slug, name, channelType, mxChannelPurpose)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Room created"))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Room ID:"), theme.DimTextStyle.Render(roomID))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Name:"), theme.DimTextStyle.Render(name))
+
+		// Invite users
+		for _, username := range mxChannelInvite {
+			u, err := client.GetUserByUsername(strings.TrimPrefix(username, "@"))
+			if err != nil {
+				fmt.Printf("  %s %s\n", theme.SymbolWarning,
+					theme.WarningStyle.Render("User not found: "+username))
+				continue
+			}
+			if err := client.AddChannelMember(ch.ID, u.ID); err != nil {
+				fmt.Printf("  %s %s\n", theme.SymbolWarning,
+					theme.WarningStyle.Render("Invite "+username+": "+err.Error()))
+			} else {
+				fmt.Printf("  %s %s\n", theme.SymbolSuccess,
+					theme.SuccessStyle.Render("Invited "+username))
+			}
+		}
+
+		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Channel created"))
+		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("ID:"), theme.DimTextStyle.Render(ch.ID))
+		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Name:"), theme.DimTextStyle.Render(ch.DisplayName))
+		visibility := "public"
+		if mxChannelPrivate {
+			visibility = "private"
+		}
+		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Type:"), theme.DimTextStyle.Render(visibility))
 		fmt.Println()
 		return nil
 	},
@@ -54,28 +86,45 @@ var matrixRoomsCreateCmd = &cobra.Command{
 var matrixRoomsListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List all rooms",
+	Short:   "List all channels",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		fmt.Println()
-		fmt.Println(theme.RenderBanner("MATRIX ROOMS"))
+		fmt.Println(theme.RenderBanner("CHANNELS"))
 		fmt.Println()
-		admin := matrixapi.NewAdminClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken, cfg.Homeserver.Domain)
-		rooms, err := admin.ListRooms(0, 100)
+		client := mmClient(cfg.Server.URL, cfg.Server.Token)
+
+		teamID := cfg.Server.TeamID
+		if teamID == "" {
+			teams, err := client.GetTeams(0, 1)
+			if err != nil || len(teams) == 0 {
+				return fmt.Errorf("no team configured — run anime matrix connect first")
+			}
+			teamID = teams[0].ID
+		}
+
+		channels, err := client.GetTeamChannels(teamID, 0, 200)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  Total: %s\n\n", theme.HighlightStyle.Render(fmt.Sprintf("%d", rooms.Total)))
-		for _, r := range rooms.Rooms {
-			name := r.Name
-			if name == "" {
-				name = "(unnamed)"
+		fmt.Printf("  Total: %s\n\n", theme.HighlightStyle.Render(fmt.Sprintf("%d", len(channels))))
+		for _, ch := range channels {
+			typeStr := ""
+			switch ch.Type {
+			case "P":
+				typeStr = theme.DimTextStyle.Render("[private]")
+			case "D":
+				typeStr = theme.DimTextStyle.Render("[direct]")
 			}
-			fmt.Printf("  %s %-24s %s\n", theme.SymbolStar, theme.HighlightStyle.Render(name), theme.DimTextStyle.Render(fmt.Sprintf("%d members", r.NumMembers)))
-			if r.Topic != "" {
-				fmt.Printf("    %s\n", theme.DimTextStyle.Render(r.Topic))
+			fmt.Printf("  %s %-24s %s %s\n",
+				theme.SymbolStar,
+				theme.HighlightStyle.Render(ch.DisplayName),
+				theme.DimTextStyle.Render(fmt.Sprintf("%d members", ch.MemberCount)),
+				typeStr)
+			if ch.Purpose != "" {
+				fmt.Printf("    %s\n", theme.DimTextStyle.Render(ch.Purpose))
 			}
-			fmt.Printf("    %s\n", theme.DimTextStyle.Render(r.RoomID))
+			fmt.Printf("    %s\n", theme.DimTextStyle.Render(ch.ID))
 		}
 		fmt.Println()
 		return nil
@@ -83,110 +132,75 @@ var matrixRoomsListCmd = &cobra.Command{
 }
 
 var matrixRoomsJoinCmd = &cobra.Command{
-	Use:   "join <room-id>",
-	Short: "Join a room",
+	Use:   "join <channel-id>",
+	Short: "Join a channel",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
-		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-		roomID, err := client.JoinRoom(args[0])
+		cfg, _ := mmcfg.Load()
+		client := mmClient(cfg.Server.URL, cfg.Server.Token)
+		me, err := client.GetMe()
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Joined"), theme.DimTextStyle.Render(roomID))
+		if err := client.AddChannelMember(args[0], me.ID); err != nil {
+			return err
+		}
+		fmt.Printf("  %s %s %s\n", theme.SymbolSuccess,
+			theme.SuccessStyle.Render("Joined"), theme.DimTextStyle.Render(args[0]))
 		return nil
 	},
 }
 
 var matrixRoomsLeaveCmd = &cobra.Command{
-	Use:   "leave <room-id>",
-	Short: "Leave a room",
+	Use:   "leave <channel-id>",
+	Short: "Leave a channel",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
-		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-		return client.LeaveRoom(args[0])
+		cfg, _ := mmcfg.Load()
+		client := mmClient(cfg.Server.URL, cfg.Server.Token)
+		me, err := client.GetMe()
+		if err != nil {
+			return err
+		}
+		if err := client.RemoveChannelMember(args[0], me.ID); err != nil {
+			return err
+		}
+		fmt.Printf("  %s %s %s\n", theme.SymbolSuccess,
+			theme.SuccessStyle.Render("Left"), theme.DimTextStyle.Render(args[0]))
+		return nil
 	},
 }
 
 var matrixRoomsInviteCmd = &cobra.Command{
-	Use:   "invite <room-id> <user>",
-	Short: "Invite a user to a room",
+	Use:   "invite <channel-id> <username>",
+	Short: "Invite a user to a channel",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
-		uid := args[1]
-		if !strings.HasPrefix(uid, "@") {
-			uid = fmt.Sprintf("@%s:%s", uid, cfg.Homeserver.Domain)
-		}
-		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-		if err := client.InviteUser(args[0], uid); err != nil {
-			return err
-		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Invited "+uid))
-		return nil
-	},
-}
-
-var matrixRoomsAliasCmd = &cobra.Command{
-	Use:   "alias <room-id> <alias>",
-	Short: "Set a room alias (e.g. #general:localhost)",
-	Example: `  anime matrix rooms alias '!abc:localhost' '#general:localhost'`,
-	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
-		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-		if err := client.SetRoomAlias(args[1], args[0]); err != nil {
-			return err
-		}
-		fmt.Printf("  %s %s -> %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render(args[1]), theme.DimTextStyle.Render(args[0]))
-		return nil
-	},
-}
-
-var matrixRoomsUnaliasCmd = &cobra.Command{
-	Use:   "unalias <alias>",
-	Short: "Remove a room alias",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
-		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-		if err := client.DeleteRoomAlias(args[0]); err != nil {
-			return err
-		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Removed "+args[0]))
-		return nil
-	},
-}
-
-var matrixRoomsResolveCmd = &cobra.Command{
-	Use:   "resolve <alias>",
-	Short: "Resolve a room alias to a room ID",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
-		client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-		roomID, err := client.ResolveAlias(args[0])
+		cfg, _ := mmcfg.Load()
+		client := mmClient(cfg.Server.URL, cfg.Server.Token)
+		username := strings.TrimPrefix(args[1], "@")
+		u, err := client.GetUserByUsername(username)
 		if err != nil {
+			return fmt.Errorf("user not found: %w", err)
+		}
+		if err := client.AddChannelMember(args[0], u.ID); err != nil {
 			return err
 		}
-		fmt.Printf("  %s -> %s\n", theme.HighlightStyle.Render(args[0]), theme.DimTextStyle.Render(roomID))
+		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
+			theme.SuccessStyle.Render("Invited @"+u.Username))
 		return nil
 	},
 }
 
 func init() {
-	matrixRoomsCreateCmd.Flags().StringVarP(&mxRoomTopic, "topic", "t", "", "Room topic")
-	matrixRoomsCreateCmd.Flags().StringSliceVarP(&mxRoomInvite, "invite", "i", nil, "Users to invite")
-	matrixRoomsCreateCmd.Flags().BoolVar(&mxRoomDirect, "direct", false, "Direct message room")
+	matrixRoomsCreateCmd.Flags().StringVarP(&mxChannelPurpose, "purpose", "t", "", "Channel purpose/description")
+	matrixRoomsCreateCmd.Flags().BoolVar(&mxChannelPrivate, "private", false, "Create a private channel")
+	matrixRoomsCreateCmd.Flags().StringSliceVarP(&mxChannelInvite, "invite", "i", nil, "Users to invite")
 
 	matrixRoomsCmd.AddCommand(matrixRoomsCreateCmd)
 	matrixRoomsCmd.AddCommand(matrixRoomsListCmd)
 	matrixRoomsCmd.AddCommand(matrixRoomsJoinCmd)
 	matrixRoomsCmd.AddCommand(matrixRoomsLeaveCmd)
 	matrixRoomsCmd.AddCommand(matrixRoomsInviteCmd)
-	matrixRoomsCmd.AddCommand(matrixRoomsAliasCmd)
-	matrixRoomsCmd.AddCommand(matrixRoomsUnaliasCmd)
-	matrixRoomsCmd.AddCommand(matrixRoomsResolveCmd)
 	matrixCmd.AddCommand(matrixRoomsCmd)
 }

@@ -5,124 +5,136 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/joshkornreich/anime/internal/matrixapi"
-	"github.com/joshkornreich/anime/internal/matrixcfg"
+	"github.com/joshkornreich/anime/internal/mmcfg"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
-var mxWatchAllRooms bool
+var mxWatchAll bool
 
 var matrixWatchCmd = &cobra.Command{
-	Use:   "watch [room-id]",
-	Short: "Tail live messages from a room (or all rooms)",
-	Long: `Stream messages in real-time using Matrix /sync long-polling.
-Press Ctrl-C to stop.`,
-	Example: `  anime matrix watch '!abc:localhost'
-  anime matrix watch --all
-  anime matrix watch '#general:localhost'`,
-	RunE: runMatrixWatch,
+	Use:   "watch <channel-id>",
+	Short: "Live-tail messages from a channel",
+	Example: `  anime matrix watch <channel-id>
+  anime matrix watch --all`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, _ := mmcfg.Load()
+		client := mmClient(cfg.Server.URL, cfg.Server.Token)
+
+		// Determine channels to watch
+		var channelIDs []string
+		if mxWatchAll {
+			if cfg.Server.TeamID == "" {
+				return fmt.Errorf("no team configured — run anime matrix connect first")
+			}
+			me, err := client.GetMe()
+			if err != nil {
+				return err
+			}
+			channels, err := client.GetUserChannels(cfg.Server.TeamID, me.ID)
+			if err != nil {
+				return err
+			}
+			for _, ch := range channels {
+				if ch.Type != "D" {
+					channelIDs = append(channelIDs, ch.ID)
+				}
+			}
+			fmt.Printf("  %s %s\n\n", theme.InfoStyle.Render("Watching"),
+				theme.HighlightStyle.Render(fmt.Sprintf("%d channels", len(channelIDs))))
+		} else {
+			if len(args) == 0 {
+				return fmt.Errorf("specify a channel ID or use --all")
+			}
+			channelIDs = []string{args[0]}
+			if ch, err := client.GetChannel(args[0]); err == nil {
+				fmt.Printf("  %s %s\n\n", theme.InfoStyle.Render("Watching"),
+					theme.HighlightStyle.Render("#"+ch.DisplayName))
+			}
+		}
+
+		if len(channelIDs) == 0 {
+			return fmt.Errorf("no channels to watch")
+		}
+
+		// Cache channel and user names
+		chanNames := map[string]string{}
+		for _, id := range channelIDs {
+			if ch, err := client.GetChannel(id); err == nil {
+				chanNames[id] = ch.DisplayName
+			} else {
+				chanNames[id] = id
+			}
+		}
+		userNames := map[string]string{}
+		resolveUser := func(userID string) string {
+			if name, ok := userNames[userID]; ok {
+				return name
+			}
+			if u, err := client.GetUser(userID); err == nil {
+				userNames[userID] = u.Username
+				return u.Username
+			}
+			return userID
+		}
+
+		fmt.Println(theme.DimTextStyle.Render("  Ctrl-C to stop"))
+		fmt.Println()
+
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+		since := time.Now().UnixMilli()
+
+		for {
+			select {
+			case <-sig:
+				fmt.Println()
+				fmt.Println(theme.DimTextStyle.Render("  Stopped"))
+				return nil
+			default:
+			}
+
+			for _, chID := range channelIDs {
+				pl, err := client.GetChannelPosts(chID, since, 50)
+				if err != nil {
+					continue
+				}
+
+				// Reverse order array for chronological display
+				for i := len(pl.OrderArr) - 1; i >= 0; i-- {
+					p := pl.Posts[pl.OrderArr[i]]
+					if p.Type != "" || p.CreateAt <= since {
+						continue
+					}
+					chanName := chanNames[p.ChannelID]
+					username := resolveUser(p.UserID)
+					ts := time.Unix(p.CreateAt/1000, 0).Format("15:04:05")
+
+					msg := strings.ReplaceAll(p.Message, "\n", " ")
+					if len(msg) > 120 {
+						msg = msg[:117] + "..."
+					}
+
+					fmt.Printf("  %s %s %s: %s\n",
+						theme.DimTextStyle.Render(fmt.Sprintf("[%s]", ts)),
+						theme.HighlightStyle.Render("#"+chanName),
+						theme.InfoStyle.Render("@"+username),
+						msg)
+				}
+			}
+
+			since = time.Now().UnixMilli()
+			time.Sleep(2 * time.Second)
+		}
+	},
 }
 
 func init() {
-	matrixWatchCmd.Flags().BoolVar(&mxWatchAllRooms, "all", false, "Watch all joined rooms")
+	matrixWatchCmd.Flags().BoolVar(&mxWatchAll, "all", false, "Watch all joined channels")
 	matrixCmd.AddCommand(matrixWatchCmd)
-}
-
-func runMatrixWatch(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 && !mxWatchAllRooms {
-		return fmt.Errorf("specify a room ID or use --all")
-	}
-
-	cfg, _ := matrixcfg.Load()
-	client := matrixapi.NewClient(cfg.Homeserver.URL, cfg.Homeserver.AdminToken)
-
-	filterRoom := ""
-	if len(args) > 0 {
-		filterRoom = args[0]
-		// Resolve alias if needed
-		if strings.HasPrefix(filterRoom, "#") {
-			resolved, err := client.ResolveAlias(filterRoom)
-			if err != nil {
-				return fmt.Errorf("cannot resolve alias %s: %w", filterRoom, err)
-			}
-			filterRoom = resolved
-		}
-	}
-
-	fmt.Println()
-	if filterRoom != "" {
-		fmt.Printf("  %s %s %s\n", theme.SymbolBolt, theme.InfoStyle.Render("Watching"), theme.HighlightStyle.Render(filterRoom))
-	} else {
-		fmt.Printf("  %s %s\n", theme.SymbolBolt, theme.InfoStyle.Render("Watching all rooms"))
-	}
-	fmt.Println(theme.DimTextStyle.Render("  Ctrl-C to stop"))
-	fmt.Println()
-
-	// Initial sync to get the since token (skip old messages)
-	syncResp, err := client.Sync("", 0)
-	if err != nil {
-		return fmt.Errorf("initial sync failed: %w", err)
-	}
-	since := syncResp.NextBatch
-
-	// Handle Ctrl-C
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
-
-	for {
-		select {
-		case <-sigCh:
-			fmt.Println()
-			fmt.Printf("  %s\n", theme.DimTextStyle.Render("Stopped"))
-			return nil
-		default:
-		}
-
-		resp, err := client.Sync(since, 30000)
-		if err != nil {
-			fmt.Printf("  %s %s\n", theme.SymbolWarning, theme.WarningStyle.Render("sync error: "+err.Error()))
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		since = resp.NextBatch
-
-		for roomID, room := range resp.Rooms.Join {
-			if filterRoom != "" && roomID != filterRoom {
-				continue
-			}
-			for _, ev := range room.Timeline.Events {
-				if ev.Type != "m.room.message" {
-					continue
-				}
-				body, _ := ev.Content["body"].(string)
-				if body == "" {
-					continue
-				}
-				ts := time.UnixMilli(ev.OriginTS).Format("15:04:05")
-				sender := ev.Sender
-				// Shorten sender for display
-				if idx := strings.Index(sender, ":"); idx > 0 {
-					sender = sender[:idx]
-				}
-
-				roomLabel := ""
-				if mxWatchAllRooms {
-					short := roomID
-					if len(short) > 12 {
-						short = short[:12] + "..."
-					}
-					roomLabel = theme.DimTextStyle.Render("["+short+"] ")
-				}
-
-				fmt.Printf("  %s %s%s  %s\n",
-					theme.DimTextStyle.Render(ts),
-					roomLabel,
-					theme.HighlightStyle.Render(sender),
-					body)
-			}
-		}
-	}
 }

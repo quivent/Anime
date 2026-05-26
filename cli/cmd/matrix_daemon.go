@@ -2,10 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"syscall"
 
-	"github.com/joshkornreich/anime/internal/matrixcfg"
+	"github.com/joshkornreich/anime/internal/mmcfg"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -22,9 +21,9 @@ var matrixDaemonListCmd = &cobra.Command{
 	Aliases: []string{"ls"},
 	Short:   "List all daemons",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		fmt.Println()
-		fmt.Println(theme.RenderBanner("MATRIX DAEMONS"))
+		fmt.Println(theme.RenderBanner("DAEMONS"))
 		fmt.Println()
 		if len(cfg.Daemons) == 0 {
 			fmt.Println(theme.DimTextStyle.Render("  No daemons"))
@@ -44,7 +43,8 @@ var matrixDaemonListCmd = &cobra.Command{
 				stStr = theme.ErrorStyle.Render(st)
 			}
 			fmt.Printf("  %s %-20s %s  PID %-8d  %s\n",
-				theme.SymbolBolt, theme.HighlightStyle.Render(d.Name), stStr, d.PID, theme.DimTextStyle.Render(d.Type))
+				theme.SymbolBolt, theme.HighlightStyle.Render(d.Name), stStr, d.PID,
+				theme.DimTextStyle.Render(d.Type))
 			if d.StartedAt != "" {
 				fmt.Printf("    Started: %s\n", theme.DimTextStyle.Render(d.StartedAt))
 			}
@@ -59,7 +59,7 @@ var matrixDaemonStopCmd = &cobra.Command{
 	Short: "Stop a daemon",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		for i, d := range cfg.Daemons {
 			if d.Name == args[0] {
 				if d.PID > 0 {
@@ -79,7 +79,7 @@ var matrixDaemonStopAllCmd = &cobra.Command{
 	Use:   "stop-all",
 	Short: "Stop all daemons",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		count := 0
 		for i, d := range cfg.Daemons {
 			if d.Status == "running" || d.Status == "paused" {
@@ -91,7 +91,8 @@ var matrixDaemonStopAllCmd = &cobra.Command{
 			}
 		}
 		cfg.Save()
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render(fmt.Sprintf("Stopped %d daemons", count)))
+		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
+			theme.SuccessStyle.Render(fmt.Sprintf("Stopped %d daemons", count)))
 		return nil
 	},
 }
@@ -101,7 +102,7 @@ var matrixDaemonPauseCmd = &cobra.Command{
 	Short: "Pause a daemon (SIGSTOP)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		for i, d := range cfg.Daemons {
 			if d.Name == args[0] {
 				if d.PID > 0 {
@@ -122,7 +123,7 @@ var matrixDaemonResumeCmd = &cobra.Command{
 	Short: "Resume a paused daemon (SIGCONT)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		for i, d := range cfg.Daemons {
 			if d.Name == args[0] {
 				if d.PID > 0 {
@@ -143,7 +144,7 @@ var matrixDaemonLogsCmd = &cobra.Command{
 	Short: "Show daemon logs",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
+		cfg, _ := mmcfg.Load()
 		for _, d := range cfg.Daemons {
 			if d.Name == args[0] {
 				if d.LogFile == "" {
@@ -160,8 +161,8 @@ var matrixDaemonCleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Remove dead daemon entries",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := matrixcfg.Load()
-		var alive []matrixcfg.DaemonConfig
+		cfg, _ := mmcfg.Load()
+		var alive []mmcfg.DaemonConfig
 		cleaned := 0
 		for _, d := range cfg.Daemons {
 			if d.Status == "stopped" || !matrixIsAlive(d.PID) {
@@ -172,7 +173,8 @@ var matrixDaemonCleanCmd = &cobra.Command{
 		}
 		cfg.Daemons = alive
 		cfg.Save()
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render(fmt.Sprintf("Cleaned %d dead daemons", cleaned)))
+		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
+			theme.SuccessStyle.Render(fmt.Sprintf("Cleaned %d dead daemons", cleaned)))
 		return nil
 	},
 }
@@ -187,6 +189,3 @@ func init() {
 	matrixDaemonCmd.AddCommand(matrixDaemonCleanCmd)
 	matrixCmd.AddCommand(matrixDaemonCmd)
 }
-
-// Ensure os import is used
-var _ = os.Getpid

@@ -201,7 +201,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		fmt.Println(theme.InfoStyle.Render("🔧 Running config on server..."))
 		fmt.Println()
 
-		sshCmd := exec.Command("ssh", "-t", target, "anime config")
+		sshCmd := sshCommand("-t", target, "anime config")
 		sshCmd.Stdin = os.Stdin
 		sshCmd.Stdout = os.Stdout
 		sshCmd.Stderr = os.Stderr
@@ -243,28 +243,9 @@ func parseServerTarget(server string) (string, error) {
 		}
 	}
 
-	// Otherwise, try to resolve as SSH alias
-	// First check if ssh -G works to resolve the alias
-	sshCmd := exec.Command("ssh", "-G", server)
-	output, err := sshCmd.CombinedOutput()
-	if err == nil {
-		// Parse output to get hostname and user
-		lines := strings.Split(string(output), "\n")
-		var hostname, user string
-		for _, line := range lines {
-			if strings.HasPrefix(line, "hostname ") {
-				hostname = strings.TrimPrefix(line, "hostname ")
-			}
-			if strings.HasPrefix(line, "user ") {
-				user = strings.TrimPrefix(line, "user ")
-			}
-		}
-		if hostname != "" && user != "" {
-			return user + "@" + hostname, nil
-		}
-		if hostname != "" {
-			return "ubuntu@" + hostname, nil
-		}
+	// Otherwise, try to resolve as SSH config alias
+	if isSSHConfigAlias(server) {
+		return server, nil
 	}
 
 	// If SSH alias resolution fails, assume it's a hostname and use ubuntu@
@@ -564,11 +545,15 @@ func addEmbeddedFilesToTar(tw *tar.Writer) error {
 }
 
 func rsyncToServer(localPath, target string) error {
-	// Rsync command
-	rsyncCmd := exec.Command("rsync", "-avz", "--progress", localPath, target+":~/")
+	args := []string{"-avz", "--progress", "-e", sshRsyncFlag()}
+	// If remote host needs WSL, route rsync through wsl
+	if info := getSSHConfigInfo(target); info.NeedsWSL {
+		args = append(args, "--rsync-path=wsl rsync")
+	}
+	args = append(args, localPath, target+":~/")
+	rsyncCmd := exec.Command("rsync", args...)
 	rsyncCmd.Stdout = os.Stdout
 	rsyncCmd.Stderr = os.Stderr
-
 	return rsyncCmd.Run()
 }
 
@@ -598,7 +583,7 @@ func extractOnServer(target string) error {
 		if [ -d ~/anime/cli ]; then echo "Source at ~/anime/cli"; fi
 	`
 
-	sshCmd := exec.Command("ssh", target, extractCmd)
+	sshCmd := sshCommandNonInteractive(target, extractCmd)
 	output, err := sshCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, string(output))
@@ -667,7 +652,7 @@ EOF
 		fi
 	`
 
-	sshCmd := exec.Command("ssh", target, pathScript)
+	sshCmd := sshCommandNonInteractive(target, pathScript)
 	output, err := sshCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, string(output))
@@ -696,7 +681,7 @@ func getGitCommit() string {
 
 // testConnection tests SSH connection to the target
 func testConnection(target string) error {
-	testCmd := exec.Command("ssh", "-o", "ConnectTimeout=5", target, "echo ok")
+	testCmd := sshCommandNonInteractive("-o", "ConnectTimeout=5", target, "echo ok")
 	output, err := testCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, string(output))
@@ -707,7 +692,7 @@ func testConnection(target string) error {
 // detectRemoteArchitecture detects the architecture of the remote server
 func detectRemoteArchitecture(target string) (string, error) {
 	// Run uname -m on the remote server to get architecture
-	archCmd := exec.Command("ssh", "-o", "ConnectTimeout=5", target, "uname -m")
+	archCmd := sshCommandNonInteractive("-o", "ConnectTimeout=5", target, "uname -m")
 	output, err := archCmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to detect remote architecture: %w", err)
@@ -919,7 +904,7 @@ func pushClaudeAssetsOnServer(target string) error {
 		fi
 	`
 
-	sshCmd := exec.Command("ssh", target, pushScript)
+	sshCmd := sshCommandNonInteractive(target, pushScript)
 	output, err := sshCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, string(output))
@@ -932,7 +917,7 @@ func pushClaudeAssetsOnServer(target string) error {
 func verifyServerVersion(target, expectedVersion string) error {
 	// Run anime --version on the server
 	// Use PATH and explicitly call anime from ~/.local/bin
-	versionCmd := exec.Command("ssh", target, "PATH=$HOME/.local/bin:$PATH anime --version 2>&1 | grep 'Version:' | awk '{print $2}'")
+	versionCmd := sshCommandNonInteractive(target, "PATH=$HOME/.local/bin:$PATH anime --version 2>&1 | grep 'Version:' | awk '{print $2}'")
 	output, err := versionCmd.Output()
 	if err != nil {
 		return fmt.Errorf("could not get version from server")

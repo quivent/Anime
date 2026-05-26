@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/joshkornreich/anime/internal/config"
@@ -54,8 +53,8 @@ func runSSH(cmd *cobra.Command, args []string) error {
 	fmt.Println(theme.InfoStyle.Render(fmt.Sprintf("🔗 Connecting to %s...", resolvedTarget)))
 	fmt.Println()
 
-	// Execute SSH command
-	sshCmd := exec.Command("ssh", resolvedTarget)
+	// Execute SSH command with all identity keys
+	sshCmd := sshCommand(resolvedTarget)
 	sshCmd.Stdin = os.Stdin
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
@@ -86,6 +85,11 @@ func resolveSSHTarget(cfg *config.Config, target string) (string, error) {
 	// Check if it looks like an IP/hostname
 	if strings.Contains(target, ".") {
 		return "ubuntu@" + target, nil
+	}
+
+	// Check if it resolves as an SSH config alias
+	if isSSHConfigAlias(target) {
+		return target, nil
 	}
 
 	return "", fmt.Errorf("could not resolve target: %s", target)

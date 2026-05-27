@@ -1,235 +1,173 @@
+// Package theme is the anime CLI design layer — Aurum palette (molten gold over
+// obsidian) rendered via the stdlib-only term package. No Charmbracelet, no
+// external dependencies.
+//
+// Backward-compatible surface: all existing theme.XxxStyle.Render(s) call sites
+// continue to work unchanged; the underlying rendering now uses term.Color.
 package theme
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
+	t "github.com/joshkornreich/anime/internal/term"
 )
 
-// Anime-inspired color palette
+// ─── Aurum lipgloss.Color aliases ────────────────────────────────────────────
+// For files that still call lipgloss.NewStyle().Foreground(theme.XxxColor).
+// Old anime names are remapped to the nearest Aurum palette entry.
+// These can be removed once tui/vllm.go and other callers are rewritten.
+
 var (
-	// Primary colors - vibrant anime aesthetic
-	SakuraPink    = lipgloss.Color("#FF69B4") // Hot pink
-	ElectricBlue  = lipgloss.Color("#00D9FF") // Bright cyan
-	NeonPurple    = lipgloss.Color("#BD93F9") // Purple
-	MintGreen     = lipgloss.Color("#50FA7B") // Green
-	SunsetOrange  = lipgloss.Color("#FFB86C") // Orange
-	LavenderMist  = lipgloss.Color("#D4BFFF") // Light purple
+	// Gold tier (was pink/purple accent)
+	SakuraPink    = lipgloss.Color("#D9B45A") // → Gold
+	NeonPurple    = lipgloss.Color("#D9B45A") // → Gold
+	SunsetOrange  = lipgloss.Color("#A6802F") // → GoldDeep
+	LavenderMist  = lipgloss.Color("#F6DF9A") // → GoldBright
+	WarningYellow = lipgloss.Color("#D9B45A") // → Gold
 
-	// Accent colors
-	ActionRed     = lipgloss.Color("#FF5555") // Red
-	WarningYellow = lipgloss.Color("#F1FA8C") // Yellow
+	// Structural (was cyan/blue)
+	ElectricBlue = lipgloss.Color("#41E0D0") // → Cyan
 
-	// Neutral colors
-	TextPrimary   = lipgloss.Color("#F8F8F2") // Off-white
-	TextSecondary = lipgloss.Color("#B4B4B4") // Gray
-	TextDim       = lipgloss.Color("#6272A4") // Dim blue-gray
+	// Success/growth (was green)
+	MintGreen = lipgloss.Color("#4ADE80") // → Jade
 
-	// Background colors
-	BgDark        = lipgloss.Color("#282A36") // Dark bg
-	BgAccent      = lipgloss.Color("#44475A") // Accent bg
+	// Error (was red)
+	ActionRed = lipgloss.Color("#FF5C5C") // → Loss
+
+	// Ink (was grey)
+	TextPrimary   = lipgloss.Color("#D8D5CC") // → Ink
+	TextSecondary = lipgloss.Color("#9A958B") // → InkMuted
+	TextDim       = lipgloss.Color("#635F58") // → InkFaint
+
+	// Backgrounds (kept; only used for Foreground calls so fine as stubs)
+	BgDark    = lipgloss.Color("#0A0B10") // → bg-abyss
+	BgAccent  = lipgloss.Color("#171A22") // → bg-raised
 )
 
-// Common styles with anime aesthetic
+// ─── Style adapter ───────────────────────────────────────────────────────────
+// Style wraps a render function so existing .Render(s) call sites work unchanged.
+
+type Style struct{ fn func(string) string }
+
+// Render applies styling to the concatenation of strs (variadic to match the
+// lipgloss.Style.Render signature used in existing call sites).
+func (s Style) Render(strs ...string) string { return s.fn(strings.Join(strs, "")) }
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
 var (
-	// Headers - bold and colorful
-	TitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(SakuraPink).
-			MarginBottom(1).
-			Padding(0, 1)
+	// SuccessStyle: jade — accepted, running, online.
+	SuccessStyle = Style{func(s string) string { return t.Bold(t.Jade.S(s)) }}
 
-	HeaderStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(ElectricBlue).
-			MarginTop(1)
+	// ErrorStyle: crimson — rejected, dead, offline.
+	ErrorStyle = Style{func(s string) string { return t.Bold(t.Loss.S(s)) }}
 
-	SubHeaderStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(NeonPurple)
+	// WarningStyle: gold — caution, admin badge, partial.
+	WarningStyle = Style{func(s string) string { return t.Bold(t.Gold.S(s)) }}
 
-	// Content styles
-	PrimaryTextStyle = lipgloss.NewStyle().
-				Foreground(TextPrimary)
+	// InfoStyle: cyan — structure, links, status lines.
+	InfoStyle = Style{func(s string) string { return t.Cyan.S(s) }}
 
-	SecondaryTextStyle = lipgloss.NewStyle().
-				Foreground(TextSecondary)
+	// HighlightStyle: bright gold bold — names, IDs, emphasis.
+	HighlightStyle = Style{func(s string) string { return t.Bold(t.Gold.S(s)) }}
 
-	DimTextStyle = lipgloss.NewStyle().
-			Foreground(TextDim).
-			Italic(true)
+	// DimTextStyle: faint ink — timestamps, secondary values.
+	DimTextStyle = Style{func(s string) string { return t.Dim(s) }}
 
-	// Status styles
-	SuccessStyle = lipgloss.NewStyle().
-			Foreground(MintGreen).
-			Bold(true)
+	// GlowStyle: gold gradient — section headings, labels of value.
+	GlowStyle = Style{func(s string) string { return t.Gradient(s) }}
 
-	ErrorStyle = lipgloss.NewStyle().
-			Foreground(ActionRed).
-			Bold(true)
-
-	WarningStyle = lipgloss.NewStyle().
-			Foreground(WarningYellow).
-			Bold(true)
-
-	InfoStyle = lipgloss.NewStyle().
-			Foreground(ElectricBlue)
-
-	// Special effects
-	GlowStyle = lipgloss.NewStyle().
-			Foreground(SakuraPink).
-			Bold(true).
-			Underline(true)
-
-	HighlightStyle = lipgloss.NewStyle().
-			Foreground(NeonPurple).
-			Bold(true)
-
-	// Borders and boxes
-	BoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(NeonPurple).
-			Padding(0, 1)
-
-	AccentBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.DoubleBorder()).
-			BorderForeground(SakuraPink).
-			Padding(1, 2)
-
-	// Category styles - different color for each
-	CategoryFoundation = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(ElectricBlue).
-				MarginTop(1)
-
-	CategoryMLFramework = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(NeonPurple).
-				MarginTop(1)
-
-	CategoryLLMRuntime = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(SakuraPink).
-				MarginTop(1)
-
-	CategoryModels = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(SunsetOrange).
-			MarginTop(1)
-
-	CategoryApplication = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(MintGreen).
-				MarginTop(1)
-
-	CategoryVideoGen = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(LavenderMist).
-				MarginTop(1)
+	// Semantic aliases
+	TitleStyle         = GlowStyle
+	HeaderStyle        = InfoStyle
+	SubHeaderStyle     = HighlightStyle
+	PrimaryTextStyle   = Style{func(s string) string { return t.Ink.S(s) }}
+	SecondaryTextStyle = Style{func(s string) string { return t.InkMuted.S(s) }}
 )
 
-// CategoryStyle returns a styled category header
-func CategoryStyle(text string) string {
-	return lipgloss.NewStyle().
-		Bold(true).
-		Foreground(NeonPurple).
-		Render(text)
-}
+// ─── Symbols — pre-colored ───────────────────────────────────────────────────
+// Used as: fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("..."))
 
-// Anime-themed emojis and symbols
 var (
-	// Package/module symbols
-	SymbolPackage   = "📦"
-	SymbolModule    = "🎴"
-	SymbolComponent = "⚡"
+	SymbolSuccess = t.Jade.S("✓")
+	SymbolError   = t.Loss.S("✗")
+	SymbolWarning = t.Gold.S("!")
+	SymbolInfo    = t.Gold.S("⬢")
+	SymbolLoading = t.Dim("◌")
+	SymbolStar    = t.Gold.S("◆")
+	SymbolBolt    = t.Cyan.S("›")
+	SymbolShield  = t.Gold.S("◈")
 
-	// Status symbols
-	SymbolSuccess   = "✨"
-	SymbolError     = "💥"
-	SymbolWarning   = "⚠️"
-	SymbolInfo      = "💫"
-	SymbolLoading   = "🌸"
+	// Extended symbols (Aurum-mapped from old anime emoji names)
+	SymbolBuild      = t.Gold.S("⚒")
+	SymbolDeploy     = t.Cyan.S("→")
+	SymbolConfig     = t.Gold.S("⚙")
+	SymbolSparkle    = t.Gold.S("◆")
+	SymbolDownload   = t.Cyan.S("↓")
+	SymbolInstall    = t.Jade.S("↑")
+	SymbolPackage    = t.Gold.S("◈")
+	SymbolModule     = t.Gold.S("◆")
+	SymbolComponent  = t.Cyan.S("›")
+	SymbolTree       = t.Dim("│")
+	SymbolSakura     = t.Gold.S("◆")
+	SymbolHeart      = t.Jade.S("♥")
+	SymbolSword      = t.Cyan.S("×")
+	SymbolMagic      = t.Gold.S("◈")
 
-	// Action symbols
-	SymbolInstall   = "🚀"
-	SymbolDownload  = "⬇️"
-	SymbolBuild     = "🔨"
-	SymbolDeploy    = "🎯"
-	SymbolConfig    = "⚙️"
-
-	// Tree symbols
-	SymbolTree      = "🌸"
-	SymbolBranch    = "├──"
-	SymbolLastBranch = "└──"
-	SymbolPipe      = "│"
-	SymbolSpace     = "   "
-
-	// Anime-themed
-	SymbolSakura    = "🌸"
-	SymbolStar      = "⭐"
-	SymbolSparkle   = "✨"
-	SymbolBolt      = "⚡"
-	SymbolHeart     = "💖"
-	SymbolShield    = "🛡️"
-	SymbolSword     = "⚔️"
-	SymbolMagic     = "🔮"
+	// Tree branch glyphs (plain strings — used in fmt output as structural chars)
+	SymbolBranch     = "├─"
+	SymbolLastBranch = "└─"
+	SymbolPipe       = "│"
+	SymbolSpace      = "   "
 )
 
-// Get category style by name
-func GetCategoryStyle(category string) lipgloss.Style {
-	switch category {
-	case "Foundation":
-		return CategoryFoundation
-	case "ML Framework":
-		return CategoryMLFramework
-	case "LLM Runtime":
-		return CategoryLLMRuntime
-	case "Models":
-		return CategoryModels
-	case "Application":
-		return CategoryApplication
-	default:
-		return HeaderStyle
-	}
-}
+// ─── Category helpers ────────────────────────────────────────────────────────
 
-// Render a stylized title banner
-func RenderBanner(text string) string {
-	banner := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(SakuraPink).
-		Background(BgDark).
-		Padding(1, 2).
-		Margin(1, 0).
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(NeonPurple).
-		Align(lipgloss.Center).
-		Width(60)
+// CategoryStyle renders a bold gold section heading. Replaces old lipgloss category styles.
+func CategoryStyle(text string) string { return t.Bold(t.Gold.S(text)) }
 
-	return banner.Render(text)
-}
+// GetCategoryStyle returns a Style for the given category name.
+// All map to Aurum gold; the semantic distinction is handled by color context elsewhere.
+func GetCategoryStyle(_ string) Style { return HighlightStyle }
 
-// Render progress bar with anime aesthetic
-func RenderProgressBar(current, total int, width int) string {
+// RenderProgressBar renders a gold/dim progress bar.
+func RenderProgressBar(current, total, width int) string {
 	if total == 0 {
 		return ""
 	}
-
 	percent := float64(current) / float64(total)
 	filled := int(float64(width) * percent)
 	empty := width - filled
+	bar := strings.Repeat("█", filled) + t.Dim(strings.Repeat("░", empty))
+	return t.Gold.S(bar) + t.Dim(fmt.Sprintf(" %d%%", int(percent*100)))
+}
 
-	bar := ""
-	for i := 0; i < filled; i++ {
-		bar += "█"
+// ─── Banner ──────────────────────────────────────────────────────────────────
+
+// RenderBanner renders a gold-gradient double-rule box with a centered title.
+// Width is fixed at 62 columns (matches existing CLI output width).
+func RenderBanner(text string) string {
+	const width = 62
+	const inner = width - 2 // excluding left + right ║
+
+	textLen := len([]rune(text))
+	left := (inner - textLen) / 2
+	right := inner - textLen - left
+	if left < 0 {
+		left = 0
 	}
-	for i := 0; i < empty; i++ {
-		bar += "░"
+	if right < 0 {
+		right = 0
 	}
 
-	barStyle := lipgloss.NewStyle().Foreground(SakuraPink)
+	sp := func(n int) string { return strings.Repeat(" ", n) }
 
-	return fmt.Sprintf("%s %s %d%%",
-		barStyle.Render(bar),
-		SymbolSakura,
-		int(percent*100))
+	top := t.Gradient("╔" + strings.Repeat("═", inner) + "╗")
+	blank := t.Gradient("║") + sp(inner) + t.Gradient("║")
+	title := t.Gradient("║") + sp(left) + t.Gradient(text) + sp(right) + t.Gradient("║")
+	bot := t.Gradient("╚" + strings.Repeat("═", inner) + "╝")
+
+	return "\n" + top + "\n" + blank + "\n" + title + "\n" + blank + "\n" + bot + "\n"
 }

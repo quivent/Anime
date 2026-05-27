@@ -123,6 +123,38 @@ var (
 	SymbolSpace      = "   "
 )
 
+// ─── term passthrough ────────────────────────────────────────────────────────
+// Call these instead of the old fmt.Printf + SymbolXxx pattern.
+// They delegate directly to the term package — same output as qwentize.
+
+func Ok(s string)      { t.Ok(s) }
+func Fail(s string)    { t.Fail(s) }
+func Warn(s string)    { t.Warn(s) }
+func Info(s string)    { t.Info(s) }
+func Section(s string) { t.Section(s) }
+func Rule()            { t.Rule() }
+
+// KV prints an aligned "  label │ value" row.
+func KV(label, value string) { t.KV(label, value) }
+
+// Step prints a "[n/total] → action…" progress line.
+func Step(n, total int, action string) { t.Step(n, total, action) }
+
+// NewTable creates an Aurum-styled aligned table.
+func NewTable(headers ...string) *t.Table { return t.NewTable(headers...) }
+
+// Gold / Cyan / Jade / Loss / Dim / Bold — inline color helpers for call sites
+// that need to colorize a substring rather than print a full line.
+var (
+	Gold = t.Gold
+	Cyan = t.Cyan
+	Jade = t.Jade
+	Loss = t.Loss
+)
+
+func Dim(s string) string  { return t.Dim(s) }
+func Bold(s string) string { return t.Bold(s) }
+
 // ─── Category helpers ────────────────────────────────────────────────────────
 
 // CategoryStyle renders a bold gold section heading. Replaces old lipgloss category styles.

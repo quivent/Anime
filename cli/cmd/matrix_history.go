@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -21,18 +21,13 @@ var matrixHistoryCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, _ := mmcfg.Load()
 		client := mmClient(cfg.Server.URL, cfg.Server.Token)
-
 		channelID := args[0]
 
-		fmt.Println()
+		label := channelID
 		if ch, err := client.GetChannel(channelID); err == nil {
-			fmt.Printf("  %s %s\n", theme.InfoStyle.Render("History:"),
-				theme.HighlightStyle.Render("#"+ch.DisplayName))
-		} else {
-			fmt.Printf("  %s %s\n", theme.InfoStyle.Render("History:"),
-				theme.HighlightStyle.Render(channelID))
+			label = "#" + ch.DisplayName
 		}
-		fmt.Println()
+		t.Section(label)
 
 		pl, err := client.GetChannelPostsPage(channelID, 0, mxHistoryLimit)
 		if err != nil {
@@ -40,12 +35,11 @@ var matrixHistoryCmd = &cobra.Command{
 		}
 
 		if len(pl.OrderArr) == 0 {
-			fmt.Println(theme.DimTextStyle.Render("  (no messages)"))
+			t.Info("no messages")
 			fmt.Println()
 			return nil
 		}
 
-		// Cache user names
 		userNames := map[string]string{}
 		resolveUser := func(userID string) string {
 			if name, ok := userNames[userID]; ok {
@@ -58,21 +52,16 @@ var matrixHistoryCmd = &cobra.Command{
 			return userID
 		}
 
-		// Display chronologically (reverse the newest-first order array)
 		for i := len(pl.OrderArr) - 1; i >= 0; i-- {
 			p := pl.Posts[pl.OrderArr[i]]
-			if p.Type != "" { // skip system messages
-				continue
-			}
-			if p.Message == "" {
+			if p.Type != "" || p.Message == "" {
 				continue
 			}
 			ts := time.Unix(p.CreateAt/1000, 0).Format("2006-01-02 15:04:05")
 			username := resolveUser(p.UserID)
-
-			fmt.Printf("  %s  %s  %s\n",
-				theme.DimTextStyle.Render(ts),
-				theme.HighlightStyle.Render(fmt.Sprintf("%-20s", "@"+username)),
+			fmt.Printf("  %s  %-22s  %s\n",
+				t.Dim(ts),
+				t.Bold(t.Gold.S("@"+username)),
 				p.Message)
 		}
 		fmt.Println()

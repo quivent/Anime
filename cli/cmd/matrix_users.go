@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"time"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
 var (
-	mxUserPassword    string
-	mxUserEmail       string
-	mxUserAdmin       bool
-	mxRevokeAdmin     bool
-	mxUserSearch      string
+	mxUserPassword string
+	mxUserEmail    string
+	mxUserAdmin    bool
+	mxRevokeAdmin  bool
+	mxUserSearch   string
 )
 
 var matrixUsersCmd = &cobra.Command{
@@ -36,9 +36,9 @@ var matrixUsersAddCmd = &cobra.Command{
 		}
 		email := mxUserEmail
 		if email == "" {
-			email = username + "@" + "chat.local"
+			email = username + "@chat.local"
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolLoading, theme.InfoStyle.Render("Creating @"+username+"..."))
+		t.Info("creating @" + username + "…")
 		client := mmClient(cfg.Server.URL, cfg.Server.Token)
 		u, err := client.CreateUser(username, email, mxUserPassword)
 		if err != nil {
@@ -47,14 +47,13 @@ var matrixUsersAddCmd = &cobra.Command{
 		if mxUserAdmin {
 			_ = client.SetAdmin(u.ID, true)
 		}
-		// Add to default team
 		if cfg.Server.TeamID != "" {
 			_ = client.AddTeamMember(cfg.Server.TeamID, u.ID)
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Created"))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Username:"), theme.DimTextStyle.Render("@"+u.Username))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Email:"), theme.DimTextStyle.Render(u.Email))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Password:"), theme.DimTextStyle.Render(mxUserPassword))
+		t.Ok("created")
+		t.KV("username", "@"+u.Username)
+		t.KV("email", u.Email)
+		t.KV("password", mxUserPassword)
 		fmt.Println()
 		return nil
 	},
@@ -66,60 +65,59 @@ var matrixUsersListCmd = &cobra.Command{
 	Short:   "List all users",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, _ := mmcfg.Load()
-		fmt.Println()
-		fmt.Println(theme.RenderBanner("USERS"))
-		fmt.Println()
+		t.Section("USERS")
 		client := mmClient(cfg.Server.URL, cfg.Server.Token)
+
 		if mxUserSearch != "" {
 			found, err := client.SearchUsers(mxUserSearch, 100)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("  Results: %s\n\n", theme.HighlightStyle.Render(fmt.Sprintf("%d", len(found))))
+			fmt.Printf("  %s results\n\n", t.Bold(t.Gold.S(fmt.Sprintf("%d", len(found)))))
+			tbl := t.NewTable("username", "email", "role", "created")
 			for _, u := range found {
-				badge := ""
+				role := ""
 				if u.IsAdmin() {
-					badge = theme.WarningStyle.Render(" [admin]")
+					role = t.Gold.S("admin")
 				}
 				if u.IsDeleted() {
-					badge += theme.ErrorStyle.Render(" (deactivated)")
+					if role != "" {
+						role += " "
+					}
+					role += t.Loss.S("deactivated")
 				}
 				created := ""
 				if u.CreateAt > 0 {
-					created = time.Unix(u.CreateAt/1000, 0).Format("2006-01-02")
+					created = t.Dim(time.Unix(u.CreateAt/1000, 0).Format("2006-01-02"))
 				}
-				fmt.Printf("  %s %-28s %s%s  %s\n",
-					theme.SymbolStar,
-					theme.HighlightStyle.Render("@"+u.Username),
-					theme.DimTextStyle.Render(u.Email),
-					badge,
-					theme.DimTextStyle.Render(created))
+				tbl.Row(t.Bold(t.Gold.S("@"+u.Username)), t.Dim(u.Email), role, created)
 			}
+			fmt.Print(tbl.Render())
 		} else {
 			all, err := client.ListUsers(0, 200)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("  Total: %s\n\n", theme.HighlightStyle.Render(fmt.Sprintf("%d", len(all))))
+			fmt.Printf("  %s total\n\n", t.Bold(t.Gold.S(fmt.Sprintf("%d", len(all)))))
+			tbl := t.NewTable("username", "email", "role", "created")
 			for _, u := range all {
-				badge := ""
+				role := ""
 				if u.IsAdmin() {
-					badge = theme.WarningStyle.Render(" [admin]")
+					role = t.Gold.S("admin")
 				}
 				if u.IsDeleted() {
-					badge += theme.ErrorStyle.Render(" (deactivated)")
+					if role != "" {
+						role += " "
+					}
+					role += t.Loss.S("deactivated")
 				}
 				created := ""
 				if u.CreateAt > 0 {
-					created = time.Unix(u.CreateAt/1000, 0).Format("2006-01-02")
+					created = t.Dim(time.Unix(u.CreateAt/1000, 0).Format("2006-01-02"))
 				}
-				fmt.Printf("  %s %-28s %s%s  %s\n",
-					theme.SymbolStar,
-					theme.HighlightStyle.Render("@"+u.Username),
-					theme.DimTextStyle.Render(u.Email),
-					badge,
-					theme.DimTextStyle.Render(created))
+				tbl.Row(t.Bold(t.Gold.S("@"+u.Username)), t.Dim(u.Email), role, created)
 			}
+			fmt.Print(tbl.Render())
 		}
 		fmt.Println()
 		return nil
@@ -141,7 +139,7 @@ var matrixUsersRemoveCmd = &cobra.Command{
 		if err := client.DeactivateUser(u.ID); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Deactivated @"+u.Username))
+		t.Ok("deactivated @" + u.Username)
 		return nil
 	},
 }
@@ -161,11 +159,11 @@ var matrixUsersAdminCmd = &cobra.Command{
 		if err := client.SetAdmin(u.ID, grant); err != nil {
 			return err
 		}
-		verb := "Granted admin to"
-		if !grant {
-			verb = "Revoked admin from"
+		if grant {
+			t.Ok("granted admin to @" + u.Username)
+		} else {
+			t.Ok("revoked admin from @" + u.Username)
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render(verb+" @"+u.Username))
 		return nil
 	},
 }
@@ -187,8 +185,8 @@ var matrixUsersResetCmd = &cobra.Command{
 		if err := client.ResetPassword(u.ID, mxUserPassword); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Password reset for @"+u.Username))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("New Password:"), theme.DimTextStyle.Render(mxUserPassword))
+		t.Ok("password reset for @" + u.Username)
+		t.KV("new password", mxUserPassword)
 		return nil
 	},
 }

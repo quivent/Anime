@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -44,40 +44,33 @@ var matrixRoomsCreateCmd = &cobra.Command{
 		if mxChannelPrivate {
 			channelType = "P"
 		}
-
-		// Sanitize name: lowercase, no spaces
 		slug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
-
 		ch, err := client.CreateChannel(teamID, slug, name, channelType, mxChannelPurpose)
 		if err != nil {
 			return err
 		}
 
-		// Invite users
 		for _, username := range mxChannelInvite {
 			u, err := client.GetUserByUsername(strings.TrimPrefix(username, "@"))
 			if err != nil {
-				fmt.Printf("  %s %s\n", theme.SymbolWarning,
-					theme.WarningStyle.Render("User not found: "+username))
+				t.Warn("user not found: " + username)
 				continue
 			}
 			if err := client.AddChannelMember(ch.ID, u.ID); err != nil {
-				fmt.Printf("  %s %s\n", theme.SymbolWarning,
-					theme.WarningStyle.Render("Invite "+username+": "+err.Error()))
+				t.Warn("invite " + username + ": " + err.Error())
 			} else {
-				fmt.Printf("  %s %s\n", theme.SymbolSuccess,
-					theme.SuccessStyle.Render("Invited "+username))
+				t.Ok("invited @" + u.Username)
 			}
 		}
 
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Channel created"))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("ID:"), theme.DimTextStyle.Render(ch.ID))
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Name:"), theme.DimTextStyle.Render(ch.DisplayName))
+		t.Ok("channel created")
+		t.KV("id", ch.ID)
+		t.KV("name", ch.DisplayName)
 		visibility := "public"
 		if mxChannelPrivate {
 			visibility = "private"
 		}
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Type:"), theme.DimTextStyle.Render(visibility))
+		t.KV("type", visibility)
 		fmt.Println()
 		return nil
 	},
@@ -89,9 +82,7 @@ var matrixRoomsListCmd = &cobra.Command{
 	Short:   "List all channels",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, _ := mmcfg.Load()
-		fmt.Println()
-		fmt.Println(theme.RenderBanner("CHANNELS"))
-		fmt.Println()
+		t.Section("CHANNELS")
 		client := mmClient(cfg.Server.URL, cfg.Server.Token)
 
 		teamID := cfg.Server.TeamID
@@ -107,25 +98,25 @@ var matrixRoomsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  Total: %s\n\n", theme.HighlightStyle.Render(fmt.Sprintf("%d", len(channels))))
+
+		fmt.Printf("  %s channels\n\n", t.Bold(t.Gold.S(fmt.Sprintf("%d", len(channels)))))
+		tbl := t.NewTable("name", "id", "members", "type")
 		for _, ch := range channels {
-			typeStr := ""
+			vis := t.Dim("public")
 			switch ch.Type {
 			case "P":
-				typeStr = theme.DimTextStyle.Render("[private]")
+				vis = t.Dim("private")
 			case "D":
-				typeStr = theme.DimTextStyle.Render("[direct]")
+				vis = t.Dim("direct")
 			}
-			fmt.Printf("  %s %-24s %s %s\n",
-				theme.SymbolStar,
-				theme.HighlightStyle.Render(ch.DisplayName),
-				theme.DimTextStyle.Render(fmt.Sprintf("%d members", ch.MemberCount)),
-				typeStr)
-			if ch.Purpose != "" {
-				fmt.Printf("    %s\n", theme.DimTextStyle.Render(ch.Purpose))
-			}
-			fmt.Printf("    %s\n", theme.DimTextStyle.Render(ch.ID))
+			tbl.Row(
+				t.Bold(t.Gold.S(ch.DisplayName)),
+				t.Dim(ch.ID),
+				fmt.Sprintf("%d", ch.MemberCount),
+				vis,
+			)
 		}
+		fmt.Print(tbl.Render())
 		fmt.Println()
 		return nil
 	},
@@ -145,8 +136,7 @@ var matrixRoomsJoinCmd = &cobra.Command{
 		if err := client.AddChannelMember(args[0], me.ID); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s %s\n", theme.SymbolSuccess,
-			theme.SuccessStyle.Render("Joined"), theme.DimTextStyle.Render(args[0]))
+		t.Ok("joined " + t.Dim(args[0]))
 		return nil
 	},
 }
@@ -165,8 +155,7 @@ var matrixRoomsLeaveCmd = &cobra.Command{
 		if err := client.RemoveChannelMember(args[0], me.ID); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s %s\n", theme.SymbolSuccess,
-			theme.SuccessStyle.Render("Left"), theme.DimTextStyle.Render(args[0]))
+		t.Ok("left " + t.Dim(args[0]))
 		return nil
 	},
 }
@@ -186,8 +175,7 @@ var matrixRoomsInviteCmd = &cobra.Command{
 		if err := client.AddChannelMember(args[0], u.ID); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
-			theme.SuccessStyle.Render("Invited @"+u.Username))
+		t.Ok("invited @" + u.Username)
 		return nil
 	},
 }

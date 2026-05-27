@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -45,34 +45,34 @@ var matrixAgentsListCmd = &cobra.Command{
 	Short:   "List all agents",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, _ := mmcfg.Load()
-		fmt.Println()
-		fmt.Println(theme.RenderBanner("AGENTS"))
-		fmt.Println()
+		t.Section("AGENTS")
 		if len(cfg.Agents) == 0 {
-			fmt.Println(theme.DimTextStyle.Render("  No agents"))
-			fmt.Printf("  %s\n\n", theme.HighlightStyle.Render("anime matrix agents spawn <name> --channel <channel-id>"))
+			t.Info("no agents")
+			fmt.Println("  " + t.Dim("anime matrix agents spawn <name> --channel <channel-id>"))
+			fmt.Println()
 			return nil
 		}
+		tbl := t.NewTable("name", "user", "model", "status", "pid")
 		for _, a := range cfg.Agents {
 			alive := matrixIsAlive(a.PID)
 			st := a.Status
 			if !alive && st == "running" {
 				st = "dead"
 			}
-			stStr := theme.SuccessStyle.Render(st)
+			stCell := t.Jade.S(st)
 			if st != "running" {
-				stStr = theme.ErrorStyle.Render(st)
+				stCell = t.Loss.S(st)
 			}
-			fmt.Printf("  %s %s\n", theme.SymbolStar, theme.HighlightStyle.Render(a.Name))
-			fmt.Printf("    User: %s  Model: %s  %s  PID %d\n",
-				theme.DimTextStyle.Render(a.UserID),
-				theme.DimTextStyle.Render(a.Model),
-				stStr, a.PID)
-			if len(a.Channels) > 0 {
-				fmt.Printf("    Channels: %s\n", theme.DimTextStyle.Render(strings.Join(a.Channels, ", ")))
-			}
-			fmt.Println()
+			tbl.Row(
+				t.Bold(t.Gold.S(a.Name)),
+				t.Dim(a.UserID),
+				t.Dim(a.Model),
+				stCell,
+				fmt.Sprintf("%d", a.PID),
+			)
 		}
+		fmt.Print(tbl.Render())
+		fmt.Println()
 		return nil
 	},
 }
@@ -94,7 +94,7 @@ var matrixAgentsStopCmd = &cobra.Command{
 		agent.PID = 0
 		cfg.RemoveDaemon("agent-" + args[0])
 		cfg.Save()
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Stopped "+args[0]))
+		t.Ok("stopped " + args[0])
 		return nil
 	},
 }
@@ -164,59 +164,49 @@ func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 		mxAgentPassword = matrixGeneratePassword(24)
 	}
 
-	fmt.Println()
-	fmt.Println(theme.RenderBanner("SPAWN AGENT"))
-	fmt.Println()
+	t.Section("SPAWN AGENT")
 
 	client := mmClient(cfg.Server.URL, cfg.Server.Token)
 
-	// Create or reuse user
 	agentUsername := "agent-" + name
 	agentEmail := agentUsername + "@chat.local"
 	var agentUserID string
 
 	u, err := client.GetUserByUsername(agentUsername)
 	if err != nil {
-		// Create new user
 		u, err = client.CreateUser(agentUsername, agentEmail, mxAgentPassword)
 		if err != nil {
 			return fmt.Errorf("create user: %w", err)
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("User created: @"+agentUsername))
+		t.Ok("user created: @" + agentUsername)
 	} else {
-		fmt.Printf("  %s %s\n", theme.SymbolInfo, theme.DimTextStyle.Render("User exists, reusing @"+agentUsername))
-		// Reset password so we can log in
+		t.Info("user exists, reusing @" + agentUsername)
 		if err := client.ResetPassword(u.ID, mxAgentPassword); err != nil {
 			return fmt.Errorf("reset password: %w", err)
 		}
 	}
 	agentUserID = u.ID
 
-	// Add to team
 	if cfg.Server.TeamID != "" {
 		_ = client.AddTeamMember(cfg.Server.TeamID, agentUserID)
 	}
 
-	// Login as agent to get token
-	fmt.Printf("  %s %s\n", theme.SymbolLoading, theme.InfoStyle.Render("Authenticating agent..."))
+	t.Info("authenticating agent…")
 	agentToken, err := mmClient(cfg.Server.URL, "").Login(agentUsername, mxAgentPassword)
 	if err != nil {
 		return fmt.Errorf("agent login: %w", err)
 	}
-	fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Authenticated"))
+	t.Ok("authenticated")
 
-	// Join channels
 	agentClient := mmClient(cfg.Server.URL, agentToken)
 	for _, chID := range channels {
 		if err := agentClient.AddChannelMember(chID, agentUserID); err != nil {
-			fmt.Printf("  %s %s\n", theme.SymbolWarning,
-				theme.WarningStyle.Render("Join "+chID+": "+err.Error()))
+			t.Warn("join " + chID + ": " + err.Error())
 		} else {
-			fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Joined "+chID))
+			t.Ok("joined " + t.Dim(chID))
 		}
 	}
 
-	// Write runner script
 	logDir := filepath.Join(mmcfg.Dir(), "logs")
 	os.MkdirAll(logDir, 0755)
 	logFile := filepath.Join(logDir, "agent-"+name+".log")
@@ -227,12 +217,10 @@ func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 	runnerPath := filepath.Join(runnerDir, "agent-"+name+".sh")
 	os.WriteFile(runnerPath, []byte(runnerScript), 0755)
 
-	// Start daemon
 	logF, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
 	}
-
 	proc := exec.Command("bash", runnerPath)
 	proc.Stdout = logF
 	proc.Stderr = logF
@@ -244,9 +232,8 @@ func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 	logF.Close()
 
 	pid := proc.Process.Pid
-	fmt.Printf("  %s %s PID %d\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Daemon started"), pid)
+	t.Ok(fmt.Sprintf("daemon started  PID %d", pid))
 
-	// Save
 	cfg.AddAgent(mmcfg.AgentConfig{
 		Name: name, UserID: agentUserID, Token: agentToken,
 		Channels: channels, Model: mxAgentModel, Status: "running",
@@ -259,10 +246,10 @@ func runMatrixAgentsSpawn(cmd *cobra.Command, args []string) error {
 	cfg.Save()
 
 	fmt.Println()
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Agent:"), theme.InfoStyle.Render(name))
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("User:"), theme.DimTextStyle.Render("@"+agentUsername))
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Model:"), theme.DimTextStyle.Render(mxAgentModel))
-	fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("Logs:"), theme.DimTextStyle.Render(logFile))
+	t.KV("agent", name)
+	t.KV("user", "@"+agentUsername)
+	t.KV("model", mxAgentModel)
+	t.KV("logs", logFile)
 	fmt.Println()
 	return nil
 }

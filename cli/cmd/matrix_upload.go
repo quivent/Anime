@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +24,6 @@ var matrixUploadCmd = &cobra.Command{
 		cfg, _ := mmcfg.Load()
 		client := mmClient(cfg.Server.URL, cfg.Server.Token)
 
-		// Read file
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return fmt.Errorf("cannot read file: %w", err)
@@ -37,30 +36,19 @@ var matrixUploadCmd = &cobra.Command{
 			contentType = "application/octet-stream"
 		}
 
-		fmt.Printf("  %s %s %s (%d bytes)\n",
-			theme.SymbolLoading,
-			theme.InfoStyle.Render("Uploading"),
-			theme.HighlightStyle.Render(filename),
-			len(data))
+		t.Info(fmt.Sprintf("uploading %s  %s", t.Bold(t.Gold.S(filename)), t.Dim(fmt.Sprintf("(%d bytes)", len(data)))))
 
 		fileID, err := client.UploadFile(channelID, data, filename, contentType)
 		if err != nil {
 			return fmt.Errorf("upload failed: %w", err)
 		}
-		fmt.Printf("  %s %s %s\n",
-			theme.SymbolSuccess,
-			theme.SuccessStyle.Render("Uploaded"),
-			theme.DimTextStyle.Render(fileID))
+		t.Ok("uploaded  " + t.Dim(fileID))
 
-		// Send post with file
 		post, err := client.CreatePost(channelID, "", []string{fileID})
 		if err != nil {
 			return fmt.Errorf("send failed: %w", err)
 		}
-		fmt.Printf("  %s %s %s\n",
-			theme.SymbolSuccess,
-			theme.SuccessStyle.Render("Sent to channel"),
-			theme.DimTextStyle.Render(post.ID))
+		t.Ok("sent to channel  " + t.Dim(post.ID))
 		return nil
 	},
 }

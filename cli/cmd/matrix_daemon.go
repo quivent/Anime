@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"syscall"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -22,33 +22,34 @@ var matrixDaemonListCmd = &cobra.Command{
 	Short:   "List all daemons",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, _ := mmcfg.Load()
-		fmt.Println()
-		fmt.Println(theme.RenderBanner("DAEMONS"))
-		fmt.Println()
+		t.Section("DAEMONS")
 		if len(cfg.Daemons) == 0 {
-			fmt.Println(theme.DimTextStyle.Render("  No daemons"))
+			t.Info("no daemons")
 			fmt.Println()
 			return nil
 		}
+		tbl := t.NewTable("name", "type", "status", "pid", "started")
 		for _, d := range cfg.Daemons {
 			alive := matrixIsAlive(d.PID)
 			st := d.Status
 			if !alive && st == "running" {
 				st = "dead"
 			}
-			stStr := theme.SuccessStyle.Render(st)
+			stCell := t.Jade.S(st)
 			if st == "paused" {
-				stStr = theme.WarningStyle.Render(st)
-			} else if st == "dead" || st == "stopped" {
-				stStr = theme.ErrorStyle.Render(st)
+				stCell = t.Gold.S(st)
+			} else if st != "running" {
+				stCell = t.Loss.S(st)
 			}
-			fmt.Printf("  %s %-20s %s  PID %-8d  %s\n",
-				theme.SymbolBolt, theme.HighlightStyle.Render(d.Name), stStr, d.PID,
-				theme.DimTextStyle.Render(d.Type))
-			if d.StartedAt != "" {
-				fmt.Printf("    Started: %s\n", theme.DimTextStyle.Render(d.StartedAt))
-			}
+			tbl.Row(
+				t.Bold(t.Gold.S(d.Name)),
+				t.Dim(d.Type),
+				stCell,
+				fmt.Sprintf("%d", d.PID),
+				t.Dim(d.StartedAt),
+			)
 		}
+		fmt.Print(tbl.Render())
 		fmt.Println()
 		return nil
 	},
@@ -67,7 +68,7 @@ var matrixDaemonStopCmd = &cobra.Command{
 				}
 				cfg.Daemons[i].Status = "stopped"
 				cfg.Save()
-				fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Stopped "+args[0]))
+				t.Ok("stopped " + args[0])
 				return nil
 			}
 		}
@@ -91,8 +92,7 @@ var matrixDaemonStopAllCmd = &cobra.Command{
 			}
 		}
 		cfg.Save()
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
-			theme.SuccessStyle.Render(fmt.Sprintf("Stopped %d daemons", count)))
+		t.Ok(fmt.Sprintf("stopped %d daemons", count))
 		return nil
 	},
 }
@@ -110,7 +110,7 @@ var matrixDaemonPauseCmd = &cobra.Command{
 				}
 				cfg.Daemons[i].Status = "paused"
 				cfg.Save()
-				fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Paused "+args[0]))
+				t.Ok("paused " + args[0])
 				return nil
 			}
 		}
@@ -131,7 +131,7 @@ var matrixDaemonResumeCmd = &cobra.Command{
 				}
 				cfg.Daemons[i].Status = "running"
 				cfg.Save()
-				fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Resumed "+args[0]))
+				t.Ok("resumed " + args[0])
 				return nil
 			}
 		}
@@ -173,8 +173,7 @@ var matrixDaemonCleanCmd = &cobra.Command{
 		}
 		cfg.Daemons = alive
 		cfg.Save()
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
-			theme.SuccessStyle.Render(fmt.Sprintf("Cleaned %d dead daemons", cleaned)))
+		t.Ok(fmt.Sprintf("cleaned %d dead daemons", cleaned))
 		return nil
 	},
 }

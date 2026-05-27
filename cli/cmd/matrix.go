@@ -8,9 +8,9 @@ import (
 	"strings"
 	"syscall"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmapi"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -26,11 +26,10 @@ agents, daemons, messaging.`,
 }
 
 func matrixWelcome(cmd *cobra.Command, args []string) {
+	t.Section("MATTERMOST")
 	fmt.Println()
-	fmt.Println(theme.RenderBanner("MATTERMOST"))
-	fmt.Println()
-	fmt.Println(theme.InfoStyle.Render("  Mattermost Team Chat Management"))
-	fmt.Println(theme.DimTextStyle.Render("  Setup / Users / Channels / Agents / Daemons"))
+	fmt.Println("  " + t.Cyan.S("Mattermost Team Chat Management"))
+	fmt.Println("  " + t.Dim("Setup / Users / Channels / Agents / Daemons"))
 	fmt.Println()
 
 	quick := []struct{ cmd, desc string }{
@@ -43,12 +42,12 @@ func matrixWelcome(cmd *cobra.Command, args []string) {
 		{"anime matrix send <channel> \"msg\"", "Send a message"},
 		{"anime matrix watch <channel>", "Live-tail channel messages"},
 	}
-	fmt.Println(theme.GlowStyle.Render("Quick Start:"))
+	fmt.Println("  " + t.Bold(t.Gold.S("Quick Start")))
 	fmt.Println()
 	for _, q := range quick {
-		fmt.Printf("  %s  %s\n",
-			theme.HighlightStyle.Render(fmt.Sprintf("%-44s", q.cmd)),
-			theme.DimTextStyle.Render(q.desc))
+		fmt.Printf("  %-46s%s\n",
+			t.Gold.S(q.cmd),
+			t.Dim(q.desc))
 	}
 	fmt.Println()
 }
@@ -69,13 +68,11 @@ var matrixConfigShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Println()
-		fmt.Println(theme.RenderBanner("CONFIG"))
-		fmt.Println()
-		fmt.Printf("  %s  %s\n", theme.HighlightStyle.Render("File:"), theme.DimTextStyle.Render(mmcfg.Path()))
+		t.Section("CONFIG")
+		t.KV("file", mmcfg.Path())
 		fmt.Println()
 		data, _ := yaml.Marshal(cfg)
-		fmt.Println(theme.DimTextStyle.Render(string(data)))
+		fmt.Println(t.Dim(string(data)))
 		return nil
 	},
 }
@@ -108,8 +105,7 @@ var matrixConfigSetCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s = %s\n", theme.SymbolSuccess,
-			theme.HighlightStyle.Render(args[0]), theme.DimTextStyle.Render(args[1]))
+		t.Ok(t.Bold(t.Gold.S(args[0])) + " = " + t.Dim(args[1]))
 		return nil
 	},
 }
@@ -119,7 +115,7 @@ var matrixConfigInitCmd = &cobra.Command{
 	Short: "Initialize a fresh configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := os.Stat(mmcfg.Path()); err == nil {
-			fmt.Printf("  %s\n", theme.WarningStyle.Render("Config already exists: "+mmcfg.Path()))
+			t.Warn("config already exists: " + mmcfg.Path())
 			return nil
 		}
 		cfg := &mmcfg.Config{
@@ -128,8 +124,7 @@ var matrixConfigInitCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess,
-			theme.SuccessStyle.Render("Config initialized: "+mmcfg.Path()))
+		t.Ok("config initialized: " + mmcfg.Path())
 		return nil
 	},
 }
@@ -162,9 +157,7 @@ var matrixSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("  %s %s  %s\n",
-			theme.SymbolStar, theme.SuccessStyle.Render("Sent"),
-			theme.DimTextStyle.Render(post.ID))
+		t.Ok("sent  " + t.Dim(post.ID))
 		return nil
 	},
 }
@@ -189,10 +182,6 @@ func matrixRunBash(command string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-func matrixSeparator() string {
-	return theme.SuccessStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 }
 
 func matrixIsAlive(pid int) bool {

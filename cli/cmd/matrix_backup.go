@@ -5,8 +5,8 @@ import (
 	"os"
 	"time"
 
+	t "github.com/joshkornreich/anime/internal/term"
 	"github.com/joshkornreich/anime/internal/mmcfg"
-	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +34,6 @@ var matrixBackupCreateCmd = &cobra.Command{
 		}
 
 		if !mxBackupDBOnly {
-			// Archive the install data directory
 			dataDir := cfg.Install.DataDir
 			if dataDir == "" {
 				return fmt.Errorf("no install directory configured — run anime matrix setup first")
@@ -42,18 +41,18 @@ var matrixBackupCreateCmd = &cobra.Command{
 			if _, err := os.Stat(dataDir); os.IsNotExist(err) {
 				return fmt.Errorf("install directory does not exist: %s", dataDir)
 			}
-
-			fmt.Printf("  %s %s\n", theme.SymbolLoading, theme.InfoStyle.Render("Backing up "+dataDir+"..."))
-			if err := matrixRunBash(fmt.Sprintf("tar -czf %s --exclude='%s/bin' --exclude='%s/logs' -C %s .", output, dataDir, dataDir, dataDir)); err != nil {
+			t.Info("backing up " + dataDir + "…")
+			if err := matrixRunBash(fmt.Sprintf(
+				"tar -czf %s --exclude='%s/bin' --exclude='%s/logs' -C %s .",
+				output, dataDir, dataDir, dataDir,
+			)); err != nil {
 				return fmt.Errorf("backup failed: %w", err)
 			}
 		}
 
-		// Database dump via pg_dump if available
 		dbOut := output + ".sql"
-		fmt.Printf("  %s %s\n", theme.SymbolLoading, theme.InfoStyle.Render("Dumping database..."))
-		dbScript := fmt.Sprintf(`pg_dump -U mattermost mattermost > %s 2>/dev/null && echo ok || echo skip`, dbOut)
-		_ = matrixRunBash(dbScript)
+		t.Info("dumping database…")
+		_ = matrixRunBash(fmt.Sprintf("pg_dump -U mattermost mattermost > %s 2>/dev/null && echo ok || echo skip", dbOut))
 
 		if !mxBackupDBOnly {
 			info, _ := os.Stat(output)
@@ -61,14 +60,10 @@ var matrixBackupCreateCmd = &cobra.Command{
 			if info != nil {
 				size = fmt.Sprintf("%.1f MB", float64(info.Size())/(1024*1024))
 			}
-			fmt.Printf("  %s %s %s (%s)\n",
-				theme.SymbolSuccess,
-				theme.SuccessStyle.Render("Backup created:"),
-				theme.HighlightStyle.Render(output),
-				size)
+			t.Ok("backup: " + t.Bold(t.Gold.S(output)) + "  " + t.Dim("("+size+")"))
 		}
 		if _, err := os.Stat(dbOut); err == nil {
-			fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("DB dump: "+dbOut))
+			t.Ok("db dump: " + t.Dim(dbOut))
 		}
 		return nil
 	},
@@ -84,27 +79,22 @@ var matrixBackupRestoreCmd = &cobra.Command{
 		if dataDir == "" {
 			return fmt.Errorf("no install directory configured")
 		}
-
 		backupFile := args[0]
 		if _, err := os.Stat(backupFile); os.IsNotExist(err) {
 			return fmt.Errorf("backup file not found: %s", backupFile)
 		}
-
-		fmt.Printf("  %s %s\n", theme.SymbolLoading, theme.InfoStyle.Render("Restoring to "+dataDir+"..."))
+		t.Info("restoring to " + dataDir + "…")
 		os.MkdirAll(dataDir, 0755)
 		if err := matrixRunBash(fmt.Sprintf("tar -xzf %s -C %s", backupFile, dataDir)); err != nil {
 			return fmt.Errorf("restore failed: %w", err)
 		}
-
-		// Restore DB if SQL file exists
 		dbFile := backupFile + ".sql"
 		if _, err := os.Stat(dbFile); err == nil {
-			fmt.Printf("  %s %s\n", theme.SymbolLoading, theme.InfoStyle.Render("Restoring database..."))
+			t.Info("restoring database…")
 			_ = matrixRunBash(fmt.Sprintf("psql -U mattermost mattermost < %s 2>/dev/null", dbFile))
 		}
-
-		fmt.Printf("  %s %s\n", theme.SymbolSuccess, theme.SuccessStyle.Render("Restored"))
-		fmt.Println(theme.DimTextStyle.Render("  Restart server: anime matrix setup restart"))
+		t.Ok("restored")
+		fmt.Println("  " + t.Dim("restart: anime matrix setup restart"))
 		return nil
 	},
 }

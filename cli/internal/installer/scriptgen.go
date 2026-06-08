@@ -430,8 +430,19 @@ func (n comfyUINode) script() string {
 	var sb strings.Builder
 	sb.WriteString(bashPreamble)
 	fmt.Fprintf(&sb, "echo \"==> Installing %s for ComfyUI\"\n", n.displayName)
-	sb.WriteString("mkdir -p ~/ComfyUI/custom_nodes\ncd ~/ComfyUI/custom_nodes\n")
-	fmt.Fprintf(&sb, "if [ ! -d \"%s\" ]; then\n    git clone %s\nfi\n", n.dirName, n.repo)
+
+	// Prerequisite: ComfyUI must be installed
+	sb.WriteString("COMFY_DIR=\"$HOME/ComfyUI\"\n")
+	sb.WriteString("if [ ! -d \"$COMFY_DIR\" ]; then\n")
+	sb.WriteString("    echo \"Error: ComfyUI not found. Install comfyui first.\"\n")
+	sb.WriteString("    exit 1\nfi\n")
+
+	sb.WriteString("cd \"$COMFY_DIR/custom_nodes\"\n")
+
+	// Idempotency: exit early if already installed
+	fmt.Fprintf(&sb, "if [ -d \"%s\" ]; then\n    echo \"%s already installed\"\n    exit 0\nfi\n", n.dirName, n.displayName)
+	fmt.Fprintf(&sb, "git clone %s\n", n.repo)
+
 	if n.hasRequirements {
 		fmt.Fprintf(&sb, "cd %s\nif [ -f requirements.txt ]; then pip3 install -r requirements.txt; fi\n", n.dirName)
 	}
@@ -442,7 +453,7 @@ func (n comfyUINode) script() string {
 		sb.WriteString("python3 install.py\n")
 	}
 	if n.modelURL != "" {
-		fmt.Fprintf(&sb, "mkdir -p \"$HOME/ComfyUI/%s\"\ncd \"$HOME/ComfyUI/%s\"\n", n.modelDir, n.modelDir)
+		fmt.Fprintf(&sb, "mkdir -p \"$COMFY_DIR/%s\"\ncd \"$COMFY_DIR/%s\"\n", n.modelDir, n.modelDir)
 		fmt.Fprintf(&sb, "if command -v aria2c &> /dev/null; then\n    aria2c -x 16 -s 16 %s\nelse\n    wget -c %s\nfi\n", n.modelURL, n.modelURL)
 	}
 	fmt.Fprintf(&sb, "echo \"==> %s installed successfully\"\n", n.displayName)

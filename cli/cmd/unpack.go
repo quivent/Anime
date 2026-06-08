@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joshkornreich/anime/internal/claude"
 	"github.com/joshkornreich/anime/internal/config"
+	"github.com/joshkornreich/anime/internal/gh"
 	"github.com/joshkornreich/anime/internal/installer"
 	"github.com/joshkornreich/anime/internal/ssh"
 	"github.com/joshkornreich/anime/internal/theme"
@@ -26,6 +28,7 @@ var (
 	unpackYes     bool
 	unpackUser    string
 	unpackRepos   []string
+	unpackToken   string
 )
 
 var unpackCmd = &cobra.Command{
@@ -63,6 +66,7 @@ func init() {
 	unpackCmd.Flags().BoolVarP(&unpackYes, "yes", "y", false, "Skip confirmation prompt")
 	unpackCmd.Flags().StringVar(&unpackUser, "user", "", "Create a system user with sudo access")
 	unpackCmd.Flags().StringSliceVar(&unpackRepos, "repo", nil, "GitHub repos to clone after setup (e.g. org/repo)")
+	unpackCmd.Flags().StringVar(&unpackToken, "token", "", "GitHub token for gh auth (skip browser login)")
 	rootCmd.AddCommand(unpackCmd)
 }
 
@@ -156,24 +160,22 @@ func runUnpack(cmd *cobra.Command, args []string) {
 		fmt.Println()
 	}
 
-	// Show extra steps
-	hasExtras := unpackUser != "" || len(unpackRepos) > 0
-	if hasExtras {
-		fmt.Println(theme.InfoStyle.Render("  Post-install steps:"))
-		if unpackUser != "" {
-			fmt.Printf("    %s Create user %s with sudo access\n",
-				theme.SymbolBolt, theme.HighlightStyle.Render(unpackUser))
-		}
-		fmt.Printf("    %s Generate SSH key pair\n", theme.SymbolBolt)
-		for _, repo := range unpackRepos {
-			fmt.Printf("    %s Clone %s\n",
-				theme.SymbolBolt, theme.HighlightStyle.Render(repo))
-		}
-		fmt.Println()
+	// Show post-install steps
+	fmt.Println(theme.InfoStyle.Render("  Post-install steps:"))
+	if unpackUser != "" {
+		fmt.Printf("    %s Create user %s with sudo access\n",
+			theme.SymbolBolt, theme.HighlightStyle.Render(unpackUser))
 	}
+	fmt.Printf("    %s Generate SSH key pair\n", theme.SymbolBolt)
+	fmt.Printf("    %s Install shell aliases\n", theme.SymbolBolt)
+	for _, repo := range unpackRepos {
+		fmt.Printf("    %s Clone %s\n",
+			theme.SymbolBolt, theme.HighlightStyle.Render(repo))
+	}
+	fmt.Println()
 
 	// Nothing to do?
-	if len(toInstall) == 0 && !hasExtras {
+	if len(toInstall) == 0 {
 		fmt.Println(theme.SuccessStyle.Render("═══════════════════════════════════════════════"))
 		fmt.Println(theme.SuccessStyle.Render("  ✨ Everything is already unpacked! ✨"))
 		fmt.Println(theme.SuccessStyle.Render("═══════════════════════════════════════════════"))
@@ -586,11 +588,6 @@ func runUnpackRemote(client *ssh.Client, packages []*installer.Package, waves []
 }
 
 func runUnpackExtras(sshClient *ssh.Client) {
-	hasExtras := unpackUser != "" || len(unpackRepos) > 0
-	if !hasExtras {
-		return
-	}
-
 	fmt.Println(theme.RenderBanner("🔧 POST-INSTALL 🔧"))
 	fmt.Println()
 
@@ -667,26 +664,168 @@ chmod 644 ~/.ssh/id_ed25519.pub
 		fmt.Println(theme.WarningStyle.Render("  Continuing despite SSH key generation failure..."))
 	}
 
-	// Clone repos
+	// Authenticate GitHub — token flag > embedded token > skip
+	token := unpackToken
+	if token == "" {
+		token = gh.GetToken()
+	}
+	if token != "" {
+		ghAuthScript := fmt.Sprintf(`#!/bin/bash
+set -e
+if command -v gh &>/dev/null; then
+    if gh auth status &>/dev/null; then
+        echo "Already authenticated: $(gh api user --jq .login 2>/dev/null || echo 'unknown')"
+    else
+        echo '%s' | gh auth login --with-token
+        gh config set git_protocol ssh
+        echo "Authenticated as: $(gh api user --jq .login 2>/dev/null || echo 'unknown')"
+    fi
+    # Upload SSH key if we have one
+    if [ -f ~/.ssh/id_ed25519.pub ]; then
+        TITLE="anime-cli ($(hostname))"
+        gh ssh-key add ~/.ssh/id_ed25519.pub --title "$TITLE" 2>/dev/null && echo "SSH key uploaded" || echo "SSH key already on GitHub"
+    fi
+else
+    echo "gh not installed, skipping auth"
+fi
+`, token)
+		if err := runCmd("Authenticating GitHub", ghAuthScript); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Continuing despite gh auth failure..."))
+		}
+	}
+
+	// Install shell aliases
+	aliasScript := buildAliasInstallScript()
+	if err := runCmd("Installing shell aliases", aliasScript); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  Continuing despite alias install failure..."))
+	}
+
+	// Export Claude auth token to bashrc if embedded
+	claudeToken := claude.GetAuthToken()
+	if claudeToken != "" {
+		claudeScript := fmt.Sprintf(`#!/bin/bash
+set -e
+RC="$HOME/.bashrc"
+[ -f "$RC" ] || touch "$RC"
+if grep -qF 'ANTHROPIC_AUTH_TOKEN' "$RC" 2>/dev/null; then
+    echo "ANTHROPIC_AUTH_TOKEN already in $RC"
+else
+    echo 'export ANTHROPIC_AUTH_TOKEN="%s"' >> "$RC"
+    echo "Added ANTHROPIC_AUTH_TOKEN to $RC"
+fi
+`, claudeToken)
+		if err := runCmd("Configuring Claude Code auth", claudeScript); err != nil {
+			fmt.Println(theme.WarningStyle.Render("  Continuing despite Claude auth setup failure..."))
+		}
+	}
+
+	// Clone all quivent repos into ~/quivent
+	quiventScript := `#!/bin/bash
+set -e
+mkdir -p "$HOME/quivent"
+if ! command -v gh &>/dev/null; then
+    echo "gh not installed, skipping quivent clone"
+    exit 0
+fi
+if ! gh auth status &>/dev/null; then
+    echo "gh not authenticated, skipping quivent clone"
+    exit 0
+fi
+cd "$HOME/quivent"
+REPOS=$(gh repo list quivent --json name --no-archived --limit 100 -q '.[].name' 2>/dev/null || true)
+if [ -z "$REPOS" ]; then
+    echo "No repos found or quivent org not accessible"
+    exit 0
+fi
+CLONED=0
+SKIPPED=0
+for REPO in $REPOS; do
+    if [ -d "$REPO" ]; then
+        SKIPPED=$((SKIPPED + 1))
+    else
+        gh repo clone "quivent/$REPO" "$REPO" 2>/dev/null || git clone "git@github.com:quivent/$REPO.git" "$REPO" 2>/dev/null || {
+            echo "Failed to clone quivent/$REPO, skipping"
+            continue
+        }
+        CLONED=$((CLONED + 1))
+    fi
+done
+echo "Cloned $CLONED repos, skipped $SKIPPED (already present)"
+ls -1 "$HOME/quivent"
+`
+	if err := runCmd("Cloning quivent repos into ~/quivent", quiventScript); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  Continuing despite quivent clone failure..."))
+	}
+
+	// Clone repos via gh (uses authenticated SSH)
 	for _, repo := range unpackRepos {
-		repoURL := repo
-		if !strings.Contains(repo, "://") && !strings.HasPrefix(repo, "git@") {
-			repoURL = "https://github.com/" + repo + ".git"
+		slug := repo
+		if strings.Contains(slug, "://") || strings.Contains(slug, "@") {
+			slug = extractSlug(slug)
 		}
 		script := fmt.Sprintf(`#!/bin/bash
 set -e
-REPO_NAME=$(basename "%s" .git)
+REPO_NAME=$(basename "%s")
 if [ -d "$HOME/$REPO_NAME" ]; then
     echo "$REPO_NAME already cloned in ~/$REPO_NAME"
 else
-    git clone "%s" "$HOME/$REPO_NAME"
+    gh repo clone "%s" "$HOME/$REPO_NAME" 2>/dev/null || git clone "git@github.com:%s.git" "$HOME/$REPO_NAME"
     echo "Cloned to ~/$REPO_NAME"
 fi
-`, repoURL, repoURL)
+`, slug, slug, slug)
 		if err := runCmd(fmt.Sprintf("Cloning %s", repo), script); err != nil {
 			fmt.Println(theme.WarningStyle.Render(fmt.Sprintf("  Failed to clone %s, continuing...", repo)))
 		}
 	}
+}
+
+func buildAliasInstallScript() string {
+	all := make(map[string]string)
+	for k, v := range defaultAliases {
+		all[k] = v
+	}
+	if cfg, err := config.Load(); err == nil {
+		for k, v := range cfg.GetShellAliases() {
+			all[k] = v
+		}
+	}
+
+	var aliasLines []string
+	for name, command := range all {
+		aliasLines = append(aliasLines, fmt.Sprintf("alias %s='%s'", name, command))
+	}
+
+	block := strings.Join(aliasLines, "\n")
+
+	return fmt.Sprintf(`#!/bin/bash
+set -e
+
+START_MARKER="# >>> ANIME ALIASES START >>>"
+END_MARKER="# <<< ANIME ALIASES END <<<"
+
+install_aliases() {
+    local rc="$1"
+    [ -f "$rc" ] || touch "$rc"
+
+    # Remove old block if present
+    if grep -qF "$START_MARKER" "$rc" 2>/dev/null; then
+        awk -v s="$START_MARKER" -v e="$END_MARKER" '
+            $0==s{skip=1;next} $0==e{skip=0;next} !skip{print}
+        ' "$rc" > "${rc}.tmp" && mv "${rc}.tmp" "$rc"
+    fi
+
+    # Append new block
+    cat >> "$rc" <<'ANIMEALIASES'
+# >>> ANIME ALIASES START >>>
+%s
+# <<< ANIME ALIASES END <<<
+ANIMEALIASES
+    echo "Installed aliases to $rc"
+}
+
+install_aliases "$HOME/.bashrc"
+[ -f "$HOME/.zshrc" ] && install_aliases "$HOME/.zshrc"
+`, block)
 }
 
 func unpackVictory(total, failures int, elapsed time.Duration) {

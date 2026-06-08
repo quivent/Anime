@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/joshkornreich/anime/internal/config"
 	"github.com/joshkornreich/anime/internal/launch"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/joshkornreich/anime/internal/validate"
+	"github.com/joshkornreich/anime/internal/vercel"
 	"github.com/spf13/cobra"
 )
 
@@ -196,7 +198,64 @@ func runDeployFull(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 5: Nginx + SSL
+	// Step 5: Point DNS via Vercel API (if token configured)
+	if domain != "" {
+		cfg, cfgErr := config.Load()
+		vToken := ""
+		vTeamID := ""
+		if cfgErr == nil {
+			vToken = cfg.APIKeys.Vercel
+			vTeamID = cfg.APIKeys.VercelTeamID
+		}
+		if os.Getenv("VERCEL_TOKEN") != "" {
+			vToken = os.Getenv("VERCEL_TOKEN")
+		}
+		if vToken == "" {
+			vToken = vercel.GetToken()
+		}
+		if vTeamID == "" {
+			vTeamID = vercel.GetTeamID()
+		}
+
+		if vToken != "" {
+			// Resolve server IP
+			serverIP := ""
+			if cfgErr == nil {
+				target := cfg.GetAlias(server)
+				if target != "" {
+					if strings.Contains(target, "@") {
+						serverIP = strings.SplitN(target, "@", 2)[1]
+					} else {
+						serverIP = target
+					}
+				} else if srv, err := cfg.GetServer(server); err == nil {
+					serverIP = srv.Host
+				}
+			}
+
+			if serverIP != "" {
+				parts := strings.Split(domain, ".")
+				if len(parts) >= 2 {
+					zone := strings.Join(parts[len(parts)-2:], ".")
+					subdomain := ""
+					if len(parts) > 2 {
+						subdomain = strings.Join(parts[:len(parts)-2], ".")
+					}
+
+					fmt.Printf("  %s Pointing %s → %s via Vercel DNS...\n", theme.SymbolLoading, domain, serverIP)
+					vercelRemoveARecords(vToken, vTeamID, zone, subdomain)
+					if err := vercelCreateARecord(vToken, vTeamID, zone, subdomain, serverIP); err != nil {
+						fmt.Printf("  %s DNS failed: %s\n", theme.WarningStyle.Render("⚠️"), err.Error())
+						fmt.Println(theme.DimTextStyle.Render("    Continuing — point DNS manually or run: anime dns point " + domain + " " + serverIP))
+					} else {
+						fmt.Printf("  %s DNS pointed\n", theme.SuccessStyle.Render(theme.SymbolSuccess))
+					}
+				}
+			}
+		}
+	}
+
+	// Step 6: Nginx + SSL
 	if domain != "" {
 		fmt.Printf("  %s Configuring nginx for %s...\n", theme.SymbolLoading, domain)
 

@@ -9,7 +9,16 @@ BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # Build flags
-LDFLAGS=-ldflags "-X github.com/joshkornreich/anime/cmd.Version=$(VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$(shell pwd)"
+# Tokens: reads from .config, env, or make arg
+GH_TOKEN ?= $(shell grep -s '^GH_TOKEN=' .config ../.config 2>/dev/null | head -1 | cut -d= -f2-)
+ANTHROPIC_AUTH_TOKEN ?= $(shell grep -s '^ANTHROPIC_AUTH_TOKEN=' .config ../.config 2>/dev/null | head -1 | cut -d= -f2-)
+VERCEL_TOKEN ?= $(shell grep -s '^VERCEL_TOKEN=' .config ../.config 2>/dev/null | head -1 | cut -d= -f2-)
+VERCEL_TEAM_ID ?= $(shell grep -s '^VERCEL_TEAM_ID=' .config ../.config 2>/dev/null | head -1 | cut -d= -f2-)
+_GH_FLAG := $(if $(GH_TOKEN),-X github.com/joshkornreich/anime/internal/gh.EmbeddedToken=$(GH_TOKEN),)
+_CLAUDE_FLAG := $(if $(ANTHROPIC_AUTH_TOKEN),-X github.com/joshkornreich/anime/internal/claude.EmbeddedAuthToken=$(ANTHROPIC_AUTH_TOKEN),)
+_VERCEL_FLAG := $(if $(VERCEL_TOKEN),-X github.com/joshkornreich/anime/internal/vercel.EmbeddedToken=$(VERCEL_TOKEN),)
+_VERCEL_TEAM_FLAG := $(if $(VERCEL_TEAM_ID),-X github.com/joshkornreich/anime/internal/vercel.EmbeddedTeamID=$(VERCEL_TEAM_ID),)
+LDFLAGS=-ldflags "-X github.com/joshkornreich/anime/cmd.Version=$(VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$(shell pwd) $(_GH_FLAG) $(_CLAUDE_FLAG) $(_VERCEL_FLAG) $(_VERCEL_TEAM_FLAG)"
 
 # Detect OS
 UNAME_S := $(shell uname -s)
@@ -90,7 +99,7 @@ build: pull-claude embed-source
 	@./scripts/bump-version.sh > /dev/null
 	@echo "Building $(BINARY_NAME) v$$(cat VERSION) for $(OS)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	go build -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
+	go build -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd) $(_GH_FLAG) $(_CLAUDE_FLAG) $(_VERCEL_FLAG) $(_VERCEL_TEAM_FLAG)" -o $(BUILD_DIR)/$(BINARY_NAME) main.go
 	@echo "✓ Built: $(BUILD_DIR)/$(BINARY_NAME) v$$(cat VERSION)"
 	@echo ""
 	@# Verify source embedding in built binary
@@ -100,10 +109,13 @@ build: pull-claude embed-source
 	@echo ""
 	@echo "Installing to ~/go/bin and ~/.local/bin..."
 	@go install -ldflags "-X github.com/joshkornreich/anime/cmd.Version=$$(cat VERSION) -X github.com/joshkornreich/anime/cmd.BuildTime=$(BUILD_TIME) -X github.com/joshkornreich/anime/cmd.Commit=$(COMMIT) -X github.com/joshkornreich/anime/cmd.BuildDir=$$(pwd)"
-	@mkdir -p $(HOME)/.local/bin
+	@mkdir -p $(HOME)/.local/bin $(HOME)/bin
 	@cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/.local/bin/$(BINARY_NAME)
+	@cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/bin/$(BINARY_NAME)
+	@if [ "$$(uname)" = "Darwin" ]; then codesign -s - -f $(HOME)/bin/$(BINARY_NAME) 2>/dev/null || true; fi
 	@echo "✓ Installed: ~/go/bin/$(BINARY_NAME) v$$(cat VERSION)"
 	@echo "✓ Installed: ~/.local/bin/$(BINARY_NAME) v$$(cat VERSION)"
+	@echo "✓ Installed: ~/bin/$(BINARY_NAME) v$$(cat VERSION)"
 
 # Install anime to /usr/local/bin (requires sudo on some systems)
 install: build

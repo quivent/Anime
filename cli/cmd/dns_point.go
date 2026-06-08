@@ -1,5 +1,3 @@
-//go:build ignore
-
 package cmd
 
 import (
@@ -12,7 +10,9 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/joshkornreich/anime/internal/config"
 	"github.com/joshkornreich/anime/internal/theme"
+	"github.com/joshkornreich/anime/internal/vercel"
 	"github.com/spf13/cobra"
 )
 
@@ -24,48 +24,108 @@ var (
 var dnsPointCmd = &cobra.Command{
 	Use:   "point <domain> <ip>",
 	Short: "Point domain to IP via Vercel API + auto-SSL",
-	Long: `Point a domain to an IP address using the Vercel DNS API, then
-optionally set up Let's Encrypt SSL with nginx reverse proxy on the server.
+	Long: `Point a domain to an IP address using the Vercel DNS API.
 
-Uses the Vercel token from ~/.dns-config.json (no vercel CLI needed).
+Uses the Vercel token from anime config (set with 'anime dns auth <token>').
+No vercel CLI needed.
 
 Examples:
-  anime dns point comfort.mydomain.com 192.168.1.100
-  anime dns point comfort.mydomain.com 192.168.1.100 --ssl
-  anime dns point comfort.mydomain.com 192.168.1.100 --ssl --server captain`,
+  anime dns point mydomain.com 192.168.1.100
+  anime dns point sub.mydomain.com 192.168.1.100
+  anime dns point sub.mydomain.com 192.168.1.100 --ssl
+  anime dns point sub.mydomain.com 192.168.1.100 --ssl --server lambda`,
 	Args: cobra.ExactArgs(2),
 	RunE: runDNSPoint,
+}
+
+var dnsAuthCmd = &cobra.Command{
+	Use:   "auth <vercel-token> [team-id]",
+	Short: "Store Vercel API token for DNS management",
+	Long: `Store your Vercel API token so anime can manage DNS records.
+
+Get a token at: https://vercel.com/account/tokens
+
+Examples:
+  anime dns auth vck_xxxxx
+  anime dns auth vck_xxxxx team_yyyyy`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runDNSAuth,
 }
 
 func init() {
 	dnsPointCmd.Flags().BoolVar(&dnsPointSSL, "ssl", false, "Set up Let's Encrypt SSL + nginx reverse proxy on target")
 	dnsPointCmd.Flags().StringVarP(&dnsPointServer, "server", "s", "", "Server alias for SSH (default: use IP directly)")
 	dnsCmd.AddCommand(dnsPointCmd)
+	dnsCmd.AddCommand(dnsAuthCmd)
+}
+
+func runDNSAuth(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	cfg.APIKeys.Vercel = args[0]
+	if len(args) > 1 {
+		cfg.APIKeys.VercelTeamID = args[1]
+	}
+
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println(theme.SuccessStyle.Render("✓ Vercel token saved"))
+	fmt.Println()
+	fmt.Println(theme.DimTextStyle.Render("  You can now run:"))
+	fmt.Printf("  %s\n", theme.HighlightStyle.Render("anime dns point <domain> <ip>"))
+	fmt.Println()
+	return nil
 }
 
 func runDNSPoint(cmd *cobra.Command, args []string) error {
 	domain := args[0]
 	ip := args[1]
 
-	// Load Vercel token
-	cfg, err := loadDNSConfig()
-	if err != nil {
-		return fmt.Errorf("load dns config: %w", err)
+	// Load token: env > config.yaml > embedded
+	token := os.Getenv("VERCEL_TOKEN")
+	teamID := os.Getenv("VERCEL_TEAM_ID")
+
+	if token == "" {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+		token = cfg.APIKeys.Vercel
+		if teamID == "" {
+			teamID = cfg.APIKeys.VercelTeamID
+		}
 	}
-	if cfg.Token == "" {
-		fmt.Println(theme.ErrorStyle.Render("✗ No Vercel token in ~/.dns-config.json"))
-		fmt.Println(theme.DimTextStyle.Render("  Set \"token\": \"vck_...\" in ~/.dns-config.json"))
+	if token == "" {
+		token = vercel.GetToken()
+	}
+	if teamID == "" {
+		teamID = vercel.GetTeamID()
+	}
+
+	if token == "" {
+		fmt.Println(theme.ErrorStyle.Render("✗ No Vercel token configured"))
+		fmt.Println()
+		fmt.Println(theme.InfoStyle.Render("  Set one with:"))
+		fmt.Printf("  %s\n", theme.HighlightStyle.Render("anime dns auth <vercel-token>"))
+		fmt.Println()
+		fmt.Println(theme.DimTextStyle.Render("  Get a token at: https://vercel.com/account/tokens"))
+		fmt.Println()
 		return fmt.Errorf("missing vercel token")
 	}
 
 	fmt.Println()
 	fmt.Printf("  %s  Point %s → %s\n",
-		theme.InfoStyle.Render("Step 1/3"),
+		theme.InfoStyle.Render("Step 1"),
 		theme.HighlightStyle.Render(domain),
 		theme.InfoStyle.Render(ip))
-	fmt.Printf("  %s  %s\n",
-		theme.DimTextStyle.Render("       "),
-		theme.DimTextStyle.Render("Setting A record via Vercel API"))
+	fmt.Printf("  %s\n",
+		theme.DimTextStyle.Render("         Setting A record via Vercel API"))
 	fmt.Println()
 
 	// Parse domain into zone + subdomain
@@ -73,7 +133,6 @@ func runDNSPoint(cmd *cobra.Command, args []string) error {
 	if len(parts) < 2 {
 		return fmt.Errorf("invalid domain: %s", domain)
 	}
-	// Zone is last two parts (e.g., mydomain.com)
 	zone := strings.Join(parts[len(parts)-2:], ".")
 	subdomain := ""
 	if len(parts) > 2 {
@@ -81,12 +140,12 @@ func runDNSPoint(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove existing A records for this subdomain
-	if err := vercelRemoveARecords(cfg.Token, cfg.TeamID, zone, subdomain); err != nil {
+	if err := vercelRemoveARecords(token, teamID, zone, subdomain); err != nil {
 		fmt.Printf("  │ %s (may not exist yet)\n", theme.DimTextStyle.Render(err.Error()))
 	}
 
 	// Create A record
-	if err := vercelCreateARecord(cfg.Token, cfg.TeamID, zone, subdomain, ip); err != nil {
+	if err := vercelCreateARecord(token, teamID, zone, subdomain, ip); err != nil {
 		fmt.Printf("  %s  %s\n", theme.ErrorStyle.Render("✗"), err.Error())
 		return err
 	}
@@ -101,31 +160,23 @@ func runDNSPoint(cmd *cobra.Command, args []string) error {
 		ip)
 	fmt.Println()
 
-	// Step 2: SSL setup
 	if !dnsPointSSL {
-		fmt.Printf("  %s  Skipped (use --ssl to enable)\n",
-			theme.DimTextStyle.Render("Step 2/3"))
-		fmt.Printf("  %s  Skipped\n",
-			theme.DimTextStyle.Render("Step 3/3"))
-		fmt.Println()
-		fmt.Printf("  %s  %s\n",
-			theme.InfoStyle.Render("Done:"),
-			theme.DimTextStyle.Render("DNS pointed, no SSL"))
+		fmt.Printf("  %s\n", theme.DimTextStyle.Render("  Add --ssl to set up Let's Encrypt + nginx"))
 		fmt.Println()
 		return nil
 	}
 
+	// SSL setup on remote server
 	target := ip
 	if dnsPointServer != "" {
 		target = dnsPointServer
 	}
 
 	fmt.Printf("  %s  Installing certbot + nginx on %s\n",
-		theme.InfoStyle.Render("Step 2/3"),
+		theme.InfoStyle.Render("Step 2"),
 		theme.HighlightStyle.Render(target))
 	fmt.Println()
 
-	// Install certbot + nginx and get cert
 	sslScript := fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 
@@ -135,7 +186,7 @@ $SUDO apt-get update -y -qq
 $SUDO apt-get install -y -qq nginx certbot python3-certbot-nginx
 
 echo "  │ Configuring nginx reverse proxy for %s → :3000..."
-cat <<'NGINX' | $SUDO tee /etc/nginx/sites-available/comfort >/dev/null
+cat <<'NGINX' | $SUDO tee /etc/nginx/sites-available/anime-proxy >/dev/null
 server {
     listen 80;
     server_name %s;
@@ -153,7 +204,7 @@ server {
 }
 NGINX
 
-$SUDO ln -sf /etc/nginx/sites-available/comfort /etc/nginx/sites-enabled/comfort
+$SUDO ln -sf /etc/nginx/sites-available/anime-proxy /etc/nginx/sites-enabled/anime-proxy
 $SUDO rm -f /etc/nginx/sites-enabled/default
 $SUDO nginx -t && $SUDO systemctl reload nginx
 
@@ -166,13 +217,7 @@ $SUDO systemctl enable certbot.timer 2>/dev/null || true
 echo "  │ Done — https://%s is live"
 `, domain, domain, domain, domain)
 
-	sshTarget := target
-	if !strings.Contains(target, "@") && target != ip {
-		// It's a server alias, resolve via anime config
-		sshTarget = target
-	}
-
-	sshArgs := buildSSHArgs(sshTarget, sslScript)
+	sshArgs := dnsPointSSHArgs(target, sslScript)
 	sshCmd := exec.Command("ssh", sshArgs...)
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
@@ -184,13 +229,6 @@ echo "  │ Done — https://%s is live"
 	}
 
 	fmt.Println()
-	fmt.Printf("  %s  SSL certificate issued\n",
-		theme.SuccessStyle.Render("Step 2/3"))
-	fmt.Println()
-	fmt.Printf("  %s  Verifying...\n",
-		theme.InfoStyle.Render("Step 3/3"))
-
-	fmt.Println()
 	fmt.Printf("  %s  %s is live\n",
 		theme.SuccessStyle.Render("✓"),
 		theme.SuccessStyle.Render("https://"+domain))
@@ -199,7 +237,27 @@ echo "  │ Done — https://%s is live"
 	return nil
 }
 
-// --- Vercel API helpers (no CLI needed) ---
+// dnsPointSSHArgs builds SSH args for running a script on a remote server.
+func dnsPointSSHArgs(target, script string) []string {
+	// Resolve server alias if needed
+	if !strings.Contains(target, "@") && !strings.Contains(target, ".") {
+		cfg, err := config.Load()
+		if err == nil {
+			if resolved := cfg.GetAlias(target); resolved != "" {
+				target = resolved
+			}
+		}
+	}
+
+	return []string{
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		target,
+		script,
+	}
+}
+
+// --- Vercel API helpers ---
 
 type vercelDNSRecord struct {
 	ID    string `json:"id"`
@@ -240,12 +298,8 @@ func vercelAPI(token, method, path string, body io.Reader) ([]byte, error) {
 
 func vercelRemoveARecords(token, teamID, zone, subdomain string) error {
 	path := fmt.Sprintf("/v4/domains/%s/records", zone)
-	// Try without teamId first (personal tokens), fall back to teamId
 	if teamID != "" {
-		_, err := vercelAPI(token, "GET", path, nil)
-		if err != nil {
-			path += "?teamId=" + teamID
-		}
+		path += "?teamId=" + teamID
 	}
 
 	data, err := vercelAPI(token, "GET", path, nil)
@@ -258,13 +312,8 @@ func vercelRemoveARecords(token, teamID, zone, subdomain string) error {
 		return err
 	}
 
-	name := subdomain
-	if name == "" {
-		name = ""
-	}
-
 	for _, rec := range resp.Records {
-		if rec.Type == "A" && rec.Name == name {
+		if rec.Type == "A" && rec.Name == subdomain {
 			delPath := fmt.Sprintf("/v2/domains/%s/records/%s", zone, rec.ID)
 			if teamID != "" {
 				delPath += "?teamId=" + teamID
@@ -280,13 +329,8 @@ func vercelRemoveARecords(token, teamID, zone, subdomain string) error {
 
 func vercelCreateARecord(token, teamID, zone, subdomain, ip string) error {
 	path := fmt.Sprintf("/v2/domains/%s/records", zone)
-	// Try without teamId first; add only if personal scope fails
 	if teamID != "" {
-		testPath := fmt.Sprintf("/v4/domains/%s/records", zone)
-		_, err := vercelAPI(token, "GET", testPath, nil)
-		if err != nil {
-			path += "?teamId=" + teamID
-		}
+		path += "?teamId=" + teamID
 	}
 
 	payload := map[string]interface{}{
@@ -300,4 +344,3 @@ func vercelCreateARecord(token, teamID, zone, subdomain, ip string) error {
 	_, err := vercelAPI(token, "POST", path, bytes.NewReader(body))
 	return err
 }
-

@@ -196,8 +196,11 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "1", "2", "3", "4", "5":
 				if it, ok := m.list.SelectedItem().(wanRender); ok {
 					n := msg.String()
-					_, _ = runWanCapture("rate", fmt.Sprint(it.ID), n)
-					m.flash = wanGoodStyle.Render(fmt.Sprintf("rated #%d %s%s", it.ID, strings.Repeat("★", atoiSafe(n)), strings.Repeat("·", 5-atoiSafe(n))))
+					if _, err := runWanCapture("rate", fmt.Sprint(it.ID), n); err != nil {
+						m.flash = wanBadStyle.Render(fmt.Sprintf("✗ failed to rate #%d: %s", it.ID, err))
+					} else {
+						m.flash = wanGoodStyle.Render(fmt.Sprintf("rated #%d %s%s", it.ID, strings.Repeat("★", atoiSafe(n)), strings.Repeat("·", 5-atoiSafe(n))))
+					}
 					cmds = append(cmds, refreshList())
 				}
 			case "ctrl+r":

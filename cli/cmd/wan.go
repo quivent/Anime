@@ -161,52 +161,40 @@ func extractWanScript() (string, error) {
 	return dst, nil
 }
 
-// findPython picks the best Python: prefer WAN_PYTHON env, then ComfyUI venv, then python3, then python.
-func findPython() string {
-	if p := os.Getenv("WAN_PYTHON"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
+// findPython picks the best Python: prefer ComfyUI venv, then python3, then python.
+// Returns the path and an error if no Python interpreter can be found at all.
+func findPython() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Can't resolve home -- skip the venv candidate, fall through to PATH.
+		home = ""
 	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, "ComfyUI", "venv", "bin", "python"),
-		"python3",
-		"python",
+	var candidates []string
+	if home != "" {
+		candidates = append(candidates, filepath.Join(home, "ComfyUI", "venv", "bin", "python"))
 	}
+	candidates = append(candidates, "python3", "python")
 	for _, p := range candidates {
 		if filepath.IsAbs(p) {
 			if _, err := os.Stat(p); err == nil {
-				return p
+				return p, nil
 			}
 		} else if path, err := exec.LookPath(p); err == nil {
-			return path
+			return path, nil
 		}
 	}
-	return "python3"
+	return "", fmt.Errorf("no Python interpreter found on PATH or at ~/ComfyUI/venv/bin/python.\n  Install Python 3 or run: anime install wan")
 }
 
 func runWanPython(args []string) error {
 	scriptPath, err := extractWanScript()
 	if err != nil {
-		fmt.Println(theme.ErrorStyle.Render("✗ Failed to extract wan.py: " + err.Error()))
-		fmt.Println(theme.DimTextStyle.Render("  Check disk space and permissions on ~/.anime/"))
-		return err
+		return fmt.Errorf("failed to extract wan.py: %w", err)
 	}
-	py := findPython()
-
-	// Verify Python is actually reachable before launching — a missing interpreter
-	// produces a confusing "exec: not found" error otherwise.
-	if !filepath.IsAbs(py) {
-		if _, lookErr := exec.LookPath(py); lookErr != nil {
-			fmt.Println(theme.ErrorStyle.Render("✗ Python not found on PATH"))
-			fmt.Println(theme.DimTextStyle.Render("  The wan pipeline needs Python 3.8+."))
-			fmt.Println(theme.DimTextStyle.Render("  Install it:  anime install wan"))
-			fmt.Println(theme.DimTextStyle.Render("  Or manually: brew install python3  /  apt install python3"))
-			return fmt.Errorf("python not found")
-		}
+	py, err := findPython()
+	if err != nil {
+		return fmt.Errorf("cannot run wan pipeline: %w", err)
 	}
-
 	full := append([]string{scriptPath}, args...)
 	c := exec.Command(py, full...)
 	c.Stdin = os.Stdin
@@ -219,13 +207,7 @@ func runWanPython(args []string) error {
 				os.Exit(status.ExitStatus())
 			}
 		}
-		// Generic execution failure — give the user something to work with.
-		fmt.Println()
-		fmt.Println(theme.ErrorStyle.Render("✗ wan pipeline exited with an error"))
-		fmt.Println(theme.DimTextStyle.Render("  Python: " + py))
-		fmt.Println(theme.DimTextStyle.Render("  Script: " + scriptPath))
-		fmt.Println(theme.DimTextStyle.Render("  If ComfyUI is not running: anime comfyui start"))
-		return err
+		return fmt.Errorf("wan.py exited with error: %w", err)
 	}
 	return nil
 }
@@ -236,10 +218,12 @@ func runWanPython(args []string) error {
 func runWanCapture(args ...string) (string, error) {
 	scriptPath, err := extractWanScript()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to extract wan.py: %w", err)
 	}
-	py := findPython()
-	args = stripRootFlags(args)
+	py, err := findPython()
+	if err != nil {
+		return "", fmt.Errorf("cannot run wan pipeline: %w", err)
+	}
 	full := append([]string{scriptPath}, args...)
 	c := exec.Command(py, full...)
 	c.Env = os.Environ()

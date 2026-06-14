@@ -168,24 +168,40 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 	// Phase 0: get the host to a state where the studio can actually run.
 	// This is idempotent — every phase short-circuits when its check passes.
 	// On a fully-set-up box (the common case), this is just a fast probe.
-	if err := ensureComfyStudioReady(&bootstrap); err != nil {
+	setupRes, err := ensureComfyStudioReady(&bootstrap)
+	if err != nil {
 		return err
 	}
 	if bootstrap.checkOnly {
 		return nil
 	}
 
+	// cleanupComfy kills the ComfyUI screen session IF we started it.
+	// Called when a later step fails so we don't leave orphan processes.
+	cleanupComfy := func() {
+		if setupRes != nil && setupRes.comfyStartedByUs {
+			fmt.Println(theme.DimTextStyle.Render("  Cleaning up: stopping ComfyUI that we started..."))
+			_ = stopComfyUIServer()
+		}
+	}
+
 	if dev {
-		return runStudioDev(distOverride, open, comfyURL)
+		if err := runStudioDev(distOverride, open, comfyURL); err != nil {
+			cleanupComfy()
+			return err
+		}
+		return nil
 	}
 
 	dist, err := resolveComfortDist(distOverride)
 	if err != nil {
+		cleanupComfy()
 		return err
 	}
 
 	upstream, err := url.Parse(comfyURL)
 	if err != nil {
+		cleanupComfy()
 		return fmt.Errorf("invalid --comfy URL %q: %w", comfyURL, err)
 	}
 	if !checkComfyReachable(upstream) {
@@ -218,6 +234,7 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 
 	srv, err := buildStudioServer(addr, dist, upstream)
 	if err != nil {
+		cleanupComfy()
 		return err
 	}
 
@@ -255,12 +272,15 @@ func runWanStudio(cmd *cobra.Command, args []string) error {
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
+			cleanupComfy()
+			return fmt.Errorf("studio web server failed on %s: %w", addr, err)
 		}
 	case <-stop:
 		fmt.Println()
 		fmt.Println(theme.InfoStyle.Render("Shutting down studio..."))
-		_ = srv.Close()
+		if closeErr := srv.Close(); closeErr != nil {
+			fmt.Println(theme.WarningStyle.Render("  warning: server close: " + closeErr.Error()))
+		}
 	}
 	return nil
 }

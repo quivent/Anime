@@ -244,21 +244,42 @@ def submit_render(graph: dict) -> str:
         )
     return r["prompt_id"]
 
-_SPINNER = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
+def _format_duration(seconds: int) -> str:
+    """Human-readable duration: '30s', '2m30s', '1h5m'."""
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{m}m{s}s" if s else f"{m}m"
+    h, m = divmod(m, 60)
+    return f"{h}h{m}m" if m else f"{h}h"
+
+def preflight_comfy_check():
+    """Verify ComfyUI is reachable before accepting work. Fail fast."""
+    try:
+        urllib.request.urlopen(f"{COMFY_API}/system_stats", timeout=5)
+    except (urllib.error.URLError, OSError) as e:
+        reason = getattr(e, 'reason', e)
+        print(f"\n  {X}ComfyUI not reachable at {COMFY_API}{R}", file=sys.stderr)
+        print(f"  {D}({reason}){R}", file=sys.stderr)
+        print(f"\n  Start it with:  anime comfyui start", file=sys.stderr)
+        print(f"  Or run:         anime wan studio", file=sys.stderr)
+        sys.exit(1)
 
 def wait_for(prompt_id: str, timeout: int = 1800) -> dict:
     start = time.time()
-    tick = 0
-    # Track progress by polling the ComfyUI queue for position/running state
+    last = None
+    human_timeout = _format_duration(timeout)
     while True:
         elapsed = time.time() - start
         try:
             h = json.load(urllib.request.urlopen(f"{COMFY_API}/history/{prompt_id}", timeout=10))
         except urllib.error.URLError as e:
             raise RuntimeError(
-                f"ComfyUI unreachable at {COMFY_API} ({e.reason}).\n"
-                f"  Start it:  anime comfyui start\n"
-                f"  Check it:  curl {COMFY_API}/system_stats"
+                f"Lost connection to ComfyUI at {COMFY_API} while waiting for render.\n"
+                f"  Error: {e.reason}\n"
+                f"  The render may still be running. Check: {COMFY_API}\n"
+                f"  Prompt ID: {prompt_id}"
             ) from None
         if prompt_id in h:
             entry = h[prompt_id]
@@ -282,14 +303,13 @@ def wait_for(prompt_id: str, timeout: int = 1800) -> dict:
         tick += 1
 
         if elapsed > timeout:
-            print()
             raise TimeoutError(
-                f"Render exceeded {timeout}s timeout.\n"
+                f"Render timed out after {human_timeout}.\n"
                 f"  The render may still be running in ComfyUI.\n"
-                f"  Check:  {COMFY_API}/queue\n"
-                f"  Increase timeout:  --timeout {timeout*2}"
+                f"  Check: {COMFY_API}\n"
+                f"  Prompt ID: {prompt_id}"
             )
-        time.sleep(2)
+        time.sleep(5)
 
 def extract_outputs(history: dict):
     out = []
@@ -326,13 +346,13 @@ def _estimate_render_time(preset_name: str) -> str:
 def cmd_render(args):
     preset = args.preset
     if preset not in PRESETS:
-        print(f"\n  {X}Unknown preset:{R} {preset}")
-        print(f"  {D}Available presets:{R}")
-        for k in PRESETS:
-            marker = f"{G}*{R}" if k == DEFAULT_PRESET else " "
-            print(f"    {marker} {k}")
-        print(f"\n  {D}Use: anime wan render \"prompt\" --preset <name>{R}\n")
-        sys.exit(1)
+        print(f"{X}unknown preset:{R} {preset}\n  available: {', '.join(PRESETS)}", file=sys.stderr); sys.exit(1)
+
+    # Pre-flight: verify ComfyUI is reachable BEFORE building the workflow or
+    # accepting the prompt into the DB. Don't let the user wait 30s only to
+    # get "connection refused".
+    preflight_comfy_check()
+
     seed = args.seed if args.seed is not None else random.randint(1, 2**63-1)
     name = args.name or f"render_{int(time.time())}"
     # --negative wins; otherwise pick SFW or explicit baseline.
@@ -390,8 +410,10 @@ def cmd_render(args):
                     "UPDATE renders SET status='cancelled', notes=COALESCE(notes,'')||' [SIGINT]' WHERE id=? AND status='pending'",
                     (rid,),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            # DB update failed during cancellation -- tell the user so the
+            # stale 'pending' row doesn't surprise them later.
+            print(f"\n  {Y}warning: could not mark render #{rid} as cancelled in DB: {e}{R}", file=sys.stderr)
         print(f"\n  {Y}✗ cancelled (id={rid}){R}\n")
         sys.exit(130)
     prev_sigint = signal.signal(signal.SIGINT, _on_sigint)
@@ -414,23 +436,19 @@ def cmd_render(args):
             conn.execute("""
                 UPDATE renders SET status='done', output_path=?, output_url=?, file_size=?, render_seconds=? WHERE id=?
             """, (primary["local"], primary["url"], size, elapsed, rid))
-
-        # Success card
-        secs = int(elapsed)
-        if secs >= 60:
-            dur = f"{secs//60}m {secs%60}s"
-        else:
-            dur = f"{secs}s"
-        sz_mb = size / 1024 / 1024
-        print(f"\n  {G}Done{R}  {dur}  {D}·{R}  {sz_mb:.1f} MB")
-        print(f"  {B}url{R}    {primary['url']}")
-        print(f"  {B}local{R}  {primary['local']}")
-        print(f"  {B}id{R}     {rid}")
-        print(f"\n  {D}Next:  anime wan show {rid}    anime wan vary {rid}    anime wan rate {rid} 5{R}\n")
+        print(f"\n  {G}✓ done in {elapsed:.0f}s ({elapsed/60:.1f} min)  ·  {size/1024/1024:.1f}MB{R}")
+        print(f"  {B}url:{R}   {primary['url']}")
+        print(f"  {B}local:{R} {primary['local']}")
+        print(f"  {B}id:{R}    {rid}\n")
+    except TimeoutError as e:
+        with db() as conn:
+            conn.execute("UPDATE renders SET status='timeout', notes=? WHERE id=?", (str(e), rid))
+        print(f"\n  {Y}✗ {e}{R}\n", file=sys.stderr)
+        sys.exit(3)
     except Exception as e:
         with db() as conn:
             conn.execute("UPDATE renders SET status='failed', notes=? WHERE id=?", (str(e), rid))
-        print(f"\n  {X}Failed:{R} {e}\n")
+        print(f"\n  {X}✗ render #{rid} failed:{R} {e}\n", file=sys.stderr)
         sys.exit(2)
     finally:
         signal.signal(signal.SIGINT, prev_sigint)
@@ -753,7 +771,16 @@ def main():
     sp.add_parser("tui")     .set_defaults(fn=cmd_tui)
 
     args = ap.parse_args()
-    args.fn(args)
+    try:
+        args.fn(args)
+    except SystemExit:
+        raise  # let explicit sys.exit() calls through
+    except KeyboardInterrupt:
+        print(f"\n  {Y}interrupted{R}", file=sys.stderr)
+        sys.exit(130)
+    except Exception as e:
+        print(f"\n  {X}fatal: {e}{R}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

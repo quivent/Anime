@@ -108,23 +108,16 @@ type phase struct {
 	estimate  time.Duration          // estimated wall-clock time for this phase
 }
 
-// wanModelFiles enumerates every file the Wan 2.2 workflows need.
-// Used by both the check function and the post-download summary.
-var wanModelFiles = []struct{ rel, label string }{
-	{filepath.Join("models", "diffusion_models", "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors"), "t2v high-noise 14B"},
-	{filepath.Join("models", "diffusion_models", "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors"), "t2v low-noise 14B"},
-	{filepath.Join("models", "diffusion_models", "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"), "i2v high-noise 14B"},
-	{filepath.Join("models", "diffusion_models", "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"), "i2v low-noise 14B"},
-	{filepath.Join("models", "diffusion_models", "wan2.2_ti2v_5B_fp16.safetensors"), "ti2v 5B"},
-	{filepath.Join("models", "text_encoders", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"), "umt5_xxl encoder"},
-	{filepath.Join("models", "vae", "wan_2.1_vae.safetensors"), "wan 2.1 VAE"},
-	{filepath.Join("models", "vae", "wan2.2_vae.safetensors"), "wan 2.2 VAE"},
-	{filepath.Join("models", "loras", "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors"), "lightx2v high-noise LoRA"},
-	{filepath.Join("models", "loras", "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"), "lightx2v low-noise LoRA"},
-}
-
-func wanStudioPhases(level string) []phase {
-	home, _ := os.UserHomeDir()
+func wanStudioPhases() []phase {
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		// Every phase needs home. Return a single failing phase so the error
+		// is surfaced clearly instead of silently checking empty paths.
+		return []phase{{
+			name:  "home directory",
+			check: func() (bool, string) { return false, "cannot determine home directory: " + homeErr.Error() },
+		}}
+	}
 	join := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
 
 	fileExists := func(p string) (bool, string) {
@@ -273,30 +266,17 @@ except ImportError as e:
 	}
 }
 
-// countWanModelFilesPresent returns how many of the expected model files
-// exist and are non-empty. Used for post-download summary.
-func countWanModelFilesPresent() (present int, totalBytes int64) {
-	home, _ := os.UserHomeDir()
-	for _, f := range wanModelFiles {
-		p := filepath.Join(home, "ComfyUI", f.rel)
-		info, err := os.Stat(p)
-		if err == nil && info.Size() > 0 {
-			present++
-			totalBytes += info.Size()
-		}
-	}
-	return
-}
-
-// durationStr converts a time.Duration to the compact "Xm Ys" string
-// using the shared formatDuration(seconds int) from common.go.
-func durationStr(d time.Duration) string {
-	return formatDuration(int(d.Round(time.Second).Seconds()))
+// setupResult carries information back to the caller about what bootstrap did,
+// so the caller can clean up if a later step fails (e.g., kill ComfyUI we
+// started if the web server can't bind its port).
+type setupResult struct {
+	comfyStartedByUs bool // true if this bootstrap launched the ComfyUI screen session
 }
 
 // ensureComfyStudioReady walks each bootstrap phase. Returns nil only when every
 // phase is satisfied at the end (so the caller can proceed to serve the studio).
-func ensureComfyStudioReady(opts *setupOpts) error {
+func ensureComfyStudioReady(opts *setupOpts) (*setupResult, error) {
+	result := &setupResult{}
 	phases := wanStudioPhases()
 	total := len(phases)
 	w := bufio.NewWriter(os.Stdout)
@@ -400,7 +380,7 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 			continue
 		}
 		if opts.skipInstall {
-			return fmt.Errorf("phase %q not satisfied and --skip-install was given", ph.name)
+			return result, fmt.Errorf("phase %q not satisfied and --skip-install was given", ph.name)
 		}
 
 		if ph.id == "wanmodels" && opts.skipModels {
@@ -418,7 +398,7 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 			fmt.Scanln(&ans)
 			if !strings.EqualFold(strings.TrimSpace(ans), "y") &&
 				!strings.EqualFold(strings.TrimSpace(ans), "yes") {
-				return fmt.Errorf("aborted at phase %q (re-run with --yes to skip the prompt)", ph.name)
+				return result, fmt.Errorf("aborted at phase %q (re-run with --yes to skip the prompt)", ph.name)
 			}
 		}
 
@@ -444,7 +424,10 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 		fmt.Fprintln(w)
 		w.Flush()
 
-		phaseStart := time.Now()
+		// Track whether WE are starting ComfyUI so the caller can kill it
+		// if a later step (e.g., web server bind) fails.
+		comfyWasRunning := ph.name == "ComfyUI server" && comfyServerReachable()
+
 		var err error
 		if ph.custom != nil {
 			err = ph.custom(opts)
@@ -454,23 +437,17 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 		phaseElapsed := time.Since(phaseStart)
 
 		if err != nil {
-			// FAIL
-			fmt.Fprintln(w)
-			fmt.Fprintf(w, "  %s %s %s  %s\n",
-				theme.DimTextStyle.Render(prefix),
-				label,
-				theme.WarningStyle.Render("FAIL"),
-				theme.DimTextStyle.Render(durationStr(phaseElapsed)))
-			totalElapsed := time.Since(bootstrapStart)
-			fmt.Fprintf(w, "\n  %s\n",
-				theme.DimTextStyle.Render(fmt.Sprintf("Total elapsed: %s", durationStr(totalElapsed))))
-			return fmt.Errorf("phase %q failed: %w", ph.name, err)
+			return result, fmt.Errorf("phase %q failed: %w", ph.name, err)
+		}
+
+		if ph.name == "ComfyUI server" && !comfyWasRunning {
+			result.comfyStartedByUs = true
 		}
 
 		// Re-check after install -- fail loudly if it didn't work, since the
 		// next phase might silently depend on this one.
 		if ok, detail := ph.check(); !ok {
-			return fmt.Errorf("phase %q completed but check still fails: %s", ph.name, detail)
+			return result, fmt.Errorf("phase %q completed but check still fails: %s", ph.name, detail)
 		}
 
 		// Post-install messaging for wanmodels: summarize what we got.
@@ -504,25 +481,7 @@ func ensureComfyStudioReady(opts *setupOpts) error {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, theme.DimTextStyle.Render("  (--check-only: not installing)"))
 	}
-
-postBootstrap:
-
-	// Post-bootstrap: deliver the default workflow JSON if missing.
-	ensureDefaultWorkflow(w)
-
-	// Post-bootstrap: warn (don't fail) if ComfyUI isn't reachable yet.
-	// The "ComfyUI server" phase above starts it, but a --check-only or
-	// --skip-install run may legitimately leave it down.
-	comfyURL := "http://127.0.0.1:8188"
-	if !comfyServerReachable() {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  %s  %s\n", theme.SymbolWarning,
-			theme.WarningStyle.Render("ComfyUI is not reachable at "+comfyURL+"/system_stats"))
-		fmt.Fprintf(w, "       %s\n",
-			theme.DimTextStyle.Render("Start it with: screen -dmS comfyui bash -c 'cd ~/ComfyUI && ./venv/bin/python main.py --listen --use-sage-attention'"))
-	}
-
-	return nil
+	return result, nil
 }
 
 // runInstallScript fetches the bash script for a package id and runs it locally,
@@ -576,7 +535,10 @@ func ensureComfyServer(opts *setupOpts) error {
 // tailComfyLog returns the last `n` lines of ~/.anime/comfyui.log with each
 // line indented, so we can dump it directly inside an error string.
 func tailComfyLog(n int) string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "    (cannot determine home directory: " + err.Error() + ")"
+	}
 	logFile := filepath.Join(home, ".anime", "comfyui.log")
 	data, err := os.ReadFile(logFile)
 	if err != nil {

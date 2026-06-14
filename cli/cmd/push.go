@@ -13,9 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joshkornreich/anime/internal/claude"
 	"github.com/joshkornreich/anime/internal/config"
 	"github.com/joshkornreich/anime/internal/embeddb"
+	"github.com/joshkornreich/anime/internal/gh"
+	"github.com/joshkornreich/anime/internal/hf"
 	"github.com/joshkornreich/anime/internal/theme"
+	"github.com/joshkornreich/anime/internal/vercel"
 	"github.com/spf13/cobra"
 )
 
@@ -107,6 +111,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Arch:    %s\n", theme.HighlightStyle.Render("linux/"+pushArch))
 	if pushIncludeSource {
 		fmt.Printf("  Source:  %s\n", theme.SuccessStyle.Render("included"))
+	}
+	if tokens := getEmbeddedTokenNames(); tokens != "" {
+		fmt.Printf("  Tokens:  %s\n", theme.DimTextStyle.Render(tokens))
 	}
 	fmt.Println()
 
@@ -281,6 +288,14 @@ func buildLinuxBinary() (binaryPath, version, buildTime, sourceDir string, err e
 	// Build flags - include BuildDir so future pushes know where source lives
 	ldflags := fmt.Sprintf("-X github.com/joshkornreich/anime/cmd.Version=%s -X github.com/joshkornreich/anime/cmd.BuildTime=%s -X github.com/joshkornreich/anime/cmd.Commit=%s -X github.com/joshkornreich/anime/cmd.BuildDir=%s",
 		version, buildTime, commit, sourceDir)
+
+	// Embed tokens (GH, Claude/Anthropic, Vercel, HF) if available.
+	// This ensures the pushed remote binary has the same tokens as a local `make build`.
+	// Sources (in priority order): env vars, currently-running binary's embedded values,
+	// anime config (APIKeys), legacy .config files.
+	if tokenFlags := collectTokenLdflags(); tokenFlags != "" {
+		ldflags += " " + tokenFlags
+	}
 
 	// Output path
 	binaryPath = filepath.Join(os.TempDir(), "anime-linux-"+pushArch)
@@ -1029,4 +1044,132 @@ func autoConfigureServer(serverArg, target string) error {
 	fmt.Println(theme.SuccessStyle.Render("✓"))
 
 	return nil
+}
+
+// collectTokenLdflags builds the ldflags needed to embed auth tokens
+// (GitHub, Claude, Vercel, Hugging Face) into the binary being pushed.
+// This mirrors the behavior of the Makefile so that `anime push` produces
+// a remote binary with the same tokens available at compile time.
+func collectTokenLdflags() string {
+	var flags []string
+
+	// GitHub
+	if tok := resolveToken("GH_TOKEN", gh.GetToken, ""); tok != "" {
+		flags = append(flags, "-X github.com/joshkornreich/anime/internal/gh.EmbeddedToken="+tok)
+	}
+
+	// Anthropic/Claude
+	if tok := resolveToken("ANTHROPIC_AUTH_TOKEN", claude.GetAuthToken, "anthropic"); tok != "" {
+		flags = append(flags, "-X github.com/joshkornreich/anime/internal/claude.EmbeddedAuthToken="+tok)
+	}
+
+	// Vercel
+	if tok := resolveToken("VERCEL_TOKEN", vercel.GetToken, "vercel"); tok != "" {
+		flags = append(flags, "-X github.com/joshkornreich/anime/internal/vercel.EmbeddedToken="+tok)
+	}
+	if tok := resolveToken("VERCEL_TEAM_ID", vercel.GetTeamID, "vercel_team_id"); tok != "" {
+		flags = append(flags, "-X github.com/joshkornreich/anime/internal/vercel.EmbeddedTeamID="+tok)
+	}
+
+	// Hugging Face
+	if tok := resolveToken("HF_TOKEN", hf.GetToken, "huggingface"); tok != "" {
+		flags = append(flags, "-X github.com/joshkornreich/anime/internal/hf.EmbeddedToken="+tok)
+	}
+
+	return strings.Join(flags, " ")
+}
+
+// resolveToken tries multiple sources (in priority) to find a token value to embed.
+func resolveToken(envKey string, getter func() string, configKey string) string {
+	// 1. Environment variable (matches Makefile / common usage)
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+
+	// 2. From the currently running binary (propagates tokens from a properly built local binary)
+	if getter != nil {
+		if v := getter(); v != "" {
+			return v
+		}
+	}
+
+	// 3. From the anime config file (e.g. `anime dns auth`, `anime config` TUI, etc.)
+	if configKey != "" {
+		if cfg, err := config.Load(); err == nil {
+			switch configKey {
+			case "anthropic":
+				if cfg.APIKeys.Anthropic != "" {
+					return cfg.APIKeys.Anthropic
+				}
+			case "huggingface":
+				if cfg.APIKeys.HuggingFace != "" {
+					return cfg.APIKeys.HuggingFace
+				}
+			case "vercel":
+				if cfg.APIKeys.Vercel != "" {
+					return cfg.APIKeys.Vercel
+				}
+			case "vercel_team_id":
+				if cfg.APIKeys.VercelTeamID != "" {
+					return cfg.APIKeys.VercelTeamID
+				}
+			}
+		}
+	}
+
+	// 4. Legacy flat .config / ../.config files (Makefile compatibility)
+	return readLegacyToken(envKey)
+}
+
+func readLegacyToken(key string) string {
+	candidates := []string{".config", "../.config"}
+
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		candidates = append(candidates, filepath.Join(home, ".config"))
+	}
+
+	for _, p := range candidates {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, key+"=") {
+				val := strings.TrimPrefix(line, key+"=")
+				if val != "" {
+					return val
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// getEmbeddedTokenNames returns a human-friendly list of which tokens
+// will be (or were) embedded for display purposes. It does not print values.
+func getEmbeddedTokenNames() string {
+	var names []string
+
+	if resolveToken("GH_TOKEN", gh.GetToken, "") != "" {
+		names = append(names, "GH")
+	}
+	if resolveToken("ANTHROPIC_AUTH_TOKEN", claude.GetAuthToken, "anthropic") != "" {
+		names = append(names, "Claude")
+	}
+	if resolveToken("VERCEL_TOKEN", vercel.GetToken, "vercel") != "" {
+		names = append(names, "Vercel")
+	}
+	if resolveToken("VERCEL_TEAM_ID", vercel.GetTeamID, "vercel_team_id") != "" {
+		names = append(names, "VercelTeam")
+	}
+	if resolveToken("HF_TOKEN", hf.GetToken, "huggingface") != "" {
+		names = append(names, "HF")
+	}
+
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.Join(names, ", ")
 }

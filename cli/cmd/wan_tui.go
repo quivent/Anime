@@ -9,48 +9,108 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/joshkornreich/anime/internal/gpu"
+	"github.com/joshkornreich/anime/internal/theme"
 )
 
-// Wan presets known to the TUI. Order matters: the 'p' key cycles through
-// them in this order, smallest VRAM first. Kept in sync with PRESETS in
-// embedded/wan-pipeline/wan.py — if you add a preset there, add it here too.
-var wanTUIPresets = []string{
-	"ti2v-5b",            // ≥12GB VRAM
-	"t2v-14b-dual-fast",  // ≥24GB VRAM (default)
-	"t2v-14b-dual-maxq",  // ≥48GB VRAM
-}
+// ─── styling ─────────────────────────────────────────────────────
+// All styles derive from the project theme. No ad-hoc color numbers.
 
-// ─── styling ───
 var (
-	wanTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213"))
-	wanAccentStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))
-	wanDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	wanGoodStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	wanWarnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	wanBadStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	wanBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("213")).Padding(0, 1)
+	// Zone chrome
+	tuiStatusBar = lipgloss.NewStyle().
+			Background(theme.BgAccent).
+			Foreground(theme.TextPrimary).
+			Bold(true).
+			Padding(0, 1)
+
+	tuiTitle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(theme.SakuraPink)
+
+	tuiAccent = lipgloss.NewStyle().
+			Foreground(theme.ElectricBlue)
+
+	tuiDim = lipgloss.NewStyle().
+		Foreground(theme.TextDim)
+
+	tuiMuted = lipgloss.NewStyle().
+			Foreground(theme.TextSecondary)
+
+	tuiGood = lipgloss.NewStyle().
+		Foreground(theme.MintGreen)
+
+	tuiWarn = lipgloss.NewStyle().
+		Foreground(theme.SunsetOrange)
+
+	tuiBad = lipgloss.NewStyle().
+		Foreground(theme.ActionRed).
+		Bold(true)
+
+	tuiStar = lipgloss.NewStyle().
+		Foreground(theme.GoldYellow)
+
+	tuiStarDim = lipgloss.NewStyle().
+			Foreground(theme.TextDarkGray)
+
+	tuiLabel = lipgloss.NewStyle().
+			Foreground(theme.NeonPurple).
+			Bold(true)
+
+	tuiHelpBar = lipgloss.NewStyle().
+			Foreground(theme.TextHelp)
+
+	tuiFlash = lipgloss.NewStyle().
+			Foreground(theme.TextPrimary).
+			Background(theme.BgAccent).
+			Padding(0, 1)
+
+	tuiFlashError = lipgloss.NewStyle().
+			Foreground(theme.ActionRed).
+			Background(theme.BgAccent).
+			Bold(true).
+			Padding(0, 1)
+
+	tuiBorder = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(theme.NeonPurple).
+			Padding(0, 1)
+
+	tuiSelectedRow = lipgloss.NewStyle().
+			Foreground(theme.SakuraPink).
+			Bold(true)
+
+	tuiNormalRow = lipgloss.NewStyle().
+			Foreground(theme.TextPrimary)
+
+	tuiEmptyBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(theme.NeonPurple).
+			Foreground(theme.TextSecondary).
+			Padding(2, 4).
+			Align(lipgloss.Center)
 )
 
-func wanStatusStyle(status string) lipgloss.Style {
+func tuiRenderStatusStyle(status string) lipgloss.Style {
 	switch status {
 	case "done":
-		return wanGoodStyle
+		return tuiGood
 	case "pending", "running":
-		return wanWarnStyle
+		return tuiWarn
+	case "cancelled":
+		return tuiDim
 	default:
-		return wanBadStyle
+		return tuiBad
 	}
 }
 
-// ─── model types ───
+// ─── model types ─────────────────────────────────────────────────
+
 type wanRender struct {
 	ID         int     `json:"id"`
 	CreatedAt  string  `json:"created_at"`
@@ -65,42 +125,49 @@ type wanRender struct {
 	OutputURL  string  `json:"output_url"`
 }
 
-func (r wanRender) Title() string {
-	star := "·····"
-	if r.Rating != nil {
-		star = strings.Repeat("★", *r.Rating) + strings.Repeat("·", 5-*r.Rating)
+func (r wanRender) Title() string       { return r.Name }
+func (r wanRender) Description() string { return r.Prompt }
+func (r wanRender) FilterValue() string { return r.Prompt + " " + r.Preset + " " + r.Name }
+
+func (r wanRender) stars() string {
+	if r.Rating == nil {
+		return tuiStarDim.Render("-----")
 	}
-	return fmt.Sprintf("#%-3d %s %s %s",
-		r.ID,
-		wanStatusStyle(r.Status).Render(fmt.Sprintf("%-7s", r.Status)),
-		wanAccentStyle.Render(fmt.Sprintf("%-22s", r.Preset)),
-		star,
-	)
+	n := *r.Rating
+	return tuiStar.Render(strings.Repeat("*", n)) + tuiStarDim.Render(strings.Repeat("-", 5-n))
 }
 
-func (r wanRender) Description() string {
-	dur := "—"
-	if r.RenderSecs > 0 {
-		dur = fmt.Sprintf("%.0fs", r.RenderSecs)
-	}
-	sz := "—"
-	if r.FileSize > 0 {
-		sz = fmt.Sprintf("%.1fM", float64(r.FileSize)/1024/1024)
-	}
+func (r wanRender) shortPrompt(maxLen int) string {
 	p := r.Prompt
-	if len(p) > 70 {
-		p = p[:67] + "..."
+	if len(p) > maxLen {
+		return p[:maxLen-3] + "..."
 	}
-	when := r.CreatedAt
-	if len(when) > 16 {
-		when = when[:16]
-	}
-	return wanDimStyle.Render(fmt.Sprintf("  %s · %s · %s · %s", when, dur, sz, p))
+	return p
 }
 
-func (r wanRender) FilterValue() string { return r.Prompt + " " + r.Preset }
+func (r wanRender) durationStr() string {
+	if r.RenderSecs <= 0 {
+		return "--"
+	}
+	return fmt.Sprintf("%.0fs", r.RenderSecs)
+}
 
-// ─── screens ───
+func (r wanRender) sizeStr() string {
+	if r.FileSize <= 0 {
+		return "--"
+	}
+	return fmt.Sprintf("%.1fM", float64(r.FileSize)/1024/1024)
+}
+
+func (r wanRender) shortTime() string {
+	if len(r.CreatedAt) > 16 {
+		return r.CreatedAt[:16]
+	}
+	return r.CreatedAt
+}
+
+// ─── screens ─────────────────────────────────────────────────────
+
 type wanScreen int
 
 const (
@@ -111,307 +178,151 @@ const (
 	scrSystem
 )
 
+// ─── flash message with auto-dismiss ─────────────────────────────
+
+type flashMsg struct {
+	text    string
+	isError bool
+}
+
+type flashExpiredMsg struct{}
+
+const flashDuration = 3 * time.Second
+
+func scheduleFlashDismiss() tea.Cmd {
+	return tea.Tick(flashDuration, func(time.Time) tea.Msg {
+		return flashExpiredMsg{}
+	})
+}
+
+// ─── auto-refresh tick ───────────────────────────────────────────
+
+type autoRefreshMsg struct{}
+
+const autoRefreshInterval = 5 * time.Second
+
+func scheduleAutoRefresh() tea.Cmd {
+	return tea.Tick(autoRefreshInterval, func(time.Time) tea.Msg {
+		return autoRefreshMsg{}
+	})
+}
+
+// ─── the model ───────────────────────────────────────────────────
+
 type wanTUIModel struct {
-	scr        wanScreen
-	list       list.Model
-	input      textinput.Model
-	spinner    spinner.Model
-	width      int
-	height     int
-	selected   *wanRender
+	scr     wanScreen
+	renders []wanRender
+	cursor  int // currently highlighted row in the list
+
+	input   textinput.Model
+	spinner spinner.Model
+
+	width  int
+	height int
+
 	pendingMsg string
-	flash      string // transient status line shown above hints, cleared on next nav
-	preset     string // active preset for the next render (cycled with 'p' / tab)
-	gpuLabel   string // cached host blurb for the status bar (e.g. "GH200 · 95GB")
+	flash      *flashMsg // nil = no flash
 
-	// system management tab
-	sysPhases   []sysPhaseLine // cached phase status for system view
-	sysCursor   int            // cursor position in system view
-	sysAction   string         // "reset", "fix", or "" — pending action feedback
-	sysConfirm  string         // pending destructive action awaiting second keypress
+	// For filtering
+	filterText  string
+	isFiltering bool
 }
-
-const (
-	hintsList    = "↑/↓ select · enter detail · n new · p preset · v vary · r resume · 1-5 rate · / filter · tab system · q quit"
-	hintsDetail  = "v vary · r resume · esc back · q quit"
-	hintsPrompt  = "enter submit · tab cycle preset · esc cancel"
-	hintsPending = "(detached — ctrl+c to leave; the render keeps going in ComfyUI)"
-	hintsSystem  = "↑/↓ select · r reset phase · f fix phase · R reset all · P purge · tab renders · q quit"
-)
-
-// cyclePreset returns the next preset in wanTUIPresets after `current`. Used
-// by the 'p' key (list/detail) and 'tab' key (prompt) to step through.
-func cyclePreset(current string) string {
-	for i, p := range wanTUIPresets {
-		if p == current {
-			return wanTUIPresets[(i+1)%len(wanTUIPresets)]
-		}
-	}
-	return wanTUIPresets[0]
-}
-
-// chrome is the lines around the list (title + status bar + hints + spacing).
-// Bumped from 5 → 6 when the GPU/preset status bar was added.
-const listChrome = 6
 
 func newWanTUIModel() (*wanTUIModel, error) {
-	items, _ := loadRenders()
-	delegate := list.NewDefaultDelegate()
-	delegate.SetSpacing(0)
-	l := list.New(items, delegate, 0, 0)
-	l.Title = "wan-pipeline · history"
-	l.Styles.Title = wanTitleStyle
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(true)
+	renders, _ := loadWanRenders()
 
 	ti := textinput.New()
-	ti.Placeholder = "type a prompt and press enter to render…"
+	ti.Placeholder = "type a prompt and press enter to render..."
 	ti.CharLimit = 1000
 	ti.Width = 80
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = wanAccentStyle
-
-	// Auto-pick the right preset for this host so a user pressing 'n' →
-	// enter without thinking gets a render that fits their VRAM.
-	g := gpu.GetSystemInfo()
-	preset, _ := recommendedPreset(g.TotalVRAM)
-	if preset == "" {
-		preset = "t2v-14b-dual-fast" // pipeline default
-	}
-	gpuLabel := "no GPU"
-	if g.Available && len(g.GPUs) > 0 {
-		// "GH200 · 95GB" / "RTX 4090 · 24GB" / "1xH100 · 80GB"
-		name := g.GPUs[0].Name
-		// Trim "NVIDIA " prefix and 480GB-style memory suffix to keep the
-		// status bar tight.
-		name = strings.TrimPrefix(name, "NVIDIA ")
-		if i := strings.Index(name, " 480GB"); i >= 0 {
-			name = name[:i]
-		}
-		gpuLabel = fmt.Sprintf("%s · %dGB", name, g.TotalVRAM)
-		if g.Count > 1 {
-			gpuLabel = fmt.Sprintf("%dx %s · %dGB", g.Count, name, g.TotalVRAM)
-		}
-	}
+	sp.Style = lipgloss.NewStyle().Foreground(theme.SakuraPink)
 
 	return &wanTUIModel{
-		scr:      scrList,
-		list:     l,
-		input:    ti,
-		spinner:  sp,
-		preset:   preset,
-		gpuLabel: gpuLabel,
+		scr:     scrList,
+		renders: renders,
+		cursor:  0,
+		input:   ti,
+		spinner: sp,
 	}, nil
 }
 
-func (m *wanTUIModel) Init() tea.Cmd { return m.spinner.Tick }
+func (m *wanTUIModel) Init() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, scheduleAutoRefresh())
+}
+
+// ─── update ──────────────────────────────────────────────────────
 
 func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		w, h := msg.Width-4, msg.Height-listChrome
-		if h < 5 {
-			h = 5
+		m.input.Width = msg.Width - 8
+
+	case flashExpiredMsg:
+		m.flash = nil
+
+	case autoRefreshMsg:
+		// Only auto-refresh when on the list screen and there are pending renders
+		hasPending := false
+		for _, r := range m.renders {
+			if r.Status == "pending" || r.Status == "running" {
+				hasPending = true
+				break
+			}
 		}
-		m.list.SetSize(w, h)
-		m.input.Width = msg.Width - 6
+		if hasPending && m.scr == scrList {
+			cmds = append(cmds, refreshWanList())
+		}
+		cmds = append(cmds, scheduleAutoRefresh())
 
 	case tea.KeyMsg:
-		// Global quits (but not while typing a prompt — we want to allow 'q' in input)
-		if m.scr != scrPrompt {
+		// Global quit -- but not while typing
+		if m.scr != scrPrompt && !m.isFiltering {
 			switch msg.String() {
 			case "q", "ctrl+c":
+				return m, tea.Quit
+			}
+		}
+		if m.scr == scrPrompt || m.isFiltering {
+			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
 		}
 
 		switch m.scr {
 		case scrList:
-			// Don't intercept keys while filter input is focused
-			if m.list.FilterState() == list.Filtering {
-				break
-			}
-			switch msg.String() {
-			case "enter":
-				if it, ok := m.list.SelectedItem().(wanRender); ok {
-					m.selected = &it
-					m.flash = ""
-					m.scr = scrDetail
-				}
-			case "n":
-				m.input.SetValue("")
-				m.input.Focus()
-				m.flash = ""
-				m.scr = scrPrompt
-			case "v":
-				if it, ok := m.list.SelectedItem().(wanRender); ok {
-					m.pendingMsg = fmt.Sprintf("queueing 1 variation of #%d…", it.ID)
-					m.scr = scrPending
-					cmds = append(cmds, doWanCmd("vary", fmt.Sprint(it.ID), "-n", "1"))
-				}
-			case "r":
-				if it, ok := m.list.SelectedItem().(wanRender); ok {
-					m.pendingMsg = fmt.Sprintf("resuming #%d (seed=%d)…", it.ID, it.Seed)
-					m.scr = scrPending
-					cmds = append(cmds, doWanCmd("resume", fmt.Sprint(it.ID)))
-				}
-			case "1", "2", "3", "4", "5":
-				if it, ok := m.list.SelectedItem().(wanRender); ok {
-					n := msg.String()
-					_, _ = runWanCapture("rate", fmt.Sprint(it.ID), n)
-					m.flash = wanGoodStyle.Render(fmt.Sprintf("rated #%d %s%s", it.ID, strings.Repeat("★", atoiSafe(n)), strings.Repeat("·", 5-atoiSafe(n))))
-					cmds = append(cmds, refreshList())
-				}
-			case "p":
-				m.preset = cyclePreset(m.preset)
-				m.flash = wanAccentStyle.Render("preset → ") + m.preset
-			case "tab":
-				m.scr = scrSystem
-				m.sysCursor = 0
-				m.sysAction = ""
-				cmds = append(cmds, refreshSysPhases())
-			case "ctrl+r":
-				cmds = append(cmds, refreshList())
-			}
-
+			cmds = append(cmds, m.updateList(msg)...)
 		case scrDetail:
-			switch msg.String() {
-			case "esc", "backspace", "h":
-				m.scr = scrList
-				m.selected = nil
-			case "v":
-				if m.selected != nil {
-					m.pendingMsg = fmt.Sprintf("queueing 1 variation of #%d…", m.selected.ID)
-					m.scr = scrPending
-					cmds = append(cmds, doWanCmd("vary", fmt.Sprint(m.selected.ID), "-n", "1"))
-				}
-			case "r":
-				if m.selected != nil {
-					m.pendingMsg = fmt.Sprintf("resuming #%d (seed=%d)…", m.selected.ID, m.selected.Seed)
-					m.scr = scrPending
-					cmds = append(cmds, doWanCmd("resume", fmt.Sprint(m.selected.ID)))
-				}
-			}
-
+			cmds = append(cmds, m.updateDetail(msg)...)
 		case scrPrompt:
-			switch msg.String() {
-			case "ctrl+c":
-				return m, tea.Quit
-			case "esc":
-				m.scr = scrList
-				m.input.Blur()
-			case "tab":
-				// In-input preset cycling so the user can pick before submitting.
-				m.preset = cyclePreset(m.preset)
-			case "enter":
-				prompt := strings.TrimSpace(m.input.Value())
-				if prompt == "" {
-					m.scr = scrList
-					m.input.Blur()
-					break
-				}
-				m.pendingMsg = fmt.Sprintf("rendering [%s]: %.60s…", m.preset, prompt)
-				m.scr = scrPending
-				m.input.Blur()
-				cmds = append(cmds, doWanCmd("render", prompt, "--preset", m.preset))
-			default:
-				var cmd tea.Cmd
-				m.input, cmd = m.input.Update(msg)
-				cmds = append(cmds, cmd)
-			}
-
+			cmds = append(cmds, m.updatePrompt(msg)...)
 		case scrPending:
-			// only quit handled above
-
-		case scrSystem:
-			// Clear pending confirm on any key that isn't the confirm key
-			if msg.String() != "R" && msg.String() != "P" {
-				m.sysConfirm = ""
-			}
-			switch msg.String() {
-			case "tab":
-				m.scr = scrList
-				m.sysAction = ""
-			case "up", "k":
-				if m.sysCursor > 0 {
-					m.sysCursor--
-				}
-			case "down", "j":
-				if m.sysCursor < len(m.sysPhases)-1 {
-					m.sysCursor++
-				}
-			case "r":
-				// Reset selected phase
-				if m.sysCursor < len(m.sysPhases) {
-					ph := m.sysPhases[m.sysCursor]
-					if ph.id == "server" {
-						m.sysAction = wanWarnStyle.Render("  stopping server...")
-						cmds = append(cmds, func() tea.Msg {
-							stopComfyScreenSession()
-							return sysActionDoneMsg{summary: wanGoodStyle.Render("  ✓ server stopped")}
-						})
-					} else if ph.installed {
-						m.sysAction = wanWarnStyle.Render(fmt.Sprintf("  resetting %s...", ph.name))
-						cmds = append(cmds, doSysReset(ph.id))
-					} else {
-						m.sysAction = wanDimStyle.Render(fmt.Sprintf("  %s not installed — nothing to reset", ph.name))
-					}
-				}
-			case "f":
-				// Fix selected phase
-				if m.sysCursor < len(m.sysPhases) {
-					ph := m.sysPhases[m.sysCursor]
-					if ph.id != "server" && !ph.installed {
-						m.sysAction = wanAccentStyle.Render(fmt.Sprintf("  fixing %s...", ph.name))
-						cmds = append(cmds, doSysFix(ph.id))
-					} else if ph.installed {
-						m.sysAction = wanDimStyle.Render(fmt.Sprintf("  %s is healthy — nothing to fix", ph.name))
-					}
-				}
-			case "R":
-				if m.sysConfirm == "R" {
-					m.sysConfirm = ""
-					m.sysAction = wanWarnStyle.Render("  resetting all phases...")
-					cmds = append(cmds, doSysResetAll())
-				} else {
-					m.sysConfirm = "R"
-					m.sysAction = wanWarnStyle.Render("  press R again to confirm reset ALL phases")
-				}
-			case "P":
-				if m.sysConfirm == "P" {
-					m.sysConfirm = ""
-					m.sysAction = wanBadStyle.Render("  purging entire Wan stack...")
-					cmds = append(cmds, doSysPurge())
-				} else {
-					m.sysConfirm = "P"
-					m.sysAction = wanBadStyle.Render("  press P again to confirm PURGE (deletes everything)")
-				}
-			case "ctrl+r":
-				cmds = append(cmds, refreshSysPhases())
-			}
+			// Only quit handled above; spinner ticks below
 		}
 
 	case wanCmdDoneMsg:
 		m.scr = scrList
-		m.flash = msg.summary
-		cmds = append(cmds, refreshList())
+		if msg.summary != "" {
+			isErr := strings.Contains(msg.summary, "error") || strings.Contains(msg.summary, "fail")
+			m.flash = &flashMsg{text: msg.summary, isError: isErr}
+			cmds = append(cmds, scheduleFlashDismiss())
+		}
+		cmds = append(cmds, refreshWanList())
 
 	case wanRefreshDoneMsg:
-		m.list.SetItems(msg.items)
-		// keep selected pointer in sync if we're showing detail
-		if m.selected != nil {
-			for _, it := range msg.items {
-				if r, ok := it.(wanRender); ok && r.ID == m.selected.ID {
-					rr := r
-					m.selected = &rr
-					break
-				}
-			}
+		m.renders = msg.renders
+		// Clamp cursor
+		if m.cursor >= len(m.renders) {
+			m.cursor = len(m.renders) - 1
+		}
+		if m.cursor < 0 {
+			m.cursor = 0
 		}
 
 	case sysRefreshDoneMsg:
@@ -422,139 +333,494 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, refreshSysPhases())
 	}
 
-	if m.scr == scrList {
-		var cmd tea.Cmd
-		m.list, cmd = m.list.Update(msg)
-		cmds = append(cmds, cmd)
-	}
-	if m.scr == scrPrompt {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		cmds = append(cmds, cmd)
-	}
+	// Spinner always ticks
 	if m.scr == scrPending {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
+	// Text input updates when in prompt or filter mode
+	if m.scr == scrPrompt {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
 	return m, tea.Batch(cmds...)
 }
+
+// ─── list screen key handling ────────────────────────────────────
+
+func (m *wanTUIModel) updateList(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+	visible := m.visibleRenders()
+
+	switch msg.String() {
+	case "j", "down":
+		if m.cursor < len(visible)-1 {
+			m.cursor++
+		}
+	case "k", "up":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "g", "home":
+		m.cursor = 0
+	case "G", "end":
+		if len(visible) > 0 {
+			m.cursor = len(visible) - 1
+		}
+
+	case "enter":
+		if len(visible) > 0 && m.cursor < len(visible) {
+			m.scr = scrDetail
+		}
+
+	case "r":
+		m.input.SetValue("")
+		m.input.Placeholder = "type a prompt and press enter to render..."
+		m.input.Focus()
+		m.scr = scrPrompt
+
+	case "v":
+		if sel := m.selectedRender(); sel != nil {
+			m.pendingMsg = fmt.Sprintf("queueing variation of #%d...", sel.ID)
+			m.scr = scrPending
+			cmds = append(cmds, doWanCmd("vary", fmt.Sprint(sel.ID), "-n", "1"))
+		}
+
+	case "R":
+		if sel := m.selectedRender(); sel != nil {
+			m.pendingMsg = fmt.Sprintf("resuming #%d (seed=%d)...", sel.ID, sel.Seed)
+			m.scr = scrPending
+			cmds = append(cmds, doWanCmd("resume", fmt.Sprint(sel.ID)))
+		}
+
+	case "1", "2", "3", "4", "5":
+		if sel := m.selectedRender(); sel != nil {
+			n, _ := strconv.Atoi(msg.String())
+			_, _ = runWanCapture("rate", fmt.Sprint(sel.ID), msg.String())
+			// Update in-place immediately
+			for i := range m.renders {
+				if m.renders[i].ID == sel.ID {
+					rating := n
+					m.renders[i].Rating = &rating
+					break
+				}
+			}
+			starDisplay := tuiStar.Render(strings.Repeat("*", n)) + tuiStarDim.Render(strings.Repeat("-", 5-n))
+			m.flash = &flashMsg{text: fmt.Sprintf("Rated #%d  %s", sel.ID, starDisplay)}
+			cmds = append(cmds, scheduleFlashDismiss())
+		}
+
+	case "/":
+		// Toggle filter mode
+		m.isFiltering = true
+		m.filterText = ""
+
+	case "esc":
+		if m.isFiltering {
+			m.isFiltering = false
+			m.filterText = ""
+			m.cursor = 0
+		}
+
+	case "backspace":
+		if m.isFiltering && len(m.filterText) > 0 {
+			m.filterText = m.filterText[:len(m.filterText)-1]
+			m.cursor = 0
+		} else if m.isFiltering {
+			m.isFiltering = false
+			m.filterText = ""
+			m.cursor = 0
+		}
+
+	default:
+		if m.isFiltering && len(msg.String()) == 1 {
+			m.filterText += msg.String()
+			m.cursor = 0
+		}
+	}
+
+	return cmds
+}
+
+// ─── detail screen key handling ──────────────────────────────────
+
+func (m *wanTUIModel) updateDetail(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+
+	switch msg.String() {
+	case "esc", "backspace", "left", "h":
+		m.scr = scrList
+
+	case "v":
+		if sel := m.selectedRender(); sel != nil {
+			m.pendingMsg = fmt.Sprintf("queueing variation of #%d...", sel.ID)
+			m.scr = scrPending
+			cmds = append(cmds, doWanCmd("vary", fmt.Sprint(sel.ID), "-n", "1"))
+		}
+
+	case "R":
+		if sel := m.selectedRender(); sel != nil {
+			m.pendingMsg = fmt.Sprintf("resuming #%d (seed=%d)...", sel.ID, sel.Seed)
+			m.scr = scrPending
+			cmds = append(cmds, doWanCmd("resume", fmt.Sprint(sel.ID)))
+		}
+
+	case "1", "2", "3", "4", "5":
+		if sel := m.selectedRender(); sel != nil {
+			n, _ := strconv.Atoi(msg.String())
+			_, _ = runWanCapture("rate", fmt.Sprint(sel.ID), msg.String())
+			for i := range m.renders {
+				if m.renders[i].ID == sel.ID {
+					rating := n
+					m.renders[i].Rating = &rating
+					break
+				}
+			}
+			starDisplay := tuiStar.Render(strings.Repeat("*", n)) + tuiStarDim.Render(strings.Repeat("-", 5-n))
+			m.flash = &flashMsg{text: fmt.Sprintf("Rated #%d  %s", sel.ID, starDisplay)}
+			cmds = append(cmds, scheduleFlashDismiss())
+		}
+	}
+
+	return cmds
+}
+
+// ─── prompt screen key handling ──────────────────────────────────
+
+func (m *wanTUIModel) updatePrompt(msg tea.KeyMsg) []tea.Cmd {
+	var cmds []tea.Cmd
+
+	switch msg.String() {
+	case "esc":
+		m.scr = scrList
+		m.input.Blur()
+	case "enter":
+		prompt := strings.TrimSpace(m.input.Value())
+		if prompt == "" {
+			m.scr = scrList
+			m.input.Blur()
+			return nil
+		}
+		m.input.Blur()
+		m.pendingMsg = fmt.Sprintf("rendering: %.60s...", prompt)
+		m.scr = scrPending
+
+		// Insert a synthetic pending entry at the top of the list immediately
+		synthetic := wanRender{
+			ID:        -1, // placeholder
+			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+			Name:      "new render",
+			Preset:    "t2v-14b-dual-fast",
+			Status:    "pending",
+			Prompt:    prompt,
+		}
+		m.renders = append([]wanRender{synthetic}, m.renders...)
+		m.cursor = 0
+
+		cmds = append(cmds, doWanCmd("render", prompt))
+	}
+
+	return cmds
+}
+
+// ─── helpers for selection and filtering ──────────────────────────
+
+func (m *wanTUIModel) visibleRenders() []wanRender {
+	if !m.isFiltering || m.filterText == "" {
+		return m.renders
+	}
+	needle := strings.ToLower(m.filterText)
+	var out []wanRender
+	for _, r := range m.renders {
+		hay := strings.ToLower(r.Prompt + " " + r.Preset + " " + r.Name)
+		if strings.Contains(hay, needle) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (m *wanTUIModel) selectedRender() *wanRender {
+	visible := m.visibleRenders()
+	if m.cursor >= 0 && m.cursor < len(visible) {
+		r := visible[m.cursor]
+		return &r
+	}
+	return nil
+}
+
+// ─── view ────────────────────────────────────────────────────────
 
 func (m *wanTUIModel) View() string {
 	switch m.scr {
 	case scrList:
-		body := m.list.View()
-		// flash > status bar > hints. Status bar shows GPU + active preset
-		// so the user always knows which box they're on and what 'n' will
-		// render with.
-		statusBar := wanDimStyle.Render("│ ") +
-			wanAccentStyle.Render("gpu ") + wanDimStyle.Render(m.gpuLabel) +
-			wanDimStyle.Render("  │  ") +
-			wanAccentStyle.Render("preset ") + wanGoodStyle.Render(m.preset)
-		bottom := statusBar + "\n" + wanDimStyle.Render(hintsList)
-		if m.flash != "" {
-			bottom = m.flash + "\n" + statusBar + "\n" + wanDimStyle.Render(hintsList)
-		}
-		return body + "\n" + bottom
-
+		return m.viewList()
 	case scrDetail:
-		if m.selected == nil {
-			return "(no selection)"
-		}
-		s := m.selected
-		dur := "—"
-		if s.RenderSecs > 0 {
-			dur = fmt.Sprintf("%.0fs", s.RenderSecs)
-		}
-		sz := "—"
-		if s.FileSize > 0 {
-			sz = fmt.Sprintf("%.1fMB", float64(s.FileSize)/1024/1024)
-		}
-		rating := "—"
-		if s.Rating != nil {
-			rating = strings.Repeat("★", *s.Rating) + strings.Repeat("·", 5-*s.Rating)
-		}
-		urlLine := wanDimStyle.Render("(no URL)")
-		if s.OutputURL != "" {
-			urlLine = s.OutputURL
-		}
-		body := wanBorder.Render(strings.Join([]string{
-			wanTitleStyle.Render(fmt.Sprintf("render #%d", s.ID)),
-			"",
-			wanAccentStyle.Render("preset    ") + s.Preset,
-			wanAccentStyle.Render("seed      ") + fmt.Sprint(s.Seed),
-			wanAccentStyle.Render("status    ") + wanStatusStyle(s.Status).Render(s.Status),
-			wanAccentStyle.Render("when      ") + s.CreatedAt,
-			wanAccentStyle.Render("duration  ") + dur,
-			wanAccentStyle.Render("size      ") + sz,
-			wanAccentStyle.Render("rating    ") + rating,
-			"",
-			wanAccentStyle.Render("url       ") + urlLine,
-			"",
-			wanAccentStyle.Render("prompt"),
-			wrap(s.Prompt, m.viewWrapWidth()),
-		}, "\n"))
-		bottom := wanDimStyle.Render(hintsDetail)
-		if m.flash != "" {
-			bottom = m.flash + "\n" + bottom
-		}
-		return body + "\n" + bottom
-
+		return m.viewDetail()
 	case scrPrompt:
-		body := wanBorder.Render(strings.Join([]string{
-			wanTitleStyle.Render("new render"),
-			"",
-			m.input.View(),
-			"",
-			wanAccentStyle.Render("preset ") + wanGoodStyle.Render(m.preset) +
-				wanDimStyle.Render("   │   gpu ") + wanDimStyle.Render(m.gpuLabel),
-			wanDimStyle.Render(hintsPrompt),
-		}, "\n"))
-		return body
-
-	case scrSystem:
-		return viewSystemTab(m)
-
+		return m.viewPromptInput()
 	case scrPending:
-		body := wanBorder.Render(strings.Join([]string{
-			wanTitleStyle.Render("working"),
-			"",
-			m.spinner.View() + "  " + m.pendingMsg,
-			"",
-			wanDimStyle.Render(hintsPending),
-		}, "\n"))
-		return body
+		return m.viewPending()
 	}
 	return ""
 }
 
-// viewWrapWidth is the width to wrap detail text — based on current terminal.
-func (m *wanTUIModel) viewWrapWidth() int {
-	w := m.width - 8 // border + padding
-	if w < 40 {
-		return 40
+// viewList renders the zoned layout:
+//   Zone 1: Status bar (top)
+//   Zone 2: Flash message (if any)
+//   Zone 3: Render list (middle, scrollable)
+//   Zone 4: Command bar (bottom)
+func (m *wanTUIModel) viewList() string {
+	w := m.width
+	if w < 20 {
+		w = 80
 	}
-	if w > 100 {
-		return 100
+
+	var sections []string
+
+	// ── Zone 1: Status bar ──
+	pendingCount, doneCount, totalCount := 0, 0, len(m.renders)
+	for _, r := range m.renders {
+		switch r.Status {
+		case "pending", "running":
+			pendingCount++
+		case "done":
+			doneCount++
+		}
 	}
-	return w
+	statusLeft := tuiStatusBar.Render(" wan-pipeline ")
+	var statusParts []string
+	statusParts = append(statusParts, tuiMuted.Render(fmt.Sprintf("%d renders", totalCount)))
+	if pendingCount > 0 {
+		statusParts = append(statusParts, tuiWarn.Render(fmt.Sprintf("%d pending", pendingCount)))
+	}
+	if doneCount > 0 {
+		statusParts = append(statusParts, tuiGood.Render(fmt.Sprintf("%d done", doneCount)))
+	}
+	statusRight := strings.Join(statusParts, tuiDim.Render(" | "))
+	statusLine := statusLeft + "  " + statusRight
+	if m.isFiltering {
+		filterIndicator := tuiAccent.Render("/" + m.filterText)
+		statusLine = statusLeft + "  " + filterIndicator + "  " + statusRight
+	}
+	sections = append(sections, statusLine)
+
+	// ── Zone 2: Flash message ──
+	if m.flash != nil {
+		style := tuiFlash
+		if m.flash.isError {
+			style = tuiFlashError
+		}
+		sections = append(sections, style.Render(m.flash.text))
+	}
+
+	// ── Zone 3: Render list or empty state ──
+	visible := m.visibleRenders()
+
+	if len(visible) == 0 {
+		if len(m.renders) == 0 {
+			// True empty: first-time user
+			emptyMsg := tuiEmptyBox.Width(minInt(60, w-4)).Render(
+				tuiTitle.Render("Welcome to wan-pipeline") + "\n\n" +
+					tuiMuted.Render("No renders yet.") + "\n" +
+					tuiAccent.Render("Press 'r' to create your first."))
+			// Center it vertically in available space
+			availH := m.height - 4 // status + help bar + margins
+			pad := (availH - strings.Count(emptyMsg, "\n") - 1) / 3
+			if pad < 1 {
+				pad = 1
+			}
+			sections = append(sections, strings.Repeat("\n", pad)+emptyMsg)
+		} else {
+			// Filtering with no results
+			sections = append(sections, "\n"+tuiDim.Render("  No renders match '"+m.filterText+"'. Press esc to clear filter."))
+		}
+	} else {
+		// Column header
+		header := tuiLabel.Render(fmt.Sprintf("  %-4s %-8s %-22s %-6s %-6s %-7s  %s",
+			"ID", "STATUS", "PRESET", "TIME", "SIZE", "RATING", "PROMPT"))
+		sections = append(sections, header)
+
+		// How many rows fit?
+		usedLines := len(sections) + 2 // +2 for help bar + bottom margin
+		availRows := m.height - usedLines
+		if availRows < 3 {
+			availRows = 3
+		}
+
+		// Scroll window
+		scrollStart := 0
+		if m.cursor >= availRows {
+			scrollStart = m.cursor - availRows + 1
+		}
+		scrollEnd := scrollStart + availRows
+		if scrollEnd > len(visible) {
+			scrollEnd = len(visible)
+		}
+
+		promptWidth := w - 58 // space remaining after fixed columns
+		if promptWidth < 10 {
+			promptWidth = 10
+		}
+		if promptWidth > 80 {
+			promptWidth = 80
+		}
+
+		for i := scrollStart; i < scrollEnd; i++ {
+			r := visible[i]
+			cursor := "  "
+			rowStyle := tuiNormalRow
+			if i == m.cursor {
+				cursor = tuiSelectedRow.Render("> ")
+				rowStyle = tuiSelectedRow
+			}
+
+			statusStr := tuiRenderStatusStyle(r.Status).Render(fmt.Sprintf("%-8s", r.Status))
+			ratingStr := r.stars()
+			promptStr := r.shortPrompt(promptWidth)
+			if i != m.cursor {
+				promptStr = tuiDim.Render(promptStr)
+			}
+
+			line := fmt.Sprintf("%s%s %s %-22s %-6s %-6s %s  %s",
+				cursor,
+				rowStyle.Render(fmt.Sprintf("%-4d", r.ID)),
+				statusStr,
+				tuiAccent.Render(truncStr(r.Preset, 22)),
+				r.durationStr(),
+				r.sizeStr(),
+				ratingStr,
+				promptStr,
+			)
+			sections = append(sections, line)
+		}
+
+		// Scroll indicator
+		if len(visible) > availRows {
+			pct := 0
+			if len(visible) > 1 {
+				pct = m.cursor * 100 / (len(visible) - 1)
+			}
+			scrollInfo := tuiDim.Render(fmt.Sprintf("  [%d/%d  %d%%]", m.cursor+1, len(visible), pct))
+			sections = append(sections, scrollInfo)
+		}
+	}
+
+	// ── Zone 4: Command bar (bottom) ──
+	help := tuiHelpBar.Render("  j/k navigate  enter detail  r render  v vary  R resume  1-5 rate  / filter  q quit")
+	sections = append(sections, help)
+
+	return strings.Join(sections, "\n")
 }
 
-// ─── bubbletea cmds ───
+// viewDetail renders the detail pane for the selected render.
+func (m *wanTUIModel) viewDetail() string {
+	sel := m.selectedRender()
+	if sel == nil {
+		return tuiDim.Render("(no selection)")
+	}
+	s := sel
+
+	rating := tuiStarDim.Render("-----")
+	if s.Rating != nil {
+		n := *s.Rating
+		rating = tuiStar.Render(strings.Repeat("*", n)) + tuiStarDim.Render(strings.Repeat("-", 5-n))
+	}
+
+	urlLine := tuiDim.Render("(not available)")
+	if s.OutputURL != "" {
+		urlLine = tuiAccent.Render(s.OutputURL)
+	}
+
+	wrapW := m.width - 10
+	if wrapW < 40 {
+		wrapW = 40
+	}
+	if wrapW > 100 {
+		wrapW = 100
+	}
+
+	rows := []string{
+		tuiTitle.Render(fmt.Sprintf("render #%d", s.ID)),
+		"",
+		tuiLabel.Render("  preset    ") + s.Preset,
+		tuiLabel.Render("  seed      ") + fmt.Sprint(s.Seed),
+		tuiLabel.Render("  status    ") + tuiRenderStatusStyle(s.Status).Render(s.Status),
+		tuiLabel.Render("  when      ") + s.shortTime(),
+		tuiLabel.Render("  duration  ") + s.durationStr(),
+		tuiLabel.Render("  size      ") + s.sizeStr(),
+		tuiLabel.Render("  rating    ") + rating,
+		"",
+		tuiLabel.Render("  url       ") + urlLine,
+		"",
+		tuiLabel.Render("  prompt"),
+		"  " + wrap(s.Prompt, wrapW),
+	}
+
+	body := tuiBorder.Width(minInt(m.width-4, 100)).Render(strings.Join(rows, "\n"))
+
+	var sections []string
+	sections = append(sections, body)
+
+	if m.flash != nil {
+		style := tuiFlash
+		if m.flash.isError {
+			style = tuiFlashError
+		}
+		sections = append(sections, style.Render(m.flash.text))
+	}
+
+	help := tuiHelpBar.Render("  esc/h back  v vary  R resume  1-5 rate  q quit")
+	sections = append(sections, help)
+
+	return strings.Join(sections, "\n")
+}
+
+// viewPromptInput renders the new-render prompt input.
+func (m *wanTUIModel) viewPromptInput() string {
+	rows := []string{
+		tuiTitle.Render("new render"),
+		"",
+		m.input.View(),
+		"",
+		tuiDim.Render("default preset: t2v-14b-dual-fast"),
+	}
+	body := tuiBorder.Width(minInt(m.width-4, 90)).Render(strings.Join(rows, "\n"))
+	help := tuiHelpBar.Render("  enter submit  esc cancel")
+	return body + "\n" + help
+}
+
+// viewPending renders the in-progress spinner.
+func (m *wanTUIModel) viewPending() string {
+	rows := []string{
+		tuiTitle.Render("working"),
+		"",
+		m.spinner.View() + "  " + m.pendingMsg,
+		"",
+		tuiDim.Render("Detached -- the render continues in ComfyUI. ctrl+c to leave."),
+	}
+	body := tuiBorder.Width(minInt(m.width-4, 70)).Render(strings.Join(rows, "\n"))
+	return body
+}
+
+// ─── bubbletea cmds ──────────────────────────────────────────────
 
 type wanCmdDoneMsg struct{ summary string }
-type wanRefreshDoneMsg struct{ items []list.Item }
+type wanRefreshDoneMsg struct{ renders []wanRender }
 
 func doWanCmd(args ...string) tea.Cmd {
 	return func() tea.Msg {
 		out, err := runWanCapture(args...)
 		if err != nil {
-			return wanCmdDoneMsg{summary: wanBadStyle.Render("✗ ") + wanTruncate(out, 80)}
+			return wanCmdDoneMsg{summary: "error: " + wanTruncate(out, 80)}
 		}
 		summary := ""
 		for _, line := range strings.Split(out, "\n") {
-			if strings.Contains(line, "✓ done") || strings.Contains(line, "url:") {
+			if strings.Contains(line, "done") || strings.Contains(line, "url:") {
 				summary = strings.TrimSpace(line)
 				break
 			}
@@ -562,42 +828,36 @@ func doWanCmd(args ...string) tea.Cmd {
 		if summary == "" {
 			summary = "complete"
 		}
-		return wanCmdDoneMsg{summary: wanGoodStyle.Render("✓ ") + summary}
+		return wanCmdDoneMsg{summary: summary}
 	}
 }
 
-func refreshList() tea.Cmd {
-	// Run the (potentially slow) Python history fetch in the bubbletea goroutine,
-	// not the main Update goroutine.
+func refreshWanList() tea.Cmd {
 	return func() tea.Msg {
-		items, _ := loadRenders()
-		return wanRefreshDoneMsg{items: items}
+		renders, _ := loadWanRenders()
+		return wanRefreshDoneMsg{renders: renders}
 	}
 }
 
-// ─── history fetch (delegates to wan.py history --json) ───
+// ─── history fetch ───────────────────────────────────────────────
 
-func loadRenders() ([]list.Item, error) {
+func loadWanRenders() ([]wanRender, error) {
 	out, err := runWanCapture("history", "-n", "200", "--json")
 	if err != nil {
-		return []list.Item{}, nil
+		return nil, err
 	}
 	out = strings.TrimSpace(out)
 	if !strings.HasPrefix(out, "[") {
-		return []list.Item{}, nil
+		return nil, nil
 	}
 	var rows []wanRender
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		return nil, err
 	}
-	items := make([]list.Item, 0, len(rows))
-	for _, r := range rows {
-		items = append(items, r)
-	}
-	return items, nil
+	return rows, nil
 }
 
-// ─── helpers ───
+// ─── helpers ─────────────────────────────────────────────────────
 
 func wrap(s string, w int) string {
 	if w <= 0 {
@@ -625,7 +885,14 @@ func wanTruncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return s[:n-1] + "..."
+}
+
+func truncStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-2] + ".."
 }
 
 func atoiSafe(s string) int {
@@ -633,221 +900,14 @@ func atoiSafe(s string) int {
 	return n
 }
 
-
-// ─── system management view ───
-
-type sysPhaseLine struct {
-	id        string
-	name      string
-	installed bool
-	detail    string
-	size      string
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
-func loadSysPhases() []sysPhaseLine {
-	home, _ := os.UserHomeDir()
-	j := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
-
-	level := detectInstalledLevel()
-	phases := wanStudioPhases(level)
-
-	var out []sysPhaseLine
-	for _, ph := range phases {
-		if ph.id == "" {
-			// Include server status too
-			ok, detail := ph.check()
-			out = append(out, sysPhaseLine{
-				id:        "server",
-				name:      ph.name,
-				installed: ok,
-				detail:    detail,
-			})
-			continue
-		}
-		ok, detail := ph.check()
-		line := sysPhaseLine{
-			id:        ph.id,
-			name:      ph.name,
-			installed: ok,
-			detail:    detail,
-		}
-		// Get sizes for key dirs
-		switch ph.id {
-		case "comfyui":
-			line.size = dirSize(j("ComfyUI"))
-		case "wanmodels":
-			// Sum model dirs
-			for _, d := range []string{"diffusion_models", "text_encoders", "vae", "loras"} {
-				p := j("ComfyUI", "models", d)
-				if s := dirSize(p); s != "" {
-					line.size = s // just show last non-empty
-				}
-			}
-		case "comfort":
-			line.size = dirSize(j("Comfort"))
-		}
-		out = append(out, line)
-	}
-	return out
-}
-
-type sysRefreshDoneMsg struct{ phases []sysPhaseLine }
-type sysActionDoneMsg struct{ summary string }
-
-func refreshSysPhases() tea.Cmd {
-	return func() tea.Msg {
-		return sysRefreshDoneMsg{phases: loadSysPhases()}
-	}
-}
-
-func viewSystemTab(m *wanTUIModel) string {
-	var s strings.Builder
-
-	s.WriteString(wanTitleStyle.Render("wan-pipeline · system"))
-	s.WriteString("\n\n")
-
-	// Tab bar
-	renderTab := wanDimStyle.Render(" renders ")
-	systemTab := wanAccentStyle.Render("│ system │")
-	s.WriteString("  " + renderTab + "  " + systemTab)
-	s.WriteString("\n\n")
-
-	if len(m.sysPhases) == 0 {
-		s.WriteString(wanDimStyle.Render("  Loading..."))
-		s.WriteString("\n")
-	} else {
-		for i, ph := range m.sysPhases {
-			cursor := "  "
-			if i == m.sysCursor {
-				cursor = wanAccentStyle.Render("▸ ")
-			}
-
-			var icon string
-			if ph.installed {
-				icon = wanGoodStyle.Render("✓")
-			} else {
-				icon = wanWarnStyle.Render("✗")
-			}
-
-			name := fmt.Sprintf("%-32s", ph.name)
-			if i == m.sysCursor {
-				name = wanAccentStyle.Render(name)
-			} else {
-				name = wanDimStyle.Render(name)
-			}
-
-			detail := wanDimStyle.Render(ph.detail)
-			sizeHint := ""
-			if ph.size != "" {
-				sizeHint = wanDimStyle.Render(" (" + ph.size + ")")
-			}
-
-			s.WriteString(fmt.Sprintf("%s%s %s  %s%s\n", cursor, icon, name, detail, sizeHint))
-		}
-	}
-
-	// Flash / action feedback
-	if m.sysAction != "" {
-		s.WriteString("\n")
-		s.WriteString("  " + m.sysAction)
-		s.WriteString("\n")
-	}
-
-	// Status bar
-	s.WriteString("\n")
-	statusBar := wanDimStyle.Render("│ ") +
-		wanAccentStyle.Render("gpu ") + wanDimStyle.Render(m.gpuLabel) +
-		wanDimStyle.Render("  │  ") +
-		wanAccentStyle.Render("level ") + wanGoodStyle.Render(detectInstalledLevel())
-	s.WriteString(statusBar)
-	s.WriteString("\n")
-	s.WriteString(wanDimStyle.Render(hintsSystem))
-
-	return s.String()
-}
-
-// ─── system management commands ───
-
-func doSysReset(phaseID string) tea.Cmd {
-	return func() tea.Msg {
-		home, _ := os.UserHomeDir()
-		phases := wanResetPhases()
-		for _, ph := range phases {
-			if ph.id == phaseID {
-				if ph.pre != nil {
-					ph.pre()
-				}
-				for _, p := range ph.paths(home) {
-					os.RemoveAll(p)
-				}
-				saveWanSnapshot([]wanResetPhase{ph}, home)
-				return sysActionDoneMsg{summary: wanGoodStyle.Render(fmt.Sprintf("  ✓ %s reset", ph.name))}
-			}
-		}
-		return sysActionDoneMsg{summary: wanBadStyle.Render("  ✗ phase not found")}
-	}
-}
-
-func doSysFix(phaseID string) tea.Cmd {
-	return func() tea.Msg {
-		level := detectInstalledLevel()
-		phases := wanStudioPhases(level)
-		for _, ph := range phases {
-			if ph.id == phaseID {
-				os.Setenv("WAN_INSTALL_LEVEL", level)
-				var err error
-				if ph.custom != nil {
-					err = ph.custom(&setupOpts{yes: true, installLevel: level})
-				} else {
-					err = runInstallScript(ph.id)
-				}
-				if err != nil {
-					return sysActionDoneMsg{summary: wanBadStyle.Render(fmt.Sprintf("  ✗ fix failed: %v", err))}
-				}
-				saveWanInstallSnapshot(ph.id, ph.name, nil)
-				return sysActionDoneMsg{summary: wanGoodStyle.Render(fmt.Sprintf("  ✓ %s fixed", ph.name))}
-			}
-		}
-		return sysActionDoneMsg{summary: wanBadStyle.Render("  ✗ phase not found")}
-	}
-}
-
-func doSysResetAll() tea.Cmd {
-	return func() tea.Msg {
-		home, _ := os.UserHomeDir()
-		phases := wanResetPhases()
-		stopComfyScreenSession()
-		for _, ph := range phases {
-			for _, p := range ph.paths(home) {
-				os.RemoveAll(p)
-			}
-		}
-		saveWanSnapshot(phases, home)
-		return sysActionDoneMsg{summary: wanGoodStyle.Render("  ✓ all phases reset")}
-	}
-}
-
-func doSysPurge() tea.Cmd {
-	return func() tea.Msg {
-		home, _ := os.UserHomeDir()
-		stopComfyScreenSession()
-		targets := []string{
-			filepath.Join(home, "ComfyUI"),
-			filepath.Join(home, "Comfort"),
-			filepath.Join(home, ".anime", "comfyui.log"),
-			filepath.Join(home, ".anime", "wan-pipeline.db"),
-			filepath.Join(home, ".anime", "wan-snapshots.json"),
-			filepath.Join(home, ".anime", "comfort-path"),
-		}
-		for _, t := range targets {
-			os.RemoveAll(t)
-		}
-		saveWanSnapshot(wanResetPhases(), home)
-		return sysActionDoneMsg{summary: wanGoodStyle.Render("  ✓ purge complete — system clean")}
-	}
-}
-
-// ─── entrypoint ───
+// ─── entrypoint ──────────────────────────────────────────────────
 
 func runWanTUI() error {
 	if _, err := extractWanScript(); err != nil {

@@ -153,10 +153,12 @@ type Server struct {
 }
 
 type APIKeys struct {
-	Anthropic   string `yaml:"anthropic,omitempty"`
-	OpenAI      string `yaml:"openai,omitempty"`
-	HuggingFace string `yaml:"huggingface,omitempty"`
-	LambdaLabs  string `yaml:"lambda_labs,omitempty"`
+	Anthropic     string `yaml:"anthropic,omitempty"`
+	OpenAI        string `yaml:"openai,omitempty"`
+	HuggingFace   string `yaml:"huggingface,omitempty"`
+	LambdaLabs    string `yaml:"lambda_labs,omitempty"`
+	Vercel        string `yaml:"vercel,omitempty"`
+	VercelTeamID  string `yaml:"vercel_team_id,omitempty"`
 }
 
 type Collection struct {

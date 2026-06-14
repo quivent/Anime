@@ -3,7 +3,7 @@ anime
 anime-*
 
 # Config (contains sensitive data)
-.config/
+.config
 
 # Test files
 *.test

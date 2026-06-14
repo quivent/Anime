@@ -8,11 +8,15 @@ import (
 	"strings"
 
 	"github.com/joshkornreich/anime/internal/config"
+	"github.com/joshkornreich/anime/internal/gh"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
 
-var ghServer string
+var (
+	ghServer     string
+	ghLoginToken string
+)
 
 var ghCmd = &cobra.Command{
 	Use:   "gh",
@@ -37,9 +41,10 @@ var ghLoginCmd = &cobra.Command{
 	Long: `Authenticate with GitHub using gh auth login.
 
 Examples:
-  anime gh login                    # Login locally
-  anime gh login lambda             # Login on lambda server (interactive)
-  anime gh login lambda --web       # Login on lambda using web flow`,
+  anime gh login                           # Login locally (web flow or embedded token)
+  anime gh login --token ghp_xxx           # Login with a personal access token (no browser)
+  anime gh login lambda                    # Login on lambda server
+  anime gh login lambda --token ghp_xxx    # Token login on lambda (no browser)`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runGhLogin,
 }
@@ -71,6 +76,7 @@ Examples:
 }
 
 func init() {
+	ghLoginCmd.Flags().StringVar(&ghLoginToken, "token", "", "Personal access token (skip browser flow)")
 	rootCmd.AddCommand(ghCmd)
 	ghCmd.AddCommand(ghLoginCmd)
 	ghCmd.AddCommand(ghStatusCmd)
@@ -82,13 +88,22 @@ func runGhLogin(cmd *cobra.Command, args []string) error {
 	fmt.Println(theme.RenderBanner("GITHUB LOGIN"))
 	fmt.Println()
 
+	// Resolve token: flag > embedded > none (web flow)
+	token := ghLoginToken
+	if token == "" {
+		token = gh.GetToken()
+	}
+
 	// Check if running on remote server
 	if len(args) > 0 {
 		server := args[0]
+		if token != "" {
+			return runGhTokenLoginRemote(server, token)
+		}
 		return runGhOnServer(server, []string{"auth", "login"}, true)
 	}
 
-	// Local fluid login: install gh if missing → web auth → ensure SSH
+	// Local fluid login: install gh if missing → auth → ensure SSH
 	// key → upload key → verify. After this, `git clone git@github.com:...`
 	// just works for any repo the account has access to.
 	step := func(n int, label string) {
@@ -107,23 +122,41 @@ func runGhLogin(cmd *cobra.Command, args []string) error {
 	fmt.Println(theme.SuccessStyle.Render("  ✓ gh installed"))
 	fmt.Println()
 
-	// 2. Web auth flow (works on headless cloud boxes — gh prints the URL +
-	//    one-time code; user pastes them into their laptop browser).
-	step(2, "Authenticate with GitHub (web flow)")
-	if exec.Command("gh", "auth", "status").Run() == nil {
-		who, _ := exec.Command("gh", "api", "user", "--jq", ".login").Output()
-		fmt.Println(theme.SuccessStyle.Render("  ✓ already authenticated as " + strings.TrimSpace(string(who))))
+	// 2. Authenticate — token if available, web flow otherwise.
+	if token != "" {
+		step(2, "Authenticate with GitHub (token)")
+		if exec.Command("gh", "auth", "status").Run() == nil {
+			who, _ := exec.Command("gh", "api", "user", "--jq", ".login").Output()
+			fmt.Println(theme.SuccessStyle.Render("  ✓ already authenticated as " + strings.TrimSpace(string(who))))
+		} else {
+			login := exec.Command("gh", "auth", "login", "--with-token")
+			login.Stdin = strings.NewReader(token)
+			login.Stdout, login.Stderr = os.Stdout, os.Stderr
+			if err := login.Run(); err != nil {
+				return fmt.Errorf("gh auth login --with-token failed: %w", err)
+			}
+			// Set SSH as preferred protocol
+			exec.Command("gh", "config", "set", "git_protocol", "ssh").Run()
+			who, _ := exec.Command("gh", "api", "user", "--jq", ".login").Output()
+			fmt.Println(theme.SuccessStyle.Render("  ✓ authenticated as " + strings.TrimSpace(string(who))))
+		}
 	} else {
-		fmt.Println(theme.DimTextStyle.Render("  Opening device-code flow — copy the code into the URL gh prints."))
-		fmt.Println()
-		login := exec.Command("gh", "auth", "login",
-			"--hostname", "github.com",
-			"--git-protocol", "ssh",
-			"--web",
-			"--scopes", "admin:public_key,repo,read:org")
-		login.Stdin, login.Stdout, login.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := login.Run(); err != nil {
-			return fmt.Errorf("gh auth login failed: %w", err)
+		step(2, "Authenticate with GitHub (web flow)")
+		if exec.Command("gh", "auth", "status").Run() == nil {
+			who, _ := exec.Command("gh", "api", "user", "--jq", ".login").Output()
+			fmt.Println(theme.SuccessStyle.Render("  ✓ already authenticated as " + strings.TrimSpace(string(who))))
+		} else {
+			fmt.Println(theme.DimTextStyle.Render("  Opening device-code flow — copy the code into the URL gh prints."))
+			fmt.Println()
+			login := exec.Command("gh", "auth", "login",
+				"--hostname", "github.com",
+				"--git-protocol", "ssh",
+				"--web",
+				"--scopes", "admin:public_key,repo,read:org")
+			login.Stdin, login.Stdout, login.Stderr = os.Stdin, os.Stdout, os.Stderr
+			if err := login.Run(); err != nil {
+				return fmt.Errorf("gh auth login failed: %w", err)
+			}
 		}
 	}
 	fmt.Println()
@@ -439,6 +472,77 @@ func isKnownServer(name string) bool {
 	}
 
 	return false
+}
+
+// runGhTokenLoginRemote authenticates gh on a remote server using a token.
+// No browser needed — pipes the token over SSH.
+func runGhTokenLoginRemote(server, token string) error {
+	target, err := resolveGhServerTarget(server)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("  %s %s\n", theme.DimTextStyle.Render("Server:"), theme.HighlightStyle.Render(target))
+	fmt.Println()
+
+	// Check gh is installed on remote
+	fmt.Println(theme.HighlightStyle.Render("[1/3] Ensure gh installed on remote"))
+	checkCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, "which gh")
+	if err := checkCmd.Run(); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  gh not installed on remote — installing..."))
+		installScript := `set -e
+SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO=sudo
+$SUDO mkdir -p /etc/apt/keyrings
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | $SUDO dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg status=none
+$SUDO chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | $SUDO tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+$SUDO DEBIAN_FRONTEND=noninteractive apt-get update -y
+$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y gh`
+		installCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, installScript)
+		installCmd.Stdout, installCmd.Stderr = os.Stdout, os.Stderr
+		if err := installCmd.Run(); err != nil {
+			return fmt.Errorf("failed to install gh on remote: %w", err)
+		}
+	}
+	fmt.Println(theme.SuccessStyle.Render("  ✓ gh installed"))
+	fmt.Println()
+
+	// Pipe token to gh auth login on remote
+	fmt.Println(theme.HighlightStyle.Render("[2/3] Authenticate with token"))
+	loginScript := fmt.Sprintf(`echo '%s' | gh auth login --with-token && gh config set git_protocol ssh`, token)
+	loginCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, loginScript)
+	loginCmd.Stdout, loginCmd.Stderr = os.Stdout, os.Stderr
+	if err := loginCmd.Run(); err != nil {
+		return fmt.Errorf("remote gh auth failed: %w", err)
+	}
+
+	// Verify
+	whoCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, "gh api user --jq .login")
+	who, _ := whoCmd.Output()
+	fmt.Println(theme.SuccessStyle.Render("  ✓ authenticated as " + strings.TrimSpace(string(who))))
+	fmt.Println()
+
+	// Setup SSH key on remote
+	fmt.Println(theme.HighlightStyle.Render("[3/3] Ensure SSH key on remote"))
+	sshScript := `set -e
+if [ ! -f ~/.ssh/id_ed25519 ]; then
+    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "$(whoami)@$(hostname)"
+fi
+TITLE="anime-cli ($(hostname))"
+gh ssh-key add ~/.ssh/id_ed25519.pub --title "$TITLE" 2>/dev/null || echo "key already on github"
+echo "done"`
+	sshCmd := exec.Command("ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", target, sshScript)
+	sshCmd.Stdout, sshCmd.Stderr = os.Stdout, os.Stderr
+	if err := sshCmd.Run(); err != nil {
+		fmt.Println(theme.WarningStyle.Render("  ⚠ SSH key setup failed (non-fatal)"))
+	} else {
+		fmt.Println(theme.SuccessStyle.Render("  ✓ SSH key configured"))
+	}
+	fmt.Println()
+
+	fmt.Println(theme.SuccessStyle.Render("✓ GitHub login complete on " + server))
+	fmt.Println()
+	return nil
 }
 
 func showGhInstallInstructions() error {

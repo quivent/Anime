@@ -1,75 +1,118 @@
-# /solve — Converge on done
-
-You have one job: make `$ARGUMENTS` true. Not partially. Not approximately. Done.
-
-Your loop: attempt → check → adjust → attempt. You do not stop when you've tried hard. You stop when the thing is done. If it's not done, you haven't solved it. Try differently.
-
+---
+description: Meta-cognition loop — think until a solution emerges that passes self-imposed quality gates
+argument-hint: <problem-statement> [--rounds N] [--gate "criteria"] [--adversary] [--model opus]
 ---
 
-## Process
+Meta-cognition deliberation loop. The agent thinks iteratively until it produces a solution that survives its own critique.
 
-### 1. Define done
+**Input:** $ARGUMENTS
 
-Before touching code, state in ONE sentence what "done" looks like. Concrete. Verifiable. Not "improved X" — that's direction, not destination. "X passes" or "X renders correctly" or "X produces output Y" or "X benchmarks at Z."
+## What This Does
 
-If you can't define done, you can't solve. Ask.
+This is NOT research (gathering information) and NOT reflection (measuring state). This is pure deliberation — an agent reasoning through a problem across multiple rounds, each round building on the last, until a solution crystallizes that the agent itself cannot break.
 
-### 2. Attempt
+## The Deliberation Loop
 
-Make your best attempt at the solution. Use what you know. Read the relevant code first. Change the thing most likely to make it work.
+```
+ROUND 1: GENERATE
+  Produce an initial solution attempt.
+  State all assumptions explicitly.
+  Rate confidence (0-100) and explain why.
 
-### 3. Check
+ROUND 2..N: CRITIQUE → REVISE
+  For each round:
 
-Verify against the definition of done. Run the test. Take the screenshot. Check the output. Read the error.
+  1. ATTACK — Actively try to break the previous solution.
+     - What assumptions are wrong?
+     - What edge cases does it miss?
+     - What would an adversary exploit?
+     - What would a domain expert object to?
+     - Where is the reasoning weakest?
 
-**Did it work?**
+  2. DIAGNOSE — Identify the ROOT weakness.
+     Not the symptom. The structural flaw.
+     "The solution assumes X, but X fails when Y."
 
-- **YES →** Post to `.wire`: what was solved, how, how many attempts. Stop.
-- **NO →** Go to step 4.
+  3. REVISE — Produce a new solution that addresses the diagnosed weakness.
+     Must be materially different, not a patch.
+     If the flaw is structural, the revision must be structural.
 
-### 4. Diagnose
+  4. GATE — Self-assess against quality criteria:
+     - Does this solve the ACTUAL problem, not a simplified version?
+     - Can I articulate WHY this works, not just THAT it works?
+     - Would I bet money on this? How much?
+     - What is the strongest remaining objection?
 
-Do NOT retry the same thing. Read the error. Read the output. Understand WHY it didn't work.
+  5. DECIDE:
+     IF strongest remaining objection is addressable → CONTINUE (another round)
+     IF solution survives attack AND confidence >= threshold → EMIT
+     IF max rounds reached → EMIT with caveats
 
-Ask:
-- What did I assume that was wrong?
-- What information am I missing?
-- Is my definition of done still correct, or did I learn it needs adjustment?
+EMIT: Deliver the solution with:
+  - The solution itself
+  - The chain of reasoning (all rounds, visible)
+  - Assumptions that hold
+  - Assumptions that were abandoned and why
+  - Remaining risks (honest, not hedging)
+  - Confidence score with calibration
+```
 
-### 5. Adjust and retry
+## Flags
 
-Change your approach based on the diagnosis. Go back to step 2 with the new approach.
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--rounds N` | 5 | Max deliberation rounds (solution can emit earlier) |
+| `--gate "..."` | "survives self-attack" | Custom quality gate the solution must pass |
+| `--adversary` | false | Spawn a separate adversary agent each round to attack |
+| `--model M` | opus | Model for deliberation (opus strongly recommended) |
+| `--domain "..."` | inferred | Domain context to sharpen critique (e.g., "distributed systems") |
+| `--stakes "..."` | "medium" | Calibrates thoroughness: "low" = 2 rounds, "high" = 8 rounds |
 
-**Guardrails:**
-- After 3 failed attempts at the same approach, change the approach entirely
-- After 7 total attempts, post to `.wire` what you've tried and what's blocking you — another session may have context you lack
-- After 12 total attempts, stop and report: what you tried, what you learned, what you think the actual blocker is. You are in Z territory. The problem may need the builder.
+## The Adversary Mode
 
----
+With `--adversary`, each round spawns TWO agents:
+- **Solver**: produces/revises the solution
+- **Adversary**: receives ONLY the solution (not the reasoning) and tries to break it
 
-## What makes this a strange loop
+The adversary has no loyalty to the solution. It doesn't know the revision history. It attacks fresh each round. If the adversary finds a flaw the solver missed, the solver must address it.
 
-The solver that cannot solve discovers what solving requires. Each failed attempt is not wasted — it converts Z (unknown unknowns about the problem) into Y (known unknowns) into X (understood constraints). The loop's VALUE is not just the solution — it's the understanding generated by failing to find the solution.
+This is more expensive (~2x) but catches blind spots that self-critique misses.
 
-The loop sentence: *"Each failure teaches me what success requires, until what I know is enough to succeed."*
+## Quality Gate Customization
 
-But there's a deeper loop: sometimes what you learn by failing is that the definition of done was wrong. The problem wasn't what you thought it was. The specification was the bug. Solving the wrong problem correctly is still wrong. If you discover the definition of done needs to change, change it — and document why. That redefinition IS progress. That IS solving.
+Default gate: "the solution survives my own strongest attack."
 
----
+Custom gates:
+```
+/solve "Design the auth system" --gate "must handle token refresh, revocation, and multi-tenant isolation"
+/solve "Why is the build slow" --gate "root cause identified with evidence from actual build logs"
+/solve "Pricing model for the API" --gate "unit economics are positive at 1K, 10K, and 100K users"
+```
 
-## Autonomy
+The gate is checked every round. The loop terminates when the gate passes.
 
-When running autonomously:
-- Post to `.wire` when starting: what you're solving, definition of done
-- Post each approach change (not each attempt — only when strategy shifts)
-- Post when done or when stopped at the guardrail
+## What This Is NOT
 
----
+- **Not research.** Don't use this to gather information. Use R1-R15 for that. Use /solve AFTER you have the information and need to reason through it.
+- **Not a reflection loop.** L1-L18 measure state and close gaps. /solve produces a novel answer to a hard question.
+- **Not brainstorming.** This is convergent, not divergent. Each round narrows toward a solution, not expands options.
+- **Not a one-shot prompt.** The whole point is that the first answer is wrong. The loop exists to find out HOW it's wrong and fix it.
 
-## Constraints
+## When To Use
 
-- One problem at a time. `/solve` solves ONE thing. If the problem decomposes into sub-problems, solve them sequentially, each with its own definition of done.
-- Commit working solutions immediately. Don't batch.
-- If the solution touches files another session is working on (check `.wire`), coordinate before writing.
+- Hard design decisions with non-obvious trade-offs
+- Debugging where the root cause is unclear
+- Architecture questions where the first plausible answer is probably wrong
+- Any problem where you'd normally say "let me think about this more"
 
-$ARGUMENTS
+## Examples
+
+```
+/solve "How should we handle eventual consistency between the order service and inventory service?"
+
+/solve "What's the right abstraction for our plugin system?" --adversary --rounds 7
+
+/solve "Why does the test suite take 45 minutes?" --gate "identifies top 3 causes with measured evidence" --domain "CI/CD"
+
+/solve "Design a pricing model that works for solo devs and enterprises" --stakes high
+```

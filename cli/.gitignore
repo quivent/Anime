@@ -30,3 +30,5 @@ Thumbs.db
 .tokens
 .tokens.mk
 internal/ssh/keys/
+.gh-token
+.config

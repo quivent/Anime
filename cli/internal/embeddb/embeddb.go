@@ -630,6 +630,60 @@ func (db *EmbeddedDB) SetString(key, value string) {
 	db.Set(key, []byte(value))
 }
 
+// TransferTo writes the current database state into a different binary's reserved space.
+func (db *EmbeddedDB) TransferTo(targetPath string) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	// Nothing to transfer
+	if len(db.data.Aliases) == 0 && len(db.data.ShellAliases) == 0 &&
+		len(db.data.Settings) == 0 && len(db.data.Custom) == 0 && len(db.data.KV) == 0 {
+		return nil
+	}
+
+	jsonData, err := json.Marshal(db.data)
+	if err != nil {
+		return fmt.Errorf("failed to serialize: %w", err)
+	}
+
+	var compressed bytes.Buffer
+	gzWriter := gzip.NewWriter(&compressed)
+	if _, err := gzWriter.Write(jsonData); err != nil {
+		return fmt.Errorf("failed to compress: %w", err)
+	}
+	gzWriter.Close()
+
+	compressedData := compressed.Bytes()
+	maxDataSize := reservedSize - 64
+	if len(compressedData) > maxDataSize {
+		return fmt.Errorf("data too large: %d bytes (max %d)", len(compressedData), maxDataSize)
+	}
+
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to read target binary: %w", err)
+	}
+
+	startBytes := []byte(startMarker)
+	idx := bytes.LastIndex(content, startBytes)
+	if idx == -1 {
+		return fmt.Errorf("reserved space not found in target binary")
+	}
+
+	// Build new data block
+	dataBlock := make([]byte, reservedSize)
+	copy(dataBlock[0:], startBytes)
+	binary.LittleEndian.PutUint32(dataBlock[32:36], uint32(len(compressedData)))
+	copy(dataBlock[36:], compressedData)
+	endBytes := []byte(endMarker)
+	copy(dataBlock[reservedSize-len(endBytes):], endBytes)
+
+	// Replace reserved space in target
+	copy(content[idx:idx+reservedSize], dataBlock)
+
+	return os.WriteFile(targetPath, content, 0755)
+}
+
 // Clear removes all data
 func (db *EmbeddedDB) Clear() {
 	db.mu.Lock()

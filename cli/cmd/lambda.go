@@ -21,8 +21,9 @@ var (
 var lambdaCmd = &cobra.Command{
 	Use:   "lambda",
 	Short: "Lambda server operations",
-	Long:  "Commands for managing Lambda servers and installing modules.",
-	Run:   runLambdaHelp,
+	Long:  "Commands for managing Lambda servers. Unrecognized subcommands proxy to the remote lambda CLI.",
+	Args:  cobra.ArbitraryArgs,
+	RunE:  runLambdaOrProxy,
 }
 
 var lambdaDefaultsCmd = &cobra.Command{

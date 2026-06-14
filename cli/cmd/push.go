@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/joshkornreich/anime/internal/config"
+	"github.com/joshkornreich/anime/internal/embeddb"
 	"github.com/joshkornreich/anime/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -109,7 +110,20 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	// Step 2: Test SSH connection
+	// Step 2: Transfer embedded data (GitHub token, aliases, etc.) to the new binary
+	fmt.Print(theme.DimTextStyle.Render("▶ Transferring embedded data... "))
+	if db, dbErr := embeddb.DB(); dbErr == nil {
+		if transferErr := db.TransferTo(binaryPath); transferErr != nil {
+			fmt.Println(theme.WarningStyle.Render("⚠"))
+			fmt.Println(theme.DimTextStyle.Render("  " + transferErr.Error()))
+		} else {
+			fmt.Println(theme.SuccessStyle.Render("✓"))
+		}
+	} else {
+		fmt.Println(theme.WarningStyle.Render("⚠"))
+	}
+
+	// Step 3: Test SSH connection
 	fmt.Print(theme.DimTextStyle.Render("▶ Testing connection... "))
 	if err := testConnection(target); err != nil {
 		fmt.Println(theme.ErrorStyle.Render("✗"))

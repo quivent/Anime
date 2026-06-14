@@ -157,18 +157,28 @@ func extractFingerprints(script string) fingerprints {
 	fp.GitCloneURLs = unique(fp.GitCloneURLs)
 
 	// pip3 install package lists — extract actual package names from the
-	// install line, dropping flags (--foo) and continuations (\)
-	for _, m := range rePip3Install.FindAllStringSubmatch(script, -1) {
+	// install line, dropping flags (--foo), continuations (\), and bash noise.
+	// We join continuation lines first so multi-line pip3 calls are parsed whole.
+	joined := strings.ReplaceAll(script, "\\\n", " ")
+	for _, m := range rePip3Install.FindAllStringSubmatch(joined, -1) {
 		line := m[1]
-		// Handle line continuations: join with the rest of the line
-		// We just parse the single regex match, which is one logical line
 		tokens := strings.Fields(line)
 		for _, tok := range tokens {
-			tok = strings.TrimRight(tok, "\\")
+			tok = strings.TrimRight(tok, "\\;,")
 			tok = strings.TrimSpace(tok)
 			if tok == "" || strings.HasPrefix(tok, "-") || strings.HasPrefix(tok, "$") ||
 				strings.HasPrefix(tok, "/") || strings.HasPrefix(tok, "'") ||
-				tok == "||" || tok == "&&" || tok == "|" {
+				strings.HasPrefix(tok, "\"") || strings.HasPrefix(tok, "#") ||
+				tok == "||" || tok == "&&" || tok == "|" || tok == "2>/dev/null" ||
+				tok == "fi" || tok == "then" || tok == "else" || tok == "do" ||
+				tok == "done" || tok == "true" || tok == "false" ||
+				strings.HasSuffix(tok, ".txt") || strings.HasSuffix(tok, ".py") {
+				continue
+			}
+			// Skip if it looks like a bash word, not a package
+			if !strings.Contains(tok, "-") && !strings.Contains(tok, "_") &&
+				!strings.Contains(tok, "=") && !strings.Contains(tok, "[") &&
+				len(tok) <= 2 {
 				continue
 			}
 			fp.Pip3InstallPkgs = append(fp.Pip3InstallPkgs, tok)

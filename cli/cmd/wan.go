@@ -155,14 +155,19 @@ func extractWanScript() (string, error) {
 	if existing, err := os.ReadFile(dst); err == nil && string(existing) == string(embedded) {
 		return dst, nil
 	}
-	if err := os.WriteFile(dst, embedded, 0o755); err != nil {
+	if err := os.WriteFile(dst, embedded, 0o644); err != nil {
 		return "", fmt.Errorf("writing %s: %w", dst, err)
 	}
 	return dst, nil
 }
 
-// findPython picks the best Python: prefer ComfyUI venv, then python3, then python.
+// findPython picks the best Python: prefer WAN_PYTHON env, then ComfyUI venv, then python3, then python.
 func findPython() string {
+	if p := os.Getenv("WAN_PYTHON"); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
 	home, _ := os.UserHomeDir()
 	candidates := []string{
 		filepath.Join(home, "ComfyUI", "venv", "bin", "python"),

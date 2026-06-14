@@ -297,7 +297,48 @@ func (m *wanTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch m.scr {
 		case scrList:
-			cmds = append(cmds, m.updateList(msg)...)
+			// Don't intercept keys while filter input is focused
+			if m.list.FilterState() == list.Filtering {
+				break
+			}
+			switch msg.String() {
+			case "enter":
+				if it, ok := m.list.SelectedItem().(wanRender); ok {
+					m.selected = &it
+					m.flash = ""
+					m.scr = scrDetail
+				}
+			case "n":
+				m.input.SetValue("")
+				m.input.Focus()
+				m.flash = ""
+				m.scr = scrPrompt
+			case "v":
+				if it, ok := m.list.SelectedItem().(wanRender); ok {
+					m.pendingMsg = fmt.Sprintf("queueing 1 variation of #%d…", it.ID)
+					m.scr = scrPending
+					cmds = append(cmds, doWanCmd("vary", fmt.Sprint(it.ID), "-n", "1"))
+				}
+			case "r":
+				if it, ok := m.list.SelectedItem().(wanRender); ok {
+					m.pendingMsg = fmt.Sprintf("resuming #%d (seed=%d)…", it.ID, it.Seed)
+					m.scr = scrPending
+					cmds = append(cmds, doWanCmd("resume", fmt.Sprint(it.ID)))
+				}
+			case "1", "2", "3", "4", "5":
+				if it, ok := m.list.SelectedItem().(wanRender); ok {
+					n := msg.String()
+					if _, err := runWanCapture("rate", fmt.Sprint(it.ID), n); err != nil {
+						m.flash = wanBadStyle.Render(fmt.Sprintf("✗ failed to rate #%d: %s", it.ID, err))
+					} else {
+						m.flash = wanGoodStyle.Render(fmt.Sprintf("rated #%d %s%s", it.ID, strings.Repeat("★", atoiSafe(n)), strings.Repeat("·", 5-atoiSafe(n))))
+					}
+					cmds = append(cmds, refreshList())
+				}
+			case "ctrl+r":
+				cmds = append(cmds, refreshList())
+			}
+
 		case scrDetail:
 			cmds = append(cmds, m.updateDetail(msg)...)
 		case scrPrompt:

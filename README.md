@@ -22,13 +22,15 @@
 </pre>
 
 
-## Components
+---
+
+## ✨ Components
 
 ### anime-cli
 
-Go CLI built with [Cobra](https://github.com/spf13/cobra) and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A Go CLI built with Cobra and Bubble Tea.
 
-**What works:**
+**Features working:**
 - 30+ installable packages with dependency resolution
 - Embedded bash install scripts for each package
 - Model catalog browser (interactive TUI and CLI modes)
@@ -46,7 +48,7 @@ anime packages            # Show available packages
 
 ### anime-desktop
 
-[Tauri 2.0](https://tauri.app/) desktop app with a Rust backend and React/TypeScript frontend.
+A Tauri 2.0 desktop app with a Rust backend and React/TypeScript frontend.
 
 **Backend (Rust):**
 - Lambda Labs API client
@@ -57,7 +59,9 @@ anime packages            # Show available packages
 - Lambda instance dashboard
 - Server monitoring view
 
-## Installable Packages
+---
+
+## 📦 Installable Packages
 
 ### Infrastructure
 
@@ -88,10 +92,13 @@ anime packages            # Show available packages
 | `deepseek-v3` | DeepSeek V3 (671B MoE) | ~250GB |
 | `phi-3.5` | Phi-3.5 Mini 3.8B | ~2GB |
 
-Model bundles are also available: `models-small`, `models-medium`, `models-large`.
+> [!TIP]
+> Model bundles are also available: `models-small`, `models-medium`, `models-large`.
+
+<details>
+<summary>Media Generation Models</summary>
 
 ### Image Generation (for ComfyUI)
-
 | Package | Model | Size |
 |---------|-------|------|
 | `sdxl` | Stable Diffusion XL | ~7GB |
@@ -100,7 +107,6 @@ Model bundles are also available: `models-small`, `models-medium`, `models-large
 | `flux-schnell` | Flux.1 Schnell | ~12GB |
 
 ### Video Generation
-
 | Package | Model | Size |
 |---------|-------|------|
 | `mochi` | Mochi-1 (10B) | ~12GB |
@@ -112,7 +118,11 @@ Model bundles are also available: `models-small`, `models-medium`, `models-large
 | `wan2` | Wan2.2 | ~10GB |
 | `comfyui-wan2` | Wan2 ComfyUI wrapper | ~100MB |
 
-## Project Structure
+</details>
+
+---
+
+## 🔧 Project Structure
 
 ```
 anime/
@@ -135,7 +145,9 @@ anime/
 └── README.md
 ```
 
-## Dependencies
+---
+
+## 🤝 Dependencies
 
 **CLI (Go):**
 - `github.com/charmbracelet/bubbletea` — TUI framework
@@ -147,6 +159,8 @@ anime/
 - Tauri 2.0, reqwest, ssh2, rusqlite
 - React, TypeScript
 
-## License
+---
+
+## 📄 License
 
 MIT

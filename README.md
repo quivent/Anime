@@ -1,8 +1,26 @@
-# anime
+# Anime
 
-A toolkit for provisioning and managing AI workloads on Lambda Labs GH200 GPU instances. Includes a Go CLI for package installation and model management, and a Tauri desktop app for server monitoring.
+<pre style="background: #2A0826; color: #F472B6; border: 1px solid #9D174D; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 13px; line-height: 1.25; overflow-x: auto;">
+<span style="color: #F472B6; font-weight: bold;"> ╔═════════════════════════════════════════════════════════════════════════════════════════╗</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║                                                                                         ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║    █████╗ ███╗   ██╗██╗███╗   ██╗███████╗    ██████╗ ███████╗███╗   ██╗██████╗  ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║   ██╔══██╗████╗  ██║██║████╗  ██║██╔════╝    ██╔══██╗██╔════╝████╗  ██║██╔══██╗ ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║   ███████║██╔██╗ ██║██║██╔██╗ ██║█████╗      ██████╔╝█████╗  ██╔██╗ ██║██║  ██║ ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║   ██╔══██║██║╚██╗██║██║██║╚██╗██║██╔══╝      ██╔══██╗██╔══╝  ██║╚██╗██║██║  ██║ ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║   ██║  ██║██║ ╚████║██║██║ ╚████║███████╗    ██║  ██║███████╗██║ ╚████║██████╔╝ ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║   ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═══╝╚══════╝    ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═════╝  ║</span>
+<span style="color: #F472B6;"> ║                                                                                         ║</span>
+<span style="color: #F472B6; font-weight: bold;"> ║        ───  A N I M E  S T Y L I Z E D  R E N D E R  P I P E L I N E  ───           ║</span>
+<span style="color: #F472B6;"> ║                                                                                         ║</span>
+<span style="color: #F472B6; font-weight: bold;"> ╠═════════════════════════════════════════════════════════════════════════════════════════╣</span>
+<span style="color: #F472B6;"> ║                                                                                         ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║   [RENDER STYLES]          </span><span style="color: #E2E8F0;">Cell Shading ──► Keyframe Lineart ──► Color Grade             </span><span style="color: #F472B6;">║</span>
+<span style="color: #F472B6;"> ║                                                                                         ║</span>
+<span style="color: #A78BFA; font-weight: bold;"> ║   [ASSET PIPELINE]         </span><span style="color: #E2E8F0;">Character Mesh Generator + Motion Capture Retargeting          </span><span style="color: #F472B6;">║</span>
+<span style="color: #F472B6;"> ║                                                                                         ║</span>
+<span style="color: #F472B6; font-weight: bold;"> ╚═════════════════════════════════════════════════════════════════════════════════════════╝</span>
+</pre>
 
-> **Status:** Work in progress. The installer scripts and package definitions are complete. The CLI and desktop app are partially implemented.
 
 ## Components
 

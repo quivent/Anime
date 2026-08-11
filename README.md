@@ -1,16 +1,52 @@
-# anime
+<div align="center">
 
-A toolkit for provisioning and managing AI workloads on Lambda Labs GH200 GPU instances. Includes a Go CLI for package installation and model management, and a Tauri desktop app for server monitoring.
+```
+  _   _  _ ___ __  __ ___ 
+ /_\ | \| |_ _|  \/  | __|
+/ _ \| .` || || |\/| | _| 
+/_/ \_\_|\_|___|_|  |_|___|
+```
 
+**Anime Toolkit**
+
+*A toolkit for provisioning and managing AI workloads on Lambda Labs GH200 GPU instances.*
+
+![Go](https://img.shields.io/badge/Go-00ADD8?style=for-the-badge&logo=go&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Status](https://img.shields.io/badge/Status-WIP-orange?style=for-the-badge)
+
+</div>
+
+---
+
+## 📑 Table of Contents
+
+- [⚡ Overview](#-overview)
+- [✨ Components](#-components)
+- [📦 Installable Packages](#-installable-packages)
+- [🔧 Project Structure](#-project-structure)
+- [🤝 Dependencies](#-dependencies)
+- [📄 License](#-license)
+
+---
+
+## ⚡ Overview
+
+The **anime** toolkit simplifies provisioning and managing AI workloads on Lambda Labs GH200 GPU instances. It provides a Go-based CLI for package installation/model management and a Tauri desktop application for comprehensive server monitoring.
+
+> [!WARNING]
 > **Status:** Work in progress. The installer scripts and package definitions are complete. The CLI and desktop app are partially implemented.
 
-## Components
+---
+
+## ✨ Components
 
 ### anime-cli
 
-Go CLI built with [Cobra](https://github.com/spf13/cobra) and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A Go CLI built with Cobra and Bubble Tea.
 
-**What works:**
+**Features working:**
 - 30+ installable packages with dependency resolution
 - Embedded bash install scripts for each package
 - Model catalog browser (interactive TUI and CLI modes)
@@ -28,7 +64,7 @@ anime packages            # Show available packages
 
 ### anime-desktop
 
-[Tauri 2.0](https://tauri.app/) desktop app with a Rust backend and React/TypeScript frontend.
+A Tauri 2.0 desktop app with a Rust backend and React/TypeScript frontend.
 
 **Backend (Rust):**
 - Lambda Labs API client
@@ -39,7 +75,9 @@ anime packages            # Show available packages
 - Lambda instance dashboard
 - Server monitoring view
 
-## Installable Packages
+---
+
+## 📦 Installable Packages
 
 ### Infrastructure
 
@@ -70,10 +108,13 @@ anime packages            # Show available packages
 | `deepseek-v3` | DeepSeek V3 (671B MoE) | ~250GB |
 | `phi-3.5` | Phi-3.5 Mini 3.8B | ~2GB |
 
-Model bundles are also available: `models-small`, `models-medium`, `models-large`.
+> [!TIP]
+> Model bundles are also available: `models-small`, `models-medium`, `models-large`.
+
+<details>
+<summary>Media Generation Models</summary>
 
 ### Image Generation (for ComfyUI)
-
 | Package | Model | Size |
 |---------|-------|------|
 | `sdxl` | Stable Diffusion XL | ~7GB |
@@ -82,7 +123,6 @@ Model bundles are also available: `models-small`, `models-medium`, `models-large
 | `flux-schnell` | Flux.1 Schnell | ~12GB |
 
 ### Video Generation
-
 | Package | Model | Size |
 |---------|-------|------|
 | `mochi` | Mochi-1 (10B) | ~12GB |
@@ -94,7 +134,11 @@ Model bundles are also available: `models-small`, `models-medium`, `models-large
 | `wan2` | Wan2.2 | ~10GB |
 | `comfyui-wan2` | Wan2 ComfyUI wrapper | ~100MB |
 
-## Project Structure
+</details>
+
+---
+
+## 🔧 Project Structure
 
 ```
 anime/
@@ -117,7 +161,9 @@ anime/
 └── README.md
 ```
 
-## Dependencies
+---
+
+## 🤝 Dependencies
 
 **CLI (Go):**
 - `github.com/charmbracelet/bubbletea` — TUI framework
@@ -129,6 +175,8 @@ anime/
 - Tauri 2.0, reqwest, ssh2, rusqlite
 - React, TypeScript
 
-## License
+---
+
+## 📄 License
 
 MIT
